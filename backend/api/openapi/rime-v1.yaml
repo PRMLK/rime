@@ -83,6 +83,23 @@ paths:
                 $ref: '#/components/schemas/AlbumPage'
         '400':
           $ref: '#/components/responses/Problem'
+  /tracks/{trackId}/lyrics:
+    get:
+      operationId: getTrackLyrics
+      parameters:
+        - name: trackId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Highest-priority available lyrics for a track
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LyricsDocument'
+        '404':
+          $ref: '#/components/responses/Problem'
   /artworks/{artworkId}:
     get:
       operationId: getArtwork
@@ -231,6 +248,23 @@ components:
         discNumber: { type: integer }
         trackNumber: { type: integer }
         artworkId: { type: string }
+    LyricsLine:
+      type: object
+      required: [text]
+      properties:
+        startMs: { type: integer, format: int64, minimum: 0 }
+        endMs: { type: integer, format: int64, minimum: 0 }
+        text: { type: string }
+    LyricsDocument:
+      type: object
+      required: [trackId, source, synced, lines]
+      properties:
+        trackId: { type: string }
+        source: { type: string, enum: [manual, sidecar, embedded, lrclib] }
+        synced: { type: boolean }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/LyricsLine' }
     SearchPage:
       type: object
       required: [items]

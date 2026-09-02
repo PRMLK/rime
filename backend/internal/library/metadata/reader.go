@@ -26,6 +26,11 @@ type Track struct {
 
 type Reader struct{}
 
+type Lyrics struct {
+	Format  string
+	Content string
+}
+
 func (Reader) Read(path string) (Track, error) {
 	tags, err := taglib.ReadTags(path)
 	if err != nil {
@@ -68,6 +73,27 @@ func (Reader) Read(path string) (Track, error) {
 		BitrateKbps:  int(properties.Bitrate),
 		HasArtwork:   len(properties.Images) > 0,
 	}, nil
+}
+
+func (Reader) ReadLyrics(path string) (Lyrics, bool, error) {
+	tags, err := taglib.ReadTags(path)
+	if err != nil {
+		return Lyrics{}, false, fmt.Errorf("read tags: %w", err)
+	}
+	if content := first(tags, "SYNCEDLYRICS", "SYNCED LYRICS"); content != "" {
+		return Lyrics{Format: "lrc", Content: content}, true, nil
+	}
+	if content := first(tags, "LYRICS"); content != "" {
+		format := "plain"
+		if strings.Contains(content, "[") && strings.Contains(content, ":") {
+			format = "lrc"
+		}
+		return Lyrics{Format: format, Content: content}, true, nil
+	}
+	if content := first(tags, "UNSYNCEDLYRICS", "UNSYNCED LYRICS"); content != "" {
+		return Lyrics{Format: "plain", Content: content}, true, nil
+	}
+	return Lyrics{}, false, nil
 }
 
 func codec(extension string) string {

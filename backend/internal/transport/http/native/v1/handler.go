@@ -16,6 +16,7 @@ import (
 
 	"rime/backend/internal/artwork"
 	"rime/backend/internal/browse"
+	"rime/backend/internal/lyrics"
 	"rime/backend/internal/playback"
 	"rime/backend/internal/search"
 	"rime/backend/internal/tasks"
@@ -24,20 +25,22 @@ import (
 type Handler struct {
 	search   *search.Service
 	browse   *browse.Service
+	lyrics   *lyrics.Service
 	playback *playback.Service
 	artwork  *artwork.Service
 	tasks    *tasks.Service
 	logger   *slog.Logger
 }
 
-func New(searchService *search.Service, browseService *browse.Service, playbackService *playback.Service, artworkService *artwork.Service, taskService *tasks.Service, logger *slog.Logger) http.Handler {
-	handler := &Handler{search: searchService, browse: browseService, playback: playbackService, artwork: artworkService, tasks: taskService, logger: logger}
+func New(searchService *search.Service, browseService *browse.Service, lyricsService *lyrics.Service, playbackService *playback.Service, artworkService *artwork.Service, taskService *tasks.Service, logger *slog.Logger) http.Handler {
+	handler := &Handler{search: searchService, browse: browseService, lyrics: lyricsService, playback: playbackService, artwork: artworkService, tasks: taskService, logger: logger}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/system/info", handler.systemInfo)
 	mux.HandleFunc("GET /api/v1/system/tasks", handler.listTasks)
 	mux.HandleFunc("POST /api/v1/system/tasks/{taskID}/runs", handler.runTask)
 	mux.HandleFunc("GET /api/v1/search", handler.searchTracks)
 	mux.HandleFunc("GET /api/v1/albums/recent", handler.recentAlbums)
+	mux.HandleFunc("GET /api/v1/tracks/{trackID}/lyrics", handler.trackLyrics)
 	mux.HandleFunc("POST /api/v1/playback/sessions", handler.createPlaybackSession)
 	mux.HandleFunc("GET /api/v1/playback/sessions/{sessionID}/stream", handler.stream)
 	mux.HandleFunc("HEAD /api/v1/playback/sessions/{sessionID}/stream", handler.stream)
@@ -82,11 +85,26 @@ func (h *Handler) systemInfo(w http.ResponseWriter, _ *http.Request) {
 		"capabilities": []string{
 			"search.tracks.v1",
 			"browse.recent-albums.v1",
+			"lyrics.timed.v1",
 			"playback.direct.v1",
 			"playback.events.v1",
 			"system.tasks.v1",
 		},
 	})
+}
+
+func (h *Handler) trackLyrics(w http.ResponseWriter, r *http.Request) {
+	document, err := h.lyrics.Get(r.Context(), r.PathValue("trackID"))
+	if err != nil {
+		if errors.Is(err, lyrics.ErrNotFound) {
+			writeProblem(w, r, http.StatusNotFound, "lyrics_not_found", "Lyrics not found", "No lyrics are available for this track.")
+			return
+		}
+		h.logger.Error("get track lyrics", "track_id", r.PathValue("trackID"), "error", err)
+		writeProblem(w, r, http.StatusInternalServerError, "internal_error", "Internal error", "The lyrics could not be loaded.")
+		return
+	}
+	writeJSON(w, http.StatusOK, document)
 }
 
 func (h *Handler) recentAlbums(w http.ResponseWriter, r *http.Request) {

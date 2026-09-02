@@ -13,6 +13,7 @@ type Config struct {
 	DataDir       string
 	CacheDir      string
 	LyricsDir     string
+	LRCLIBURL     string
 	DatabasePath  string
 	ScanOnStartup bool
 }
@@ -37,6 +38,7 @@ func Load() (Config, error) {
 		DataDir:       dataDir,
 		CacheDir:      filepath.Join(dataDir, "cache"),
 		LyricsDir:     filepath.Join(dataDir, "library", "lyrics"),
+		LRCLIBURL:     env("RIME_LRCLIB_URL", "https://lrclib.net"),
 		DatabasePath:  filepath.Join(dataDir, "rime.db"),
 		ScanOnStartup: scanOnStartup,
 	}, nil

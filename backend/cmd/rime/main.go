@@ -15,6 +15,7 @@ import (
 	"rime/backend/internal/browse"
 	"rime/backend/internal/config"
 	"rime/backend/internal/library/scanner"
+	"rime/backend/internal/lyrics"
 	"rime/backend/internal/playback"
 	"rime/backend/internal/search"
 	"rime/backend/internal/store/sqlite"
@@ -56,6 +57,12 @@ func run(logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	libraryScanner := scanner.New(cfg.MusicDir, artworkCache, store, logger)
+	lyricsScanner := lyrics.NewScanner(
+		cfg.LyricsDir,
+		store,
+		lyrics.NewLRCLIBClient(cfg.LRCLIBURL, "Rime/0.1 (+https://github.com/PRMLK/rime)", nil),
+		logger,
+	)
 
 	if cfg.ScanOnStartup {
 		report, err := libraryScanner.Scan(ctx)
@@ -64,23 +71,34 @@ func run(logger *slog.Logger) error {
 		}
 		logger.Info("music scan complete", "discovered", report.Discovered, "indexed", report.Indexed, "failed", report.Failed, "duration", report.Duration)
 	}
-	taskService, err := tasks.New(ctx, store, tasks.Definition{
-		ID:   "library.scan",
-		Name: "扫描音乐库",
-		Run: func(ctx context.Context) error {
-			report, err := libraryScanner.Scan(ctx)
-			if err == nil {
-				logger.Info("scheduled music scan complete", "discovered", report.Discovered, "indexed", report.Indexed, "failed", report.Failed, "duration", report.Duration)
-			}
-			return err
+	taskService, err := tasks.New(ctx, store,
+		tasks.Definition{
+			ID:   "library.scan",
+			Name: "扫描音乐库",
+			Run: func(ctx context.Context) error {
+				report, err := libraryScanner.Scan(ctx)
+				if err == nil {
+					logger.Info("scheduled music scan complete", "discovered", report.Discovered, "indexed", report.Indexed, "failed", report.Failed, "duration", report.Duration)
+				}
+				return err
+			},
 		},
-	})
+		tasks.Definition{
+			ID:   "lyrics.scan",
+			Name: "扫描歌词",
+			Run: func(ctx context.Context) error {
+				report, err := lyricsScanner.Scan(ctx)
+				logger.Info("scheduled lyrics scan complete", "discovered", report.Discovered, "updated", report.Updated, "missing", report.Missing, "failed", report.Failed, "duration", report.Duration)
+				return err
+			},
+		},
+	)
 	if err != nil {
 		return err
 	}
 	defer taskService.Close()
 
-	handler := v1.New(search.New(store), browse.New(store), playback.New(store), artwork.NewService(store, artworkCache), taskService, logger)
+	handler := v1.New(search.New(store), browse.New(store), lyrics.NewService(store), playback.New(store), artwork.NewService(store, artworkCache), taskService, logger)
 	server := &http.Server{
 		Addr:              cfg.Address,
 		Handler:           handler,

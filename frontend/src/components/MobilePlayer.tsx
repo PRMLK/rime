@@ -2,10 +2,10 @@ import {
   ArrowLeft, CalendarClock, ChevronDown, ChevronRight, Disc3, Heart, Home, LibraryBig,
   LoaderCircle, Pause, Play, Search, Settings, SkipBack, SkipForward, Sparkles, UserRound,
 } from 'lucide-react';
-import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import {
-  artworkUrl, getRecentAlbums, getScheduledTasks, runScheduledTask, searchTracks,
-  type Album, type ArtistRef, type ScheduledTask, type Track,
+  ApiError, artworkUrl, getRecentAlbums, getScheduledTasks, getTrackLyrics, runScheduledTask, searchTracks,
+  type Album, type ArtistRef, type LyricsDocument, type ScheduledTask, type Track,
 } from '@/api/rime';
 import nowPlayingCover from '@/assets/now-playing.jpg';
 import { Badge } from '@/components/ui/badge';
@@ -25,10 +25,12 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/
 import {
   Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle,
 } from '@/components/ui/item';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Slider } from '@/components/ui/slider';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 import { HtmlAudioPlayer, type PlayerSnapshot } from '@/services/player/HtmlAudioPlayer';
 
 type NavigationTab = 'home' | 'search' | 'library';
@@ -284,6 +286,7 @@ function NowPlayingDrawer({
   onPlayNext: () => void;
   onChooseTrack: (track: Track) => void;
 }) {
+  const [showLyrics, setShowLyrics] = useState(false);
   const duration = Math.max(playback.durationMs, 0);
   const position = Math.min(playback.positionMs, duration || playback.positionMs);
   const isPlaying = playback.status === 'playing';
@@ -304,8 +307,12 @@ function NowPlayingDrawer({
 
       <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-[max(env(safe-area-inset-bottom),1.5rem)]">
         <section className="mx-auto w-full max-w-xl" aria-labelledby="now-playing-heading">
-          <div className="mx-auto mt-2 w-full max-w-md overflow-hidden rounded-lg bg-muted">
-            <ArtworkImage track={playback.track} size={1024} className="aspect-square w-full object-cover" />
+          <div className="mx-auto mt-2 aspect-square w-full max-w-md overflow-hidden rounded-lg bg-muted">
+            {showLyrics ? (
+              <LyricsPanel track={playback.track} positionMs={position} />
+            ) : (
+              <ArtworkImage track={playback.track} size={1024} className="size-full object-cover" />
+            )}
           </div>
           <div className="mt-4 flex items-start justify-between gap-4">
             <div className="min-w-0">
@@ -337,19 +344,40 @@ function NowPlayingDrawer({
               <span>{formatTime(position)}</span><span>{formatTime(duration)}</span>
             </div>
           </div>
-          <div className="mt-4 flex items-center justify-center gap-6">
-            <PlayerButton label="上一首" disabled={!canPlayPrevious} onClick={onPlayPrevious}><SkipBack aria-hidden="true" /></PlayerButton>
+          <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center">
+            <span aria-hidden="true" />
+            <div className="flex items-center justify-center gap-6">
+              <PlayerButton label="上一首" disabled={!canPlayPrevious} onClick={onPlayPrevious}><SkipBack aria-hidden="true" /></PlayerButton>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button variant="secondary" size="icon-lg" aria-label={playbackLabel} aria-pressed={isPlaying} disabled={!playback.track || playback.status === 'loading'} onClick={onTogglePlayback}>
+                      {playback.status === 'loading' ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : isPlaying ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
+                    </Button>
+                  }
+                />
+                <TooltipContent>{playbackLabel}</TooltipContent>
+              </Tooltip>
+              <PlayerButton label="下一首" disabled={!canPlayNext} onClick={onPlayNext}><SkipForward aria-hidden="true" /></PlayerButton>
+            </div>
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <Button variant="secondary" size="icon-lg" aria-label={playbackLabel} aria-pressed={isPlaying} disabled={!playback.track || playback.status === 'loading'} onClick={onTogglePlayback}>
-                    {playback.status === 'loading' ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : isPlaying ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
+                  <Button
+                    variant={showLyrics ? 'secondary' : 'ghost'}
+                    size="icon"
+                    className="justify-self-end"
+                    aria-label={showLyrics ? '显示专辑封面' : '显示歌词'}
+                    aria-pressed={showLyrics}
+                    disabled={!playback.track}
+                    onClick={() => setShowLyrics((visible) => !visible)}
+                  >
+                    词
                   </Button>
                 }
               />
-              <TooltipContent>{playbackLabel}</TooltipContent>
+              <TooltipContent>{showLyrics ? '显示专辑封面' : '显示歌词'}</TooltipContent>
             </Tooltip>
-            <PlayerButton label="下一首" disabled={!canPlayNext} onClick={onPlayNext}><SkipForward aria-hidden="true" /></PlayerButton>
           </div>
           <Separator className="my-8" />
           <div className="flex items-center justify-between">
@@ -363,6 +391,133 @@ function NowPlayingDrawer({
         </section>
       </div>
     </DrawerContent>
+  );
+}
+
+function LyricsPanel({ track, positionMs }: { track?: Track; positionMs: number }) {
+  const [document, setDocument] = useState<LyricsDocument>();
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string>();
+  const [isFollowing, setIsFollowing] = useState(true);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const lineRefs = useRef(new Map<number, HTMLParagraphElement>());
+  const resumeTimerRef = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    lineRefs.current.clear();
+    setDocument(undefined);
+    setError(undefined);
+    setIsFollowing(true);
+    if (resumeTimerRef.current !== undefined) window.clearTimeout(resumeTimerRef.current);
+    if (!track) {
+      setIsLoading(false);
+      return () => controller.abort();
+    }
+    setIsLoading(true);
+    getTrackLyrics(track.id, controller.signal)
+      .then(setDocument)
+      .catch((loadError: unknown) => {
+        if (loadError instanceof DOMException && loadError.name === 'AbortError') return;
+        if (loadError instanceof ApiError && loadError.status === 404) {
+          setError('暂无歌词');
+          return;
+        }
+        setError(loadError instanceof Error ? loadError.message : '歌词加载失败');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsLoading(false);
+      });
+    return () => controller.abort();
+  }, [track]);
+
+  useEffect(() => () => {
+    if (resumeTimerRef.current !== undefined) window.clearTimeout(resumeTimerRef.current);
+  }, []);
+
+  const activeLineIndex = useMemo(() => {
+    if (!document?.synced) return -1;
+    let active = -1;
+    for (let index = 0; index < document.lines.length; index += 1) {
+      const startMs = document.lines[index].startMs;
+      if (startMs === undefined || startMs > positionMs) break;
+      active = index;
+    }
+    return active;
+  }, [document, positionMs]);
+
+  const scrollToLine = useCallback((index: number, behavior: ScrollBehavior) => {
+    const root = scrollAreaRef.current;
+    const line = lineRefs.current.get(index);
+    const viewport = root?.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
+    if (!viewport || !line) return;
+    const viewportBounds = viewport.getBoundingClientRect();
+    const lineBounds = line.getBoundingClientRect();
+    viewport.scrollTo({
+      top: viewport.scrollTop + lineBounds.top - viewportBounds.top - (viewport.clientHeight - lineBounds.height) / 2,
+      behavior,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (isFollowing && activeLineIndex >= 0) {
+      scrollToLine(activeLineIndex, 'smooth');
+    }
+  }, [activeLineIndex, isFollowing, scrollToLine]);
+
+  const pauseFollowing = useCallback(() => {
+    setIsFollowing(false);
+    if (resumeTimerRef.current !== undefined) window.clearTimeout(resumeTimerRef.current);
+    resumeTimerRef.current = window.setTimeout(() => setIsFollowing(true), 3_000);
+  }, []);
+
+  if (isLoading) {
+    return (
+      <div className="flex size-full flex-col justify-center gap-5 px-6" role="status" aria-label="正在加载歌词">
+        {[0, 1, 2, 3, 4].map((item) => <Skeleton key={item} className="mx-auto h-5 w-4/5" />)}
+      </div>
+    );
+  }
+
+  if (error || !document || document.lines.length === 0) {
+    return (
+      <Empty className="size-full border-0 p-6">
+        <EmptyHeader>
+          <EmptyTitle>{error ?? '暂无歌词'}</EmptyTitle>
+          <EmptyDescription>可以在系统设置中运行歌词扫描</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    );
+  }
+
+  return (
+    <ScrollArea
+      ref={scrollAreaRef}
+      className="size-full"
+      aria-label={`${track?.title ?? ''}歌词`}
+      onPointerDown={pauseFollowing}
+      onTouchMove={pauseFollowing}
+      onWheel={pauseFollowing}
+    >
+      <div className="flex min-h-full flex-col gap-5 px-6 py-[42%] text-center">
+        {document.lines.map((line, index) => (
+          <p
+            key={`${line.startMs ?? 'plain'}-${index}`}
+            ref={(element) => {
+              if (element) lineRefs.current.set(index, element);
+              else lineRefs.current.delete(index);
+            }}
+            className={cn(
+              'text-base leading-relaxed transition-colors',
+              index === activeLineIndex ? 'font-semibold text-foreground' : 'text-muted-foreground',
+            )}
+            aria-current={index === activeLineIndex ? 'true' : undefined}
+          >
+            {line.text}
+          </p>
+        ))}
+      </div>
+    </ScrollArea>
   );
 }
 

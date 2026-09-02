@@ -37,6 +37,19 @@ export type SearchPage = {
   nextCursor?: string;
 };
 
+export type LyricsLine = {
+  startMs?: number;
+  endMs?: number;
+  text: string;
+};
+
+export type LyricsDocument = {
+  trackId: string;
+  source: 'manual' | 'sidecar' | 'embedded' | 'lrclib';
+  synced: boolean;
+  lines: LyricsLine[];
+};
+
 export type ScheduledTask = {
   id: string;
   name: string;
@@ -107,6 +120,10 @@ export function searchTracks(query: string, signal?: AbortSignal): Promise<Searc
 
 export function getRecentAlbums(signal?: AbortSignal): Promise<AlbumPage> {
   return request<AlbumPage>('/api/v1/albums/recent?limit=12', { signal });
+}
+
+export function getTrackLyrics(trackId: string, signal?: AbortSignal): Promise<LyricsDocument> {
+  return request<LyricsDocument>(`/api/v1/tracks/${encodeURIComponent(trackId)}/lyrics`, { signal });
 }
 
 export function getScheduledTasks(signal?: AbortSignal): Promise<ScheduledTaskPage> {

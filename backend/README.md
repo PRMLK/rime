@@ -23,6 +23,7 @@ through environment variables:
 | `RIME_ADDRESS` | `127.0.0.1:8080` | HTTP listen address |
 | `RIME_MUSIC_DIR` | `./music` | Read-only music library |
 | `RIME_DATA_DIR` | `./data` | SQLite data directory |
+| `RIME_LRCLIB_URL` | `https://lrclib.net` | LRCLIB-compatible lyrics provider |
 | `RIME_SCAN_ON_STARTUP` | `true` | Scan the library before serving |
 
 The native API contract is documented in `api/openapi/rime-v1.yaml`.
@@ -56,3 +57,13 @@ Artwork files are content-addressed and may be deleted safely; the next scan
 rebuilds originals from the music library and thumbnails are generated on
 demand. The lyrics directory is reserved for persistent downloaded or edited
 lyrics and must not be managed as an evictable cache.
+
+The `lyrics.scan` task resolves lyrics in this order:
+
+1. `data/library/lyrics/<track-id>/manual.lrc` (also `.ttml` or `.txt`)
+2. An `.lrc` or `.ttml` sidecar with the same basename as the audio file
+3. Embedded synchronized or plain lyrics tags
+4. A persisted LRCLIB result in `data/library/lyrics/<track-id>/lrclib.lrc`
+
+Provider results are matched by normalized title, primary artist, and duration.
+The source music directory remains read-only.

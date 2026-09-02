@@ -21,6 +21,7 @@ import (
 	"rime/backend/internal/catalog"
 	"rime/backend/internal/id"
 	"rime/backend/internal/library/scanner"
+	"rime/backend/internal/lyrics"
 	"rime/backend/internal/playback"
 	"rime/backend/internal/search"
 	"rime/backend/internal/tasks"
@@ -275,6 +276,109 @@ func (s *Store) albumArtists(ctx context.Context, albumID string) ([]catalog.Art
 		artists = append(artists, artist)
 	}
 	return artists, rows.Err()
+}
+
+func (s *Store) ListLyricsTracks(ctx context.Context) ([]lyrics.TrackCandidate, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT t.id, t.title, al.title, t.duration_ms, mf.path
+		FROM tracks t
+		JOIN albums al ON al.id = t.album_id
+		JOIN media_files mf ON mf.id = (
+			SELECT candidate.id FROM media_files candidate
+			WHERE candidate.track_id = t.id AND candidate.available = 1
+			ORDER BY candidate.size DESC, candidate.id
+			LIMIT 1
+		)
+		ORDER BY al.normalized_title, t.disc_number, t.track_number, t.normalized_title`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]lyrics.TrackCandidate, 0)
+	for rows.Next() {
+		var track lyrics.TrackCandidate
+		if err := rows.Scan(&track.ID, &track.Title, &track.Album, &track.DurationMs, &track.MediaPath); err != nil {
+			return nil, err
+		}
+		track.Artists, err = s.trackArtistNames(ctx, track.ID)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, track)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) UpsertLyricsSource(ctx context.Context, source lyrics.Source) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO track_lyrics(track_id, source_kind, source_ref, format, content, content_hash, updated_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(track_id, source_kind) DO UPDATE SET
+			source_ref = excluded.source_ref,
+			format = excluded.format,
+			content = excluded.content,
+			content_hash = excluded.content_hash,
+			updated_at = CASE WHEN track_lyrics.content_hash <> excluded.content_hash THEN excluded.updated_at ELSE track_lyrics.updated_at END`,
+		source.TrackID, source.Kind, source.Ref, source.Format, source.Content, source.ContentHash, source.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+func (s *Store) DeleteLyricsSource(ctx context.Context, trackID, kind string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM track_lyrics WHERE track_id = ? AND source_kind = ?`, trackID, kind)
+	return err
+}
+
+func (s *Store) GetLyricsSource(ctx context.Context, trackID string) (lyrics.Source, error) {
+	var source lyrics.Source
+	var updatedAt string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT lyric.track_id, lyric.source_kind, lyric.source_ref, lyric.format, lyric.content, lyric.content_hash, lyric.updated_at
+		FROM track_lyrics lyric
+		WHERE lyric.track_id = ?
+		  AND EXISTS (SELECT 1 FROM media_files mf WHERE mf.track_id = lyric.track_id AND mf.available = 1)
+		ORDER BY CASE lyric.source_kind
+			WHEN 'manual' THEN 0
+			WHEN 'sidecar' THEN 1
+			WHEN 'embedded' THEN 2
+			WHEN 'lrclib' THEN 3
+			ELSE 100
+		END
+		LIMIT 1`, trackID).
+		Scan(&source.TrackID, &source.Kind, &source.Ref, &source.Format, &source.Content, &source.ContentHash, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return lyrics.Source{}, lyrics.ErrNotFound
+	}
+	if err != nil {
+		return lyrics.Source{}, err
+	}
+	source.UpdatedAt, err = time.Parse(time.RFC3339Nano, updatedAt)
+	if err != nil {
+		return lyrics.Source{}, fmt.Errorf("parse lyrics update time: %w", err)
+	}
+	return source, nil
+}
+
+func (s *Store) trackArtistNames(ctx context.Context, trackID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT ar.name
+		FROM track_artists ta
+		JOIN artists ar ON ar.id = ta.artist_id
+		WHERE ta.track_id = ? AND ta.role = 'primary'
+		ORDER BY ta.position`, trackID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]string, 0)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		result = append(result, name)
+	}
+	return result, rows.Err()
 }
 
 func (s *Store) EnsureScheduledTask(ctx context.Context, taskID, name string, position int) error {

@@ -21,6 +21,7 @@ import (
 	"rime/backend/internal/browse"
 	"rime/backend/internal/catalog"
 	"rime/backend/internal/library/scanner"
+	"rime/backend/internal/lyrics"
 	"rime/backend/internal/playback"
 	"rime/backend/internal/search"
 	"rime/backend/internal/store/sqlite"
@@ -38,6 +39,9 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 	audio := makeWAV(8000, 1)
 	audioPath := filepath.Join(musicDir, "Morning Bell.wav")
 	if err := os.WriteFile(audioPath, audio, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(musicDir, "Morning Bell.lrc"), []byte("[00:00.00]Morning light\n[00:00.50]Ring the bell\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	writeCover(t, filepath.Join(musicDir, "cover.jpg"), 640, 360)
@@ -71,19 +75,31 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 		t.Fatalf("rebuild deleted artwork cache: %v", err)
 	}
 
-	taskService, err := tasks.New(context.Background(), store, tasks.Definition{
-		ID:   "library.scan",
-		Name: "扫描音乐库",
-		Run: func(ctx context.Context) error {
-			_, err := scanner.New(musicDir, artworkCache, store, logger).Scan(ctx)
-			return err
+	lyricsDir := filepath.Join(root, "data", "library", "lyrics")
+	lyricsScanner := lyrics.NewScanner(lyricsDir, store, nil, logger)
+	taskService, err := tasks.New(context.Background(), store,
+		tasks.Definition{
+			ID:   "library.scan",
+			Name: "扫描音乐库",
+			Run: func(ctx context.Context) error {
+				_, err := scanner.New(musicDir, artworkCache, store, logger).Scan(ctx)
+				return err
+			},
 		},
-	})
+		tasks.Definition{
+			ID:   "lyrics.scan",
+			Name: "扫描歌词",
+			Run: func(ctx context.Context) error {
+				_, err := lyricsScanner.Scan(ctx)
+				return err
+			},
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(taskService.Close)
-	server := httptest.NewServer(v1.New(search.New(store), browse.New(store), playback.New(store), artwork.NewService(store, artworkCache), taskService, logger))
+	server := httptest.NewServer(v1.New(search.New(store), browse.New(store), lyrics.NewService(store), playback.New(store), artwork.NewService(store, artworkCache), taskService, logger))
 	t.Cleanup(server.Close)
 
 	assertRecentAlbums(t, server.URL)
@@ -109,6 +125,16 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 	if page.Items[0].ArtworkID == nil {
 		t.Fatal("search result has no artwork ID")
 	}
+	assertLyrics(t, server.URL, page.Items[0].ID, lyrics.SourceSidecar)
+	manualDir := filepath.Join(lyricsDir, page.Items[0].ID)
+	if err := os.MkdirAll(manualDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(manualDir, "manual.lrc"), []byte("[00:00.00]Manual line\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	assertScheduledTaskRunByID(t, server.URL, "lyrics.scan")
+	assertLyrics(t, server.URL, page.Items[0].ID, lyrics.SourceManual)
 
 	response, err = http.Get(server.URL + "/api/v1/artworks/" + *page.Items[0].ArtworkID + "?size=128")
 	if err != nil {
@@ -195,13 +221,20 @@ func assertRecentAlbums(t *testing.T, serverURL string) {
 
 func assertScheduledTaskRun(t *testing.T, serverURL string) {
 	t.Helper()
-	response, err := http.Post(serverURL+"/api/v1/system/tasks/library.scan/runs", "application/json", nil)
+	for _, taskID := range []string{"library.scan", "lyrics.scan"} {
+		assertScheduledTaskRunByID(t, serverURL, taskID)
+	}
+}
+
+func assertScheduledTaskRunByID(t *testing.T, serverURL, taskID string) {
+	t.Helper()
+	response, err := http.Post(serverURL+"/api/v1/system/tasks/"+taskID+"/runs", "application/json", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	response.Body.Close()
 	if response.StatusCode != http.StatusAccepted {
-		t.Fatalf("run scheduled task status: %s", response.Status)
+		t.Fatalf("run scheduled task %s status: %s", taskID, response.Status)
 	}
 
 	deadline := time.Now().Add(2 * time.Second)
@@ -218,18 +251,40 @@ func assertScheduledTaskRun(t *testing.T, serverURL string) {
 			t.Fatal(err)
 		}
 		response.Body.Close()
-		if len(page.Items) != 1 {
+		if len(page.Items) != 2 {
 			t.Fatalf("scheduled tasks = %+v", page.Items)
 		}
-		if page.Items[0].Status == "idle" && page.Items[0].LastRunAt != nil {
-			if page.Items[0].LastDurationMs == nil || page.Items[0].LastSucceeded == nil || !*page.Items[0].LastSucceeded {
-				t.Fatalf("scheduled task result = %+v", page.Items[0])
+		for _, task := range page.Items {
+			if task.ID == taskID && task.Status == "idle" && task.LastRunAt != nil {
+				if task.LastDurationMs == nil || task.LastSucceeded == nil || !*task.LastSucceeded {
+					t.Fatalf("scheduled task result = %+v", task)
+				}
+				return
 			}
-			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("scheduled task did not complete")
+	t.Fatalf("scheduled task %s did not complete", taskID)
+}
+
+func assertLyrics(t *testing.T, serverURL, trackID, expectedSource string) {
+	t.Helper()
+	response, err := http.Get(serverURL + "/api/v1/tracks/" + trackID + "/lyrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(response.Body)
+		t.Fatalf("lyrics status: %s: %s", response.Status, body)
+	}
+	var document lyrics.Document
+	if err := json.NewDecoder(response.Body).Decode(&document); err != nil {
+		t.Fatal(err)
+	}
+	if document.Source != expectedSource || !document.Synced || len(document.Lines) == 0 {
+		t.Fatalf("unexpected lyrics: %+v", document)
+	}
 }
 
 func writeCover(t *testing.T, path string, width, height int) {
