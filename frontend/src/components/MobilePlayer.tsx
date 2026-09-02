@@ -223,9 +223,9 @@ function HomeView() {
       {isLoading ? (
         <div className="mt-3 flex gap-3 overflow-hidden" role="status" aria-label="正在加载最近入库的专辑">
           {[0, 1, 2, 3].map((item) => (
-            <div key={item} className="w-[30.303%] shrink-0">
+            <div key={item} className="w-2/5 shrink-0">
               <Skeleton className="aspect-square w-full" />
-              <Skeleton className="mt-3 h-4 w-4/5" />
+              <Skeleton className="mt-3 h-3 w-4/5" />
               <Skeleton className="mt-2 h-3 w-3/5" />
             </div>
           ))}
@@ -242,10 +242,10 @@ function HomeView() {
         <Carousel className="mt-3" opts={{ align: 'start', dragFree: true, containScroll: 'trimSnaps' }} aria-label="最近入库专辑" tabIndex={0}>
           <CarouselContent className="-ml-3">
             {albums.map((album) => (
-              <CarouselItem key={album.id} className="basis-[30.303%] pl-3">
-                <Card size="sm" className="h-full rounded-md py-0">
+              <CarouselItem key={album.id} className="basis-2/5 pl-3">
+                <Card size="xs" className="h-full rounded-md py-0 ring-0">
                   <AlbumArtworkImage album={album} />
-                  <CardHeader className="gap-0.5 px-3 pb-3">
+                  <CardHeader className="gap-0.5 px-0 pb-3">
                     <CardTitle className="truncate">{album.title}</CardTitle>
                     <CardDescription className="truncate">{artistNames(album.artists)}</CardDescription>
                   </CardHeader>
