@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+
+# Production build output
+dist/
+
+# Local environment and operating-system files
+.env
+.env.*
+!.env.example
+.DS_Store
+
+# TypeScript build state
+*.tsbuildinfo

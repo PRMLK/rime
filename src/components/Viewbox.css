@@ -1,0 +1,121 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  min-width: 0;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-height: 100dvh;
+  overflow: hidden;
+}
+
+.viewbox-suite {
+  isolation: isolate;
+  position: relative;
+  display: grid;
+  min-height: 100dvh;
+  overflow: clip;
+  background:
+    linear-gradient(118deg, oklch(0.91 0.045 214 / 0.52) 0%, transparent 49%),
+    linear-gradient(300deg, oklch(0.93 0.045 38 / 0.46) 0%, transparent 55%),
+    linear-gradient(201deg, oklch(0.965 0.018 294) 0%, oklch(0.98 0.012 222) 50%, oklch(0.97 0.022 47) 100%);
+}
+
+.viewbox-suite::before {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  content: "";
+  opacity: 0.14;
+  pointer-events: none;
+  background:
+    linear-gradient(145deg, transparent 0 42%, oklch(0.76 0.07 205 / 0.22) 66%, transparent 100%),
+    linear-gradient(325deg, transparent 0 35%, oklch(0.8 0.07 54 / 0.16) 62%, transparent 100%);
+  filter: blur(42px);
+  transform: scale(1.12);
+}
+
+.viewbox-stage {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  padding: 48px 28px;
+  place-items: center;
+}
+
+.viewbox-viewport {
+  position: relative;
+  width: min(40vw, calc(76dvh * 0.45), 356px);
+  aspect-ratio: 9 / 20;
+  overflow: clip;
+  outline: 1px solid oklch(1 0 0 / 0.7);
+  outline-offset: 0;
+  transition: width 360ms cubic-bezier(0.22, 1, 0.36, 1), aspect-ratio 360ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.viewbox-viewport.is-tablet {
+  width: min(78vw, calc(72dvh * 1.333), 900px);
+  aspect-ratio: 4 / 3;
+}
+
+.viewbox-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+}
+
+.viewbox-control-position {
+  position: absolute;
+  right: clamp(30px, 5vw, 62px);
+}
+
+.viewbox-visibility-toggle {
+  top: clamp(30px, 5vw, 62px);
+}
+
+.viewbox-mode-toggle {
+  top: calc(clamp(30px, 5vw, 62px) + 54px);
+}
+
+@media (max-width: 680px) {
+  .viewbox-stage {
+    padding: 32px 18px 86px;
+  }
+
+  .viewbox-viewport {
+    width: min(64vw, calc(70dvh * 0.45), 310px);
+  }
+
+  .viewbox-viewport.is-tablet {
+    width: min(88vw, calc(58dvh * 1.333), 560px);
+  }
+}
+
+@media (max-height: 640px) and (orientation: landscape) {
+  .viewbox-stage {
+    padding: 22px 78px 22px 22px;
+  }
+
+  .viewbox-viewport {
+    width: min(30vw, calc(78dvh * 0.45));
+  }
+
+  .viewbox-viewport.is-tablet {
+    width: min(68vw, calc(79dvh * 1.333));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .viewbox-viewport {
+    transition: none;
+  }
+}
