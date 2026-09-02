@@ -1,0 +1,39 @@
+name: rime
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: deployment/backend.Dockerfile
+    environment:
+      RIME_ADDRESS: 0.0.0.0:8080
+      RIME_DATA_DIR: /data
+      RIME_MUSIC_DIR: /music
+      RIME_SCAN_ON_STARTUP: "true"
+    restart: unless-stopped
+    volumes:
+      - ./runtime/data:/data
+      - ./runtime/music:/music:ro
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--output-document=-", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+
+  web:
+    build:
+      context: .
+      dockerfile: deployment/frontend.Dockerfile
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${RIME_HTTP_PORT:-18081}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--output-document=-", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s

@@ -1,0 +1,10 @@
+.git
+.github
+.env
+.env.*
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+backend/data
+backend/music
+runtime

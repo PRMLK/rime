@@ -16,3 +16,4 @@ dist/
 # Rime runtime state and local media
 backend/data/
 backend/music/
+runtime/
