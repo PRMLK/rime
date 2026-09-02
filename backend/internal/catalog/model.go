@@ -1,5 +1,7 @@
 package catalog
 
+import "time"
+
 type ArtistRef struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -9,6 +11,14 @@ type ArtistRef struct {
 type AlbumRef struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
+}
+
+type Album struct {
+	ID        string      `json:"id"`
+	Title     string      `json:"title"`
+	Artists   []ArtistRef `json:"artists"`
+	ArtworkID *string     `json:"artworkId,omitempty"`
+	AddedAt   time.Time   `json:"addedAt"`
 }
 
 type Track struct {

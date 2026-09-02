@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"rime/backend/internal/artwork"
+	"rime/backend/internal/browse"
 	"rime/backend/internal/catalog"
 	"rime/backend/internal/library/scanner"
 	"rime/backend/internal/playback"
@@ -82,9 +83,10 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(taskService.Close)
-	server := httptest.NewServer(v1.New(search.New(store), playback.New(store), artwork.NewService(store, artworkCache), taskService, logger))
+	server := httptest.NewServer(v1.New(search.New(store), browse.New(store), playback.New(store), artwork.NewService(store, artworkCache), taskService, logger))
 	t.Cleanup(server.Close)
 
+	assertRecentAlbums(t, server.URL)
 	assertScheduledTaskRun(t, server.URL)
 
 	response, err := http.Get(server.URL + "/api/v1/search?query=Morning")
@@ -166,6 +168,28 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 	}
 	if !bytes.Equal(got, audio[8:16]) {
 		t.Fatalf("range body = %v, want %v", got, audio[8:16])
+	}
+}
+
+func assertRecentAlbums(t *testing.T, serverURL string) {
+	t.Helper()
+	response, err := http.Get(serverURL + "/api/v1/albums/recent?limit=10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("recent albums status: %s", response.Status)
+	}
+	var page browse.AlbumPage
+	if err := json.NewDecoder(response.Body).Decode(&page); err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0].Title != "Unknown Album" || page.Items[0].AddedAt.IsZero() {
+		t.Fatalf("unexpected recent albums: %+v", page.Items)
+	}
+	if len(page.Items[0].Artists) != 1 || page.Items[0].Artists[0].Name != "Unknown Artist" {
+		t.Fatalf("unexpected recent album artists: %+v", page.Items[0].Artists)
 	}
 }
 

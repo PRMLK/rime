@@ -1,15 +1,17 @@
 import {
-  ArrowLeft, CalendarClock, ChevronDown, ChevronRight, Heart, Home, LibraryBig,
+  ArrowLeft, CalendarClock, ChevronDown, ChevronRight, Disc3, Heart, Home, LibraryBig,
   LoaderCircle, Pause, Play, Search, Settings, SkipBack, SkipForward, Sparkles, UserRound,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
 import {
-  artworkUrl, getScheduledTasks, runScheduledTask, searchTracks,
-  type ScheduledTask, type Track,
+  artworkUrl, getRecentAlbums, getScheduledTasks, runScheduledTask, searchTracks,
+  type Album, type ArtistRef, type ScheduledTask, type Track,
 } from '@/api/rime';
 import nowPlayingCover from '@/assets/now-playing.jpg';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Carousel, CarouselContent, CarouselItem } from '@/components/ui/carousel';
 import {
   Drawer,
   DrawerClose,
@@ -19,10 +21,12 @@ import {
   DrawerTrigger,
 } from '@/components/ui/drawer';
 import { Input } from '@/components/ui/input';
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import {
   Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle,
 } from '@/components/ui/item';
 import { Separator } from '@/components/ui/separator';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Slider } from '@/components/ui/slider';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { HtmlAudioPlayer, type PlayerSnapshot } from '@/services/player/HtmlAudioPlayer';
@@ -108,6 +112,7 @@ export function MobilePlayer() {
               </div>
             </header>
 
+            {activeTab === 'home' && <HomeView />}
             {activeTab === 'search' && (
               <SearchView
                 query={query}
@@ -188,6 +193,69 @@ export function MobilePlayer() {
       </Drawer>
       <SystemSettingsDrawer open={isSettingsOpen} onOpenChange={setIsSettingsOpen} />
     </TooltipProvider>
+  );
+}
+
+function HomeView() {
+  const [albums, setAlbums] = useState<Album[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setIsLoading(true);
+    setError(undefined);
+    getRecentAlbums(controller.signal)
+      .then((page) => setAlbums(page.items))
+      .catch((loadError: unknown) => {
+        if (loadError instanceof DOMException && loadError.name === 'AbortError') return;
+        setError(loadError instanceof Error ? loadError.message : '最近入库加载失败');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsLoading(false);
+      });
+    return () => controller.abort();
+  }, []);
+
+  return (
+    <section className="mt-8" aria-labelledby="recent-albums-heading">
+      <h2 id="recent-albums-heading" className="text-sm font-semibold">最近入库</h2>
+      {isLoading ? (
+        <div className="mt-3 flex gap-3 overflow-hidden" role="status" aria-label="正在加载最近入库的专辑">
+          {[0, 1, 2, 3].map((item) => (
+            <div key={item} className="w-[30.303%] shrink-0">
+              <Skeleton className="aspect-square w-full" />
+              <Skeleton className="mt-3 h-4 w-4/5" />
+              <Skeleton className="mt-2 h-3 w-3/5" />
+            </div>
+          ))}
+        </div>
+      ) : error || albums.length === 0 ? (
+        <Empty className="mt-3 border">
+          <EmptyHeader>
+            <EmptyMedia variant="icon"><Disc3 aria-hidden="true" /></EmptyMedia>
+            <EmptyTitle>{error ? '最近入库加载失败' : '暂无最近入库的专辑'}</EmptyTitle>
+            {error && <EmptyDescription>{error}</EmptyDescription>}
+          </EmptyHeader>
+        </Empty>
+      ) : (
+        <Carousel className="mt-3" opts={{ align: 'start', dragFree: true, containScroll: 'trimSnaps' }} aria-label="最近入库专辑" tabIndex={0}>
+          <CarouselContent className="-ml-3">
+            {albums.map((album) => (
+              <CarouselItem key={album.id} className="basis-[30.303%] pl-3">
+                <Card size="sm" className="h-full rounded-md py-0">
+                  <AlbumArtworkImage album={album} />
+                  <CardHeader className="gap-0.5 px-3 pb-3">
+                    <CardTitle className="truncate">{album.title}</CardTitle>
+                    <CardDescription className="truncate">{artistNames(album.artists)}</CardDescription>
+                  </CardHeader>
+                </Card>
+              </CarouselItem>
+            ))}
+          </CarouselContent>
+        </Carousel>
+      )}
+    </section>
   );
 }
 
@@ -523,6 +591,19 @@ function ArtworkImage({ track, size, className }: { track?: Track; size: 128 | 2
   );
 }
 
+function AlbumArtworkImage({ album }: { album: Album }) {
+  const source = artworkUrl(album.artworkId, 512);
+  const [failedSource, setFailedSource] = useState<string>();
+  return (
+    <img
+      className="aspect-square w-full bg-muted object-cover"
+      src={source && source !== failedSource ? source : nowPlayingCover}
+      alt={`《${album.title}》专辑封面`}
+      onError={() => source && setFailedSource(source)}
+    />
+  );
+}
+
 function PlayerButton({ label, disabled, onClick, children }: { label: string; disabled: boolean; onClick: () => void; children: ReactNode }) {
   return (
     <Tooltip>
@@ -533,7 +614,11 @@ function PlayerButton({ label, disabled, onClick, children }: { label: string; d
 }
 
 function artistLine(track?: Track): string {
-  return track?.artists.map((artist) => artist.name).join(' / ') || 'Rime Music';
+  return track ? artistNames(track.artists) : 'Rime Music';
+}
+
+function artistNames(artists: ArtistRef[]): string {
+  return artists.map((artist) => artist.name).join(' / ') || 'Unknown Artist';
 }
 
 function formatTime(milliseconds: number): string {

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"rime/backend/internal/artwork"
+	"rime/backend/internal/browse"
 	"rime/backend/internal/playback"
 	"rime/backend/internal/search"
 	"rime/backend/internal/tasks"
@@ -22,19 +23,21 @@ import (
 
 type Handler struct {
 	search   *search.Service
+	browse   *browse.Service
 	playback *playback.Service
 	artwork  *artwork.Service
 	tasks    *tasks.Service
 	logger   *slog.Logger
 }
 
-func New(searchService *search.Service, playbackService *playback.Service, artworkService *artwork.Service, taskService *tasks.Service, logger *slog.Logger) http.Handler {
-	handler := &Handler{search: searchService, playback: playbackService, artwork: artworkService, tasks: taskService, logger: logger}
+func New(searchService *search.Service, browseService *browse.Service, playbackService *playback.Service, artworkService *artwork.Service, taskService *tasks.Service, logger *slog.Logger) http.Handler {
+	handler := &Handler{search: searchService, browse: browseService, playback: playbackService, artwork: artworkService, tasks: taskService, logger: logger}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/system/info", handler.systemInfo)
 	mux.HandleFunc("GET /api/v1/system/tasks", handler.listTasks)
 	mux.HandleFunc("POST /api/v1/system/tasks/{taskID}/runs", handler.runTask)
 	mux.HandleFunc("GET /api/v1/search", handler.searchTracks)
+	mux.HandleFunc("GET /api/v1/albums/recent", handler.recentAlbums)
 	mux.HandleFunc("POST /api/v1/playback/sessions", handler.createPlaybackSession)
 	mux.HandleFunc("GET /api/v1/playback/sessions/{sessionID}/stream", handler.stream)
 	mux.HandleFunc("HEAD /api/v1/playback/sessions/{sessionID}/stream", handler.stream)
@@ -78,11 +81,31 @@ func (h *Handler) systemInfo(w http.ResponseWriter, _ *http.Request) {
 		"apiVersion": "v1",
 		"capabilities": []string{
 			"search.tracks.v1",
+			"browse.recent-albums.v1",
 			"playback.direct.v1",
 			"playback.events.v1",
 			"system.tasks.v1",
 		},
 	})
+}
+
+func (h *Handler) recentAlbums(w http.ResponseWriter, r *http.Request) {
+	limit, err := optionalInt(r.URL.Query().Get("limit"))
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "invalid_limit", "Invalid limit", "Limit must be an integer.")
+		return
+	}
+	page, err := h.browse.RecentAlbums(r.Context(), limit)
+	if err != nil {
+		if errors.Is(err, browse.ErrInvalidLimit) {
+			writeProblem(w, r, http.StatusBadRequest, "invalid_limit", "Invalid limit", err.Error())
+			return
+		}
+		h.logger.Error("list recent albums", "error", err)
+		writeProblem(w, r, http.StatusInternalServerError, "internal_error", "Internal error", "Recent albums could not be loaded.")
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
 }
 
 func (h *Handler) listTasks(w http.ResponseWriter, r *http.Request) {

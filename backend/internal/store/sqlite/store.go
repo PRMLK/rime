@@ -185,9 +185,10 @@ func (s *Store) UpsertScannedFile(ctx context.Context, scanID string, file scann
 		return err
 	}
 	contentVersion := fmt.Sprintf("%d-%d", file.Size, file.ModifiedUnixMs)
+	indexedAt := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO media_files(id, track_id, path, container, codec, content_type, bitrate_kbps, size, modified_unix_ms, content_version, available, seen_scan_id)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+		INSERT INTO media_files(id, track_id, path, container, codec, content_type, bitrate_kbps, size, modified_unix_ms, content_version, indexed_at, available, seen_scan_id)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
 		ON CONFLICT(path) DO UPDATE SET
 			track_id = excluded.track_id,
 			container = excluded.container,
@@ -196,11 +197,12 @@ func (s *Store) UpsertScannedFile(ctx context.Context, scanID string, file scann
 			bitrate_kbps = excluded.bitrate_kbps,
 			size = excluded.size,
 			modified_unix_ms = excluded.modified_unix_ms,
+			indexed_at = CASE WHEN media_files.content_version <> excluded.content_version THEN excluded.indexed_at ELSE media_files.indexed_at END,
 			content_version = excluded.content_version,
 			available = 1,
 			seen_scan_id = excluded.seen_scan_id`,
 		mediaID, trackID, file.Path, file.Metadata.Container, file.Metadata.Codec, file.Metadata.ContentType, file.Metadata.BitrateKbps,
-		file.Size, file.ModifiedUnixMs, contentVersion, scanID)
+		file.Size, file.ModifiedUnixMs, contentVersion, indexedAt, scanID)
 	if err != nil {
 		return err
 	}
@@ -210,6 +212,69 @@ func (s *Store) UpsertScannedFile(ctx context.Context, scanID string, file scann
 func (s *Store) CompleteScan(ctx context.Context, scanID string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE media_files SET available = 0 WHERE seen_scan_id <> ?`, scanID)
 	return err
+}
+
+func (s *Store) RecentAlbums(ctx context.Context, limit int) ([]catalog.Album, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT al.id, al.title, al.artwork_id, MAX(mf.indexed_at) AS added_at
+		FROM albums al
+		JOIN tracks t ON t.album_id = al.id
+		JOIN media_files mf ON mf.track_id = t.id
+		WHERE mf.available = 1 AND mf.indexed_at IS NOT NULL
+		GROUP BY al.id, al.title, al.artwork_id
+		ORDER BY added_at DESC, al.normalized_title, al.id
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]catalog.Album, 0, limit)
+	for rows.Next() {
+		var album catalog.Album
+		var artworkID sql.NullString
+		var addedAt string
+		if err := rows.Scan(&album.ID, &album.Title, &artworkID, &addedAt); err != nil {
+			return nil, err
+		}
+		parsed, err := time.Parse(time.RFC3339Nano, addedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse album indexed time: %w", err)
+		}
+		album.AddedAt = parsed
+		if artworkID.Valid {
+			album.ArtworkID = &artworkID.String
+		}
+		album.Artists, err = s.albumArtists(ctx, album.ID)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, album)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) albumArtists(ctx context.Context, albumID string) ([]catalog.ArtistRef, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT ar.id, ar.name
+		FROM album_artists aa
+		JOIN artists ar ON ar.id = aa.artist_id
+		WHERE aa.album_id = ?
+		ORDER BY aa.position`, albumID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	artists := make([]catalog.ArtistRef, 0)
+	for rows.Next() {
+		var artist catalog.ArtistRef
+		if err := rows.Scan(&artist.ID, &artist.Name); err != nil {
+			return nil, err
+		}
+		artists = append(artists, artist)
+	}
+	return artists, rows.Err()
 }
 
 func (s *Store) EnsureScheduledTask(ctx context.Context, taskID, name string, position int) error {

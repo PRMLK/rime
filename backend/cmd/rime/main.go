@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"rime/backend/internal/artwork"
+	"rime/backend/internal/browse"
 	"rime/backend/internal/config"
 	"rime/backend/internal/library/scanner"
 	"rime/backend/internal/playback"
@@ -79,7 +80,7 @@ func run(logger *slog.Logger) error {
 	}
 	defer taskService.Close()
 
-	handler := v1.New(search.New(store), playback.New(store), artwork.NewService(store, artworkCache), taskService, logger)
+	handler := v1.New(search.New(store), browse.New(store), playback.New(store), artwork.NewService(store, artworkCache), taskService, logger)
 	server := &http.Server{
 		Addr:              cfg.Address,
 		Handler:           handler,

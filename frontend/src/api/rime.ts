@@ -9,6 +9,18 @@ export type AlbumRef = {
   title: string;
 };
 
+export type Album = {
+  id: string;
+  title: string;
+  artists: ArtistRef[];
+  artworkId?: string;
+  addedAt: string;
+};
+
+export type AlbumPage = {
+  items: Album[];
+};
+
 export type Track = {
   id: string;
   title: string;
@@ -91,6 +103,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export function searchTracks(query: string, signal?: AbortSignal): Promise<SearchPage> {
   const parameters = new URLSearchParams({ query, limit: '30' });
   return request<SearchPage>(`/api/v1/search?${parameters}`, { signal });
+}
+
+export function getRecentAlbums(signal?: AbortSignal): Promise<AlbumPage> {
+  return request<AlbumPage>('/api/v1/albums/recent?limit=12', { signal });
 }
 
 export function getScheduledTasks(signal?: AbortSignal): Promise<ScheduledTaskPage> {

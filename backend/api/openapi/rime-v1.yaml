@@ -67,6 +67,22 @@ paths:
                 $ref: '#/components/schemas/SearchPage'
         '400':
           $ref: '#/components/responses/Problem'
+  /albums/recent:
+    get:
+      operationId: listRecentAlbums
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 12 }
+      responses:
+        '200':
+          description: Albums ordered by the most recent media library ingestion time
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlbumPage'
+        '400':
+          $ref: '#/components/responses/Problem'
   /artworks/{artworkId}:
     get:
       operationId: getArtwork
@@ -183,6 +199,24 @@ components:
       properties:
         id: { type: string }
         title: { type: string }
+    Album:
+      type: object
+      required: [id, title, artists, addedAt]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        artists:
+          type: array
+          items: { $ref: '#/components/schemas/ArtistRef' }
+        artworkId: { type: string }
+        addedAt: { type: string, format: date-time }
+    AlbumPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Album' }
     Track:
       type: object
       required: [id, title, album, artists, durationMs]
