@@ -12,3 +12,7 @@ dist/
 
 # TypeScript build state
 *.tsbuildinfo
+
+# Rime runtime state and local media
+backend/data/
+backend/music/

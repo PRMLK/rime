@@ -1,3 +1,58 @@
-# Backend
+# Rime Backend
 
-Reserved for the future backend service. No server implementation exists yet.
+The Rime backend is a small Go service that scans a read-only music folder,
+indexes metadata in SQLite, exposes the native v1 API, and streams media with
+HTTP range support.
+
+Go 1.23 or newer is required. SQLite and metadata parsing are embedded in the
+binary, so the direct-play path does not require CGO, a system database, or
+FFmpeg. Transcoding is intentionally outside the first milestone.
+
+## Run
+
+```bash
+mkdir -p music data
+RIME_MUSIC_DIR="$PWD/music" RIME_DATA_DIR="$PWD/data" go run ./cmd/rime
+```
+
+The server listens on `127.0.0.1:8080` by default. Configuration is available
+through environment variables:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `RIME_ADDRESS` | `127.0.0.1:8080` | HTTP listen address |
+| `RIME_MUSIC_DIR` | `./music` | Read-only music library |
+| `RIME_DATA_DIR` | `./data` | SQLite data directory |
+| `RIME_SCAN_ON_STARTUP` | `true` | Scan the library before serving |
+
+The native API contract is documented in `api/openapi/rime-v1.yaml`.
+
+For frontend development, start this service first and then run `npm run dev`
+from `frontend`. Vite proxies `/api` to the backend automatically.
+
+## Runtime data
+
+The music directory is treated as read-only. Embedded artwork is preferred,
+then case-insensitive `cover`, `folder`, or `front` sidecars in JPEG, PNG, or
+WebP format are used. Multi-disc folders also check their album parent.
+
+Derived resources are stored below the data directory:
+
+```text
+data/
+├── rime.db
+├── cache/
+│   └── artwork/
+│       ├── original/
+│       ├── 128/
+│       ├── 256/
+│       ├── 512/
+│       └── 1024/
+└── library/
+    └── lyrics/
+```
+
+Artwork files are content-addressed and may be deleted safely; the next scan
+rebuilds originals from the music library and thumbnails are generated on
+demand. The lyrics directory is reserved for persistent downloaded or edited
+lyrics and must not be managed as an evictable cache.

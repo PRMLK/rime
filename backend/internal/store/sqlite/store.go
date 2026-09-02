@@ -1,0 +1,448 @@
+package sqlite
+
+import (
+	"context"
+	"database/sql"
+	"embed"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"net/url"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	_ "github.com/ncruces/go-sqlite3/driver"
+	_ "github.com/ncruces/go-sqlite3/embed"
+	"golang.org/x/text/unicode/norm"
+
+	"rime/backend/internal/artwork"
+	"rime/backend/internal/catalog"
+	"rime/backend/internal/id"
+	"rime/backend/internal/library/scanner"
+	"rime/backend/internal/playback"
+	"rime/backend/internal/search"
+)
+
+//go:embed migrations/*.sql
+var migrations embed.FS
+
+type Store struct {
+	db *sql.DB
+}
+
+func Open(path string) (*Store, error) {
+	u := url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
+	query := u.Query()
+	query.Add("_pragma", "busy_timeout(5000)")
+	query.Add("_pragma", "journal_mode(WAL)")
+	query.Add("_pragma", "foreign_keys(1)")
+	u.RawQuery = query.Encode()
+
+	db, err := sql.Open("sqlite3", u.String())
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite: %w", err)
+	}
+	db.SetMaxOpenConns(8)
+	db.SetMaxIdleConns(8)
+	store := &Store{db: db}
+	if err := store.migrate(context.Background()); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return store, nil
+}
+
+func (s *Store) Close() error {
+	return s.db.Close()
+}
+
+func (s *Store) migrate(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
+		return fmt.Errorf("initialize migrations: %w", err)
+	}
+	entries, err := migrations.ReadDir("migrations")
+	if err != nil {
+		return fmt.Errorf("read migrations: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+			continue
+		}
+		prefix, _, ok := strings.Cut(entry.Name(), "_")
+		version, parseErr := strconv.Atoi(prefix)
+		if !ok || parseErr != nil {
+			return fmt.Errorf("invalid migration filename %q", entry.Name())
+		}
+		var applied int
+		err := s.db.QueryRowContext(ctx, `SELECT 1 FROM schema_migrations WHERE version = ?`, version).Scan(&applied)
+		if err == nil {
+			continue
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		schema, err := migrations.ReadFile("migrations/" + entry.Name())
+		if err != nil {
+			return fmt.Errorf("read migration %d: %w", version, err)
+		}
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, string(schema)); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("apply migration %d: %w", version, err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, version, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) UpsertScannedFile(ctx context.Context, scanID string, file scanner.File) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var artworkID *string
+	if file.Artwork != nil {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO artworks(id, content_hash, content_type, extension, storage_key, source_kind, source_path, size, width, height, created_at)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET
+				content_type = excluded.content_type,
+				extension = excluded.extension,
+				storage_key = excluded.storage_key,
+				source_kind = excluded.source_kind,
+				source_path = excluded.source_path,
+				size = excluded.size,
+				width = excluded.width,
+				height = excluded.height`,
+			file.Artwork.ID, file.Artwork.ContentHash, file.Artwork.ContentType, file.Artwork.Extension,
+			file.Artwork.StorageKey, file.Artwork.SourceKind, file.Artwork.SourcePath, file.Artwork.Size,
+			file.Artwork.Width, file.Artwork.Height, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+		artworkID = &file.Artwork.ID
+	}
+
+	artistIDs := make([]string, 0, len(file.Metadata.Artists))
+	for _, name := range file.Metadata.Artists {
+		artistID, err := ensureArtist(ctx, tx, name)
+		if err != nil {
+			return err
+		}
+		artistIDs = append(artistIDs, artistID)
+	}
+	albumArtistIDs := make([]string, 0, len(file.Metadata.AlbumArtists))
+	for _, name := range file.Metadata.AlbumArtists {
+		artistID, err := ensureArtist(ctx, tx, name)
+		if err != nil {
+			return err
+		}
+		albumArtistIDs = append(albumArtistIDs, artistID)
+	}
+
+	albumKey := normalized(strings.Join(file.Metadata.AlbumArtists, "\x1f") + "\x1e" + file.Metadata.Album)
+	albumID, err := ensureAlbum(ctx, tx, albumKey, file.Metadata.Album, artworkID)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM album_artists WHERE album_id = ?`, albumID); err != nil {
+		return err
+	}
+	for position, artistID := range albumArtistIDs {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO album_artists(album_id, artist_id, position) VALUES(?, ?, ?)`, albumID, artistID, position); err != nil {
+			return err
+		}
+	}
+
+	trackKey := normalized(fmt.Sprintf("%s\x1e%d\x1e%d\x1e%s\x1e%d", albumKey, file.Metadata.DiscNumber, file.Metadata.TrackNumber, file.Metadata.Title, file.Metadata.DurationMs))
+	trackID, err := ensureTrack(ctx, tx, trackKey, albumID, artworkID, file)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM track_artists WHERE track_id = ?`, trackID); err != nil {
+		return err
+	}
+	for position, artistID := range artistIDs {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO track_artists(track_id, artist_id, role, position) VALUES(?, ?, 'primary', ?)`, trackID, artistID, position); err != nil {
+			return err
+		}
+	}
+
+	mediaID, err := id.New("med")
+	if err != nil {
+		return err
+	}
+	contentVersion := fmt.Sprintf("%d-%d", file.Size, file.ModifiedUnixMs)
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO media_files(id, track_id, path, container, codec, content_type, size, modified_unix_ms, content_version, available, seen_scan_id)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+		ON CONFLICT(path) DO UPDATE SET
+			track_id = excluded.track_id,
+			container = excluded.container,
+			codec = excluded.codec,
+			content_type = excluded.content_type,
+			size = excluded.size,
+			modified_unix_ms = excluded.modified_unix_ms,
+			content_version = excluded.content_version,
+			available = 1,
+			seen_scan_id = excluded.seen_scan_id`,
+		mediaID, trackID, file.Path, file.Metadata.Container, file.Metadata.Codec, file.Metadata.ContentType,
+		file.Size, file.ModifiedUnixMs, contentVersion, scanID)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) CompleteScan(ctx context.Context, scanID string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE media_files SET available = 0 WHERE seen_scan_id <> ?`, scanID)
+	return err
+}
+
+func ensureArtist(ctx context.Context, tx *sql.Tx, name string) (string, error) {
+	key := normalized(name)
+	var artistID string
+	err := tx.QueryRowContext(ctx, `SELECT id FROM artists WHERE identity_key = ?`, key).Scan(&artistID)
+	if err == nil {
+		_, err = tx.ExecContext(ctx, `UPDATE artists SET name = ?, normalized_name = ? WHERE id = ?`, name, key, artistID)
+		return artistID, err
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	artistID, err = id.New("art")
+	if err != nil {
+		return "", err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO artists(id, identity_key, name, normalized_name) VALUES(?, ?, ?, ?)`, artistID, key, name, key)
+	return artistID, err
+}
+
+func ensureAlbum(ctx context.Context, tx *sql.Tx, key, title string, artworkID *string) (string, error) {
+	var albumID string
+	err := tx.QueryRowContext(ctx, `SELECT id FROM albums WHERE identity_key = ?`, key).Scan(&albumID)
+	if err == nil {
+		_, err = tx.ExecContext(ctx, `UPDATE albums SET title = ?, normalized_title = ?, artwork_id = COALESCE(?, artwork_id) WHERE id = ?`, title, normalized(title), artworkID, albumID)
+		return albumID, err
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	albumID, err = id.New("alb")
+	if err != nil {
+		return "", err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO albums(id, identity_key, title, normalized_title, artwork_id) VALUES(?, ?, ?, ?, ?)`, albumID, key, title, normalized(title), artworkID)
+	return albumID, err
+}
+
+func ensureTrack(ctx context.Context, tx *sql.Tx, key, albumID string, artworkID *string, file scanner.File) (string, error) {
+	var trackID string
+	err := tx.QueryRowContext(ctx, `SELECT id FROM tracks WHERE identity_key = ?`, key).Scan(&trackID)
+	if err == nil {
+		_, err = tx.ExecContext(ctx, `UPDATE tracks SET album_id = ?, title = ?, normalized_title = ?, duration_ms = ?, disc_number = ?, track_number = ?, artwork_id = ? WHERE id = ?`,
+			albumID, file.Metadata.Title, normalized(file.Metadata.Title), file.Metadata.DurationMs, file.Metadata.DiscNumber, file.Metadata.TrackNumber, artworkID, trackID)
+		return trackID, err
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	trackID, err = id.New("trk")
+	if err != nil {
+		return "", err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO tracks(id, identity_key, album_id, title, normalized_title, duration_ms, disc_number, track_number, artwork_id) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		trackID, key, albumID, file.Metadata.Title, normalized(file.Metadata.Title), file.Metadata.DurationMs, file.Metadata.DiscNumber, file.Metadata.TrackNumber, artworkID)
+	return trackID, err
+}
+
+func (s *Store) SearchTracks(ctx context.Context, query string, limit int, cursor string) (search.Page, error) {
+	offset, err := decodeCursor(cursor)
+	if err != nil {
+		return search.Page{}, err
+	}
+	needle := normalized(query)
+	contains := "%" + escapeLike(needle) + "%"
+	prefix := escapeLike(needle) + "%"
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT DISTINCT t.id
+		FROM tracks t
+		JOIN albums al ON al.id = t.album_id
+		LEFT JOIN track_artists ta ON ta.track_id = t.id
+		LEFT JOIN artists ar ON ar.id = ta.artist_id
+		WHERE EXISTS (SELECT 1 FROM media_files mf WHERE mf.track_id = t.id AND mf.available = 1)
+		  AND (? = '' OR t.normalized_title LIKE ? ESCAPE '\' OR al.normalized_title LIKE ? ESCAPE '\' OR ar.normalized_name LIKE ? ESCAPE '\')
+		ORDER BY
+		  CASE WHEN t.normalized_title = ? THEN 0 WHEN t.normalized_title LIKE ? ESCAPE '\' THEN 1 ELSE 2 END,
+		  t.normalized_title, t.id
+		LIMIT ? OFFSET ?`, needle, contains, contains, contains, needle, prefix, limit+1, offset)
+	if err != nil {
+		return search.Page{}, err
+	}
+	defer rows.Close()
+	ids := make([]string, 0, limit+1)
+	for rows.Next() {
+		var trackID string
+		if err := rows.Scan(&trackID); err != nil {
+			return search.Page{}, err
+		}
+		ids = append(ids, trackID)
+	}
+	if err := rows.Err(); err != nil {
+		return search.Page{}, err
+	}
+
+	page := search.Page{Items: make([]catalog.Track, 0, min(limit, len(ids)))}
+	if len(ids) > limit {
+		ids = ids[:limit]
+		page.NextCursor = encodeCursor(offset + limit)
+	}
+	for _, trackID := range ids {
+		track, err := s.GetTrack(ctx, trackID)
+		if err != nil {
+			return search.Page{}, err
+		}
+		page.Items = append(page.Items, track)
+	}
+	return page, nil
+}
+
+func (s *Store) GetTrack(ctx context.Context, trackID string) (catalog.Track, error) {
+	var track catalog.Track
+	var artworkID sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT t.id, t.title, t.duration_ms, t.disc_number, t.track_number, al.id, al.title, COALESCE(t.artwork_id, al.artwork_id)
+		FROM tracks t JOIN albums al ON al.id = t.album_id
+		WHERE t.id = ? AND EXISTS (SELECT 1 FROM media_files mf WHERE mf.track_id = t.id AND mf.available = 1)`, trackID).
+		Scan(&track.ID, &track.Title, &track.DurationMs, &track.DiscNumber, &track.TrackNumber, &track.Album.ID, &track.Album.Title, &artworkID)
+	if artworkID.Valid {
+		track.ArtworkID = &artworkID.String
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return catalog.Track{}, playback.ErrTrackNotFound
+	}
+	if err != nil {
+		return catalog.Track{}, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT ar.id, ar.name, ta.role
+		FROM track_artists ta JOIN artists ar ON ar.id = ta.artist_id
+		WHERE ta.track_id = ? ORDER BY ta.position`, trackID)
+	if err != nil {
+		return catalog.Track{}, err
+	}
+	defer rows.Close()
+	track.Artists = []catalog.ArtistRef{}
+	for rows.Next() {
+		var artist catalog.ArtistRef
+		if err := rows.Scan(&artist.ID, &artist.Name, &artist.Role); err != nil {
+			return catalog.Track{}, err
+		}
+		track.Artists = append(track.Artists, artist)
+	}
+	return track, rows.Err()
+}
+
+func (s *Store) GetArtwork(ctx context.Context, artworkID string) (artwork.Asset, error) {
+	var asset artwork.Asset
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, content_hash, content_type, extension, storage_key, source_kind, source_path, size, width, height
+		FROM artworks WHERE id = ?`, artworkID).
+		Scan(&asset.ID, &asset.ContentHash, &asset.ContentType, &asset.Extension, &asset.StorageKey,
+			&asset.SourceKind, &asset.SourcePath, &asset.Size, &asset.Width, &asset.Height)
+	if errors.Is(err, sql.ErrNoRows) {
+		return artwork.Asset{}, artwork.ErrNotFound
+	}
+	return asset, err
+}
+
+func (s *Store) AvailableMedia(ctx context.Context, trackID string) ([]catalog.MediaFile, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, track_id, path, container, codec, content_type, size, modified_unix_ms, content_version FROM media_files WHERE track_id = ? AND available = 1 ORDER BY size DESC`, trackID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []catalog.MediaFile
+	for rows.Next() {
+		var media catalog.MediaFile
+		if err := rows.Scan(&media.ID, &media.TrackID, &media.Path, &media.Container, &media.Codec, &media.ContentType, &media.Size, &media.ModifiedUnixMs, &media.ContentVersion); err != nil {
+			return nil, err
+		}
+		result = append(result, media)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) CreatePlaybackSession(ctx context.Context, sessionID, trackID, mediaID, playerID string, createdAt, expiresAt time.Time) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO playback_sessions(id, track_id, media_file_id, player_id, created_at, expires_at) VALUES(?, ?, ?, ?, ?, ?)`,
+		sessionID, trackID, mediaID, playerID, createdAt.Format(time.RFC3339Nano), expiresAt.Format(time.RFC3339Nano))
+	return err
+}
+
+func (s *Store) PlaybackSessionMedia(ctx context.Context, sessionID string, now time.Time) (catalog.Track, catalog.MediaFile, error) {
+	var trackID string
+	var media catalog.MediaFile
+	err := s.db.QueryRowContext(ctx, `
+		SELECT ps.track_id, mf.id, mf.track_id, mf.path, mf.container, mf.codec, mf.content_type, mf.size, mf.modified_unix_ms, mf.content_version
+		FROM playback_sessions ps JOIN media_files mf ON mf.id = ps.media_file_id
+		WHERE ps.id = ? AND ps.expires_at > ? AND mf.available = 1`, sessionID, now.Format(time.RFC3339Nano)).
+		Scan(&trackID, &media.ID, &media.TrackID, &media.Path, &media.Container, &media.Codec, &media.ContentType, &media.Size, &media.ModifiedUnixMs, &media.ContentVersion)
+	if errors.Is(err, sql.ErrNoRows) {
+		return catalog.Track{}, catalog.MediaFile{}, playback.ErrSessionNotFound
+	}
+	if err != nil {
+		return catalog.Track{}, catalog.MediaFile{}, err
+	}
+	track, err := s.GetTrack(ctx, trackID)
+	return track, media, err
+}
+
+func (s *Store) RecordPlaybackEvent(ctx context.Context, sessionID string, event playback.Event) error {
+	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO playback_events(event_id, session_id, event_type, position_ms, occurred_at) VALUES(?, ?, ?, ?, ?)`,
+		event.EventID, sessionID, event.Type, event.PositionMs, event.OccurredAt.UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+func (s *Store) DeletePlaybackSession(ctx context.Context, sessionID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM playback_sessions WHERE id = ?`, sessionID)
+	return err
+}
+
+func normalized(value string) string {
+	return strings.ToLower(strings.Join(strings.Fields(norm.NFKC.String(value)), " "))
+}
+
+func escapeLike(value string) string {
+	replacer := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return replacer.Replace(value)
+}
+
+func encodeCursor(offset int) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(strconv.Itoa(offset)))
+}
+
+func decodeCursor(cursor string) (int, error) {
+	if cursor == "" {
+		return 0, nil
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return 0, fmt.Errorf("invalid cursor")
+	}
+	offset, err := strconv.Atoi(string(raw))
+	if err != nil || offset < 0 {
+		return 0, fmt.Errorf("invalid cursor")
+	}
+	return offset, nil
+}

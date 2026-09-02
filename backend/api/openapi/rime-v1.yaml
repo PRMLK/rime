@@ -1,0 +1,236 @@
+openapi: 3.1.0
+info:
+  title: Rime Native API
+  version: 1.0.0
+  description: Native API for catalog search and playback resolution.
+servers:
+  - url: /api/v1
+paths:
+  /system/info:
+    get:
+      operationId: getSystemInfo
+      responses:
+        '200':
+          description: Server information and capabilities
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemInfo'
+  /search:
+    get:
+      operationId: searchTracks
+      parameters:
+        - name: query
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Ordered track search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchPage'
+        '400':
+          $ref: '#/components/responses/Problem'
+  /artworks/{artworkId}:
+    get:
+      operationId: getArtwork
+      parameters:
+        - name: artworkId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: size
+          in: query
+          description: Optional maximum dimension for a cached JPEG thumbnail.
+          schema: { type: integer, enum: [128, 256, 512, 1024] }
+      responses:
+        '200':
+          description: Original artwork or generated thumbnail
+          content:
+            image/jpeg: {}
+            image/png: {}
+            image/gif: {}
+            image/webp: {}
+        '400':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+  /playback/sessions:
+    post:
+      operationId: createPlaybackSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePlaybackSession'
+      responses:
+        '201':
+          description: Resolved playback session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaybackSession'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+  /playback/sessions/{sessionId}/stream:
+    get:
+      operationId: streamPlaybackSession
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - name: Range
+          in: header
+          schema: { type: string }
+      responses:
+        '200': { description: Full media stream }
+        '206': { description: Partial media stream }
+        '404':
+          $ref: '#/components/responses/Problem'
+  /playback/sessions/{sessionId}:
+    delete:
+      operationId: deletePlaybackSession
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '204': { description: Playback session released }
+  /playback/sessions/{sessionId}/events:
+    post:
+      operationId: reportPlaybackEvent
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaybackEvent'
+      responses:
+        '204': { description: Event accepted }
+        '400':
+          $ref: '#/components/responses/Problem'
+components:
+  parameters:
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema: { type: string }
+  responses:
+    Problem:
+      description: RFC 9457 problem details
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    SystemInfo:
+      type: object
+      required: [name, apiVersion, capabilities]
+      properties:
+        name: { type: string }
+        apiVersion: { type: string }
+        capabilities:
+          type: array
+          items: { type: string }
+    ArtistRef:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        role: { type: string }
+    AlbumRef:
+      type: object
+      required: [id, title]
+      properties:
+        id: { type: string }
+        title: { type: string }
+    Track:
+      type: object
+      required: [id, title, album, artists, durationMs]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        album: { $ref: '#/components/schemas/AlbumRef' }
+        artists:
+          type: array
+          items: { $ref: '#/components/schemas/ArtistRef' }
+        durationMs: { type: integer, format: int64 }
+        discNumber: { type: integer }
+        trackNumber: { type: integer }
+        artworkId: { type: string }
+    SearchPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Track' }
+        nextCursor: { type: string }
+    MediaFormat:
+      type: object
+      required: [container]
+      properties:
+        container: { type: string }
+        codec: { type: string }
+    CreatePlaybackSession:
+      type: object
+      required: [trackId, playerId, capabilities]
+      properties:
+        trackId: { type: string }
+        startPositionMs: { type: integer, format: int64, minimum: 0 }
+        playerId: { type: string }
+        capabilities:
+          type: object
+          required: [formats, supportsByteRange]
+          properties:
+            formats:
+              type: array
+              items: { $ref: '#/components/schemas/MediaFormat' }
+            supportsByteRange: { type: boolean }
+    PlaybackSource:
+      type: object
+      required: [kind, href, contentType, container, seekMethod]
+      properties:
+        kind: { type: string, enum: [direct, transcode] }
+        href: { type: string }
+        contentType: { type: string }
+        container: { type: string }
+        codec: { type: string }
+        seekMethod: { type: string, enum: [byteRange, timeOffset, none] }
+    PlaybackSession:
+      type: object
+      required: [sessionId, track, source, expiresAt]
+      properties:
+        sessionId: { type: string }
+        track: { $ref: '#/components/schemas/Track' }
+        source: { $ref: '#/components/schemas/PlaybackSource' }
+        expiresAt: { type: string, format: date-time }
+    PlaybackEvent:
+      type: object
+      required: [eventId, type, positionMs, occurredAt]
+      properties:
+        eventId: { type: string }
+        type: { type: string, enum: [started, progress, paused, ended] }
+        positionMs: { type: integer, format: int64, minimum: 0 }
+        occurredAt: { type: string, format: date-time }
+    Problem:
+      type: object
+      required: [type, title, status, detail, instance, code]
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        instance: { type: string }
+        code: { type: string }
+        traceId: { type: string }
