@@ -1,11 +1,19 @@
 import {
-  Heart, Home, LibraryBig, ListMusic, LoaderCircle, Pause, Play, Search,
+  ChevronDown, Heart, Home, LibraryBig, LoaderCircle, Pause, Play, Search,
   SkipBack, SkipForward, Sparkles, UserRound,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { artworkUrl, searchTracks, type Track } from '@/api/rime';
 import nowPlayingCover from '@/assets/now-playing.jpg';
 import { Button } from '@/components/ui/button';
+import {
+  Drawer,
+  DrawerClose,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerTrigger,
+} from '@/components/ui/drawer';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { Slider } from '@/components/ui/slider';
@@ -30,6 +38,7 @@ export function MobilePlayer() {
   const player = useMemo(() => new HtmlAudioPlayer(), []);
   const playback = useSyncExternalStore(player.subscribe, player.getSnapshot);
   const [activeTab, setActiveTab] = useState<NavigationTab>('home');
+  const [isPlayerOpen, setIsPlayerOpen] = useState(false);
   const [isLiked, setIsLiked] = useState(false);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Track[]>([]);
@@ -39,6 +48,7 @@ export function MobilePlayer() {
   const isPlaying = playback.status === 'playing';
   const playbackLabel = isPlaying ? '暂停播放' : '开始播放';
   const currentIndex = playback.track ? results.findIndex((track) => track.id === playback.track?.id) : -1;
+  const queue = currentIndex >= 0 ? results.slice(currentIndex + 1) : results.slice(0, 3);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -66,7 +76,6 @@ export function MobilePlayer() {
   const chooseTrack = async (track: Track) => {
     try {
       await player.load(track);
-      setActiveTab('home');
     } catch {
       // The player state exposes the actionable error next to the track.
     }
@@ -80,30 +89,17 @@ export function MobilePlayer() {
 
   return (
     <TooltipProvider>
-      <div className="flex h-[100dvh] flex-col overflow-hidden bg-background text-foreground">
+      <Drawer open={isPlayerOpen} onOpenChange={setIsPlayerOpen} swipeDirection="down">
+        <div className="flex h-[100dvh] flex-col overflow-hidden bg-background text-foreground">
         <main className="min-h-0 flex-1 overflow-y-auto px-5 pt-6">
           <div className="mx-auto w-full max-w-xl pb-8">
-            <header className="flex items-center justify-between">
+            <header>
               <div>
                 <p className="text-xs text-muted-foreground">Rime Music</p>
                 <h1 className="mt-1 text-xl font-semibold">{activeLabel}</h1>
               </div>
-              <Tooltip>
-                <TooltipTrigger render={<Button variant="ghost" size="icon" aria-label="播放列表"><ListMusic aria-hidden="true" /></Button>} />
-                <TooltipContent>播放列表</TooltipContent>
-              </Tooltip>
             </header>
 
-            {activeTab === 'home' && (
-              <HomeView
-                playback={playback}
-                queue={results.filter((track) => track.id !== playback.track?.id).slice(0, 3)}
-                isLiked={isLiked}
-                onToggleLike={() => setIsLiked((liked) => !liked)}
-                onSeek={player.seek.bind(player)}
-                onChooseTrack={chooseTrack}
-              />
-            )}
             {activeTab === 'search' && (
               <SearchView
                 query={query}
@@ -121,11 +117,22 @@ export function MobilePlayer() {
 
         <footer className="shrink-0 border-t bg-background">
           <section className="mx-auto flex min-h-20 w-full max-w-xl items-center gap-3 px-4 py-3" aria-label="正在播放">
-            <ArtworkImage track={playback.track} size={128} className="size-12 shrink-0 rounded-md object-cover" />
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">{playback.track?.title ?? '未在播放'}</p>
-              <p className="mt-0.5 truncate text-xs text-muted-foreground">{artistLine(playback.track)}</p>
-            </div>
+            <DrawerTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  className="h-auto min-w-0 flex-1 justify-start px-0 py-0 text-left"
+                  disabled={!playback.track}
+                  aria-label={playback.track ? `展开《${playback.track.title}》播放器` : '暂无播放曲目'}
+                />
+              }
+            >
+              <ArtworkImage track={playback.track} size={128} className="size-12 shrink-0 rounded-md object-cover" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium">{playback.track?.title ?? '未在播放'}</span>
+                <span className="mt-0.5 block truncate text-xs text-muted-foreground">{artistLine(playback.track)}</span>
+              </span>
+            </DrawerTrigger>
             <div className="flex shrink-0 items-center">
               <PlayerButton label="上一首" disabled={currentIndex <= 0} onClick={() => playRelative(-1)}><SkipBack aria-hidden="true" /></PlayerButton>
               <Tooltip>
@@ -155,59 +162,125 @@ export function MobilePlayer() {
             })}
           </nav>
         </footer>
-      </div>
+        </div>
+
+        <NowPlayingDrawer
+          playback={playback}
+          queue={queue}
+          isLiked={isLiked}
+          canPlayPrevious={currentIndex > 0}
+          canPlayNext={currentIndex >= 0 && currentIndex < results.length - 1}
+          onToggleLike={() => setIsLiked((liked) => !liked)}
+          onTogglePlayback={() => void player.toggle()}
+          onSeek={player.seek.bind(player)}
+          onPlayPrevious={() => playRelative(-1)}
+          onPlayNext={() => playRelative(1)}
+          onChooseTrack={chooseTrack}
+        />
+      </Drawer>
     </TooltipProvider>
   );
 }
 
-function HomeView({ playback, queue, isLiked, onToggleLike, onSeek, onChooseTrack }: {
+function NowPlayingDrawer({
+  playback,
+  queue,
+  isLiked,
+  canPlayPrevious,
+  canPlayNext,
+  onToggleLike,
+  onTogglePlayback,
+  onSeek,
+  onPlayPrevious,
+  onPlayNext,
+  onChooseTrack,
+}: {
   playback: PlayerSnapshot;
   queue: Track[];
   isLiked: boolean;
+  canPlayPrevious: boolean;
+  canPlayNext: boolean;
   onToggleLike: () => void;
+  onTogglePlayback: () => void;
   onSeek: (positionMs: number) => void;
+  onPlayPrevious: () => void;
+  onPlayNext: () => void;
   onChooseTrack: (track: Track) => void;
 }) {
   const duration = Math.max(playback.durationMs, 0);
   const position = Math.min(playback.positionMs, duration || playback.positionMs);
+  const isPlaying = playback.status === 'playing';
+  const playbackLabel = isPlaying ? '暂停播放' : '开始播放';
   return (
-    <section className="mt-10" aria-labelledby="now-playing-heading">
-      <p className="text-xs font-medium text-muted-foreground">正在播放</p>
-      <div className="mt-4 overflow-hidden rounded-lg bg-muted">
-        <ArtworkImage track={playback.track} size={1024} className="aspect-square w-full object-cover" />
-      </div>
-      <div className="mt-4 flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h2 id="now-playing-heading" className="truncate text-lg font-semibold">{playback.track?.title ?? '未在播放'}</h2>
-          <p className="mt-1 truncate text-sm text-muted-foreground">{artistLine(playback.track)}</p>
-          {playback.error && <p className="mt-2 text-sm text-destructive">{playback.error}</p>}
-        </div>
-        <Tooltip>
-          <TooltipTrigger render={<Button variant={isLiked ? 'secondary' : 'ghost'} size="icon" aria-label={isLiked ? '取消喜欢' : '喜欢这首歌'} aria-pressed={isLiked} disabled={!playback.track} onClick={onToggleLike}><Heart aria-hidden="true" /></Button>} />
-          <TooltipContent>{isLiked ? '取消喜欢' : '喜欢这首歌'}</TooltipContent>
-        </Tooltip>
-      </div>
-      <div className="mt-6">
-        <Slider
-          aria-label="播放进度"
-          min={0}
-          max={Math.max(duration, 1)}
-          step={1000}
-          value={position}
-          disabled={!playback.track || duration <= 0}
-          onValueChange={(value) => onSeek(Array.isArray(value) ? (value[0] ?? 0) : value)}
+    <DrawerContent className="h-[calc(100dvh-0.5rem)] max-h-[calc(100dvh-0.5rem)]">
+      <DrawerHeader className="mx-auto w-full max-w-xl flex-row items-center gap-2 px-4 pb-2 pt-[max(env(safe-area-inset-top),0.75rem)] text-left">
+        <DrawerClose
+          render={
+            <Button variant="ghost" size="icon" aria-label="收起播放器">
+              <ChevronDown aria-hidden="true" />
+            </Button>
+          }
         />
-        <div className="mt-2 flex justify-between text-xs text-muted-foreground">
-          <span>{formatTime(position)}</span><span>{formatTime(duration)}</span>
-        </div>
+        <DrawerTitle className="min-w-0 flex-1 text-center text-sm">正在播放</DrawerTitle>
+        <span className="size-8 shrink-0" aria-hidden="true" />
+      </DrawerHeader>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-[max(env(safe-area-inset-bottom),1.5rem)]">
+        <section className="mx-auto w-full max-w-xl" aria-labelledby="now-playing-heading">
+          <div className="mx-auto mt-2 w-full max-w-md overflow-hidden rounded-lg bg-muted">
+            <ArtworkImage track={playback.track} size={1024} className="aspect-square w-full object-cover" />
+          </div>
+          <div className="mt-4 flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h2 id="now-playing-heading" className="truncate text-lg font-semibold">{playback.track?.title ?? '未在播放'}</h2>
+              <p className="mt-1 truncate text-sm text-muted-foreground">{artistLine(playback.track)}</p>
+              {playback.error && <p className="mt-2 text-sm text-destructive">{playback.error}</p>}
+            </div>
+            <Tooltip>
+              <TooltipTrigger render={<Button variant={isLiked ? 'secondary' : 'ghost'} size="icon" aria-label={isLiked ? '取消喜欢' : '喜欢这首歌'} aria-pressed={isLiked} disabled={!playback.track} onClick={onToggleLike}><Heart aria-hidden="true" /></Button>} />
+              <TooltipContent>{isLiked ? '取消喜欢' : '喜欢这首歌'}</TooltipContent>
+            </Tooltip>
+          </div>
+          <div className="mt-6">
+            <Slider
+              aria-label="播放进度"
+              min={0}
+              max={Math.max(duration, 1)}
+              step={1000}
+              value={position}
+              disabled={!playback.track || duration <= 0}
+              onValueChange={(value) => onSeek(Array.isArray(value) ? (value[0] ?? 0) : value)}
+            />
+            <div className="mt-2 flex justify-between text-xs text-muted-foreground">
+              <span>{formatTime(position)}</span><span>{formatTime(duration)}</span>
+            </div>
+          </div>
+          <div className="mt-4 flex items-center justify-center gap-6">
+            <PlayerButton label="上一首" disabled={!canPlayPrevious} onClick={onPlayPrevious}><SkipBack aria-hidden="true" /></PlayerButton>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button variant="secondary" size="icon-lg" aria-label={playbackLabel} aria-pressed={isPlaying} disabled={!playback.track || playback.status === 'loading'} onClick={onTogglePlayback}>
+                    {playback.status === 'loading' ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : isPlaying ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
+                  </Button>
+                }
+              />
+              <TooltipContent>{playbackLabel}</TooltipContent>
+            </Tooltip>
+            <PlayerButton label="下一首" disabled={!canPlayNext} onClick={onPlayNext}><SkipForward aria-hidden="true" /></PlayerButton>
+          </div>
+          <Separator className="my-8" />
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold">接下来</h2>
+            <span className="text-xs text-muted-foreground">{queue.length} 首</span>
+          </div>
+          <div className="mt-2">
+            {queue.map((track) => <QueueItem key={track.id} track={track} onChooseTrack={onChooseTrack} />)}
+            {queue.length === 0 && <p className="py-6 text-sm text-muted-foreground">暂无曲目</p>}
+          </div>
+        </section>
       </div>
-      <Separator className="my-8" />
-      <div className="flex items-center justify-between"><h2 className="text-sm font-semibold">接下来</h2><span className="text-xs text-muted-foreground">{queue.length} 首</span></div>
-      <div className="mt-2">
-        {queue.map((track) => <QueueItem key={track.id} track={track} onChooseTrack={onChooseTrack} />)}
-        {queue.length === 0 && <p className="py-6 text-sm text-muted-foreground">暂无曲目</p>}
-      </div>
-    </section>
+    </DrawerContent>
   );
 }
 
