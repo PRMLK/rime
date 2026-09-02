@@ -252,6 +252,10 @@ components:
         contentType: { type: string }
         container: { type: string }
         codec: { type: string }
+        bitrateKbps:
+          type: integer
+          minimum: 1
+          description: Effective stream bitrate; for direct playback this is the source file bitrate.
         seekMethod: { type: string, enum: [byteRange, timeOffset, none] }
     PlaybackSession:
       type: object

@@ -20,6 +20,7 @@ type Track struct {
 	Container    string
 	Codec        string
 	ContentType  string
+	BitrateKbps  int
 	HasArtwork   bool
 }
 
@@ -64,6 +65,7 @@ func (Reader) Read(path string) (Track, error) {
 		Container:    extension,
 		Codec:        codec(extension),
 		ContentType:  contentType(extension),
+		BitrateKbps:  int(properties.Bitrate),
 		HasArtwork:   len(properties.Images) > 0,
 	}, nil
 }

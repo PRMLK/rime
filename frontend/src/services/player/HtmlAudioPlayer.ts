@@ -13,6 +13,7 @@ export type PlayerSnapshot = {
   status: PlayerStatus;
   positionMs: number;
   durationMs: number;
+  source?: PlaybackSession['source'];
   error?: string;
 };
 
@@ -46,7 +47,7 @@ export class HtmlAudioPlayer {
 
   async load(track: Track): Promise<void> {
     const generation = ++this.loadGeneration;
-    this.publish({ track, status: 'loading', positionMs: 0, durationMs: track.durationMs, error: undefined });
+    this.publish({ track, status: 'loading', positionMs: 0, durationMs: track.durationMs, source: undefined, error: undefined });
     try {
       const nextSession = await createPlaybackSession(track.id, this.playerId);
       if (generation !== this.loadGeneration) {
@@ -56,6 +57,7 @@ export class HtmlAudioPlayer {
       const previousSession = this.session;
       this.audio.pause();
       this.session = nextSession;
+      this.publish({ source: nextSession.source });
       this.audio.src = nextSession.source.href;
       this.audio.load();
       if (previousSession) {

@@ -1,0 +1,1 @@
+ALTER TABLE media_files ADD COLUMN bitrate_kbps INTEGER NOT NULL DEFAULT 0;

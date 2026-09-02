@@ -29,6 +29,7 @@ type MediaFile struct {
 	Container      string
 	Codec          string
 	ContentType    string
+	BitrateKbps    int
 	Size           int64
 	ModifiedUnixMs int64
 	ContentVersion string

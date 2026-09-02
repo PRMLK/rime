@@ -8,6 +8,7 @@ import {
   type ScheduledTask, type Track,
 } from '@/api/rime';
 import nowPlayingCover from '@/assets/now-playing.jpg';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Drawer,
@@ -244,10 +245,15 @@ function NowPlayingDrawer({
               <p className="mt-1 truncate text-sm text-muted-foreground">{artistLine(playback.track)}</p>
               {playback.error && <p className="mt-2 text-sm text-destructive">{playback.error}</p>}
             </div>
-            <Tooltip>
-              <TooltipTrigger render={<Button variant={isLiked ? 'secondary' : 'ghost'} size="icon" aria-label={isLiked ? '取消喜欢' : '喜欢这首歌'} aria-pressed={isLiked} disabled={!playback.track} onClick={onToggleLike}><Heart aria-hidden="true" /></Button>} />
-              <TooltipContent>{isLiked ? '取消喜欢' : '喜欢这首歌'}</TooltipContent>
-            </Tooltip>
+            <div className="flex shrink-0 flex-col items-end gap-1">
+              <Tooltip>
+                <TooltipTrigger render={<Button variant={isLiked ? 'secondary' : 'ghost'} size="icon" aria-label={isLiked ? '取消喜欢' : '喜欢这首歌'} aria-pressed={isLiked} disabled={!playback.track} onClick={onToggleLike}><Heart aria-hidden="true" /></Button>} />
+                <TooltipContent>{isLiked ? '取消喜欢' : '喜欢这首歌'}</TooltipContent>
+              </Tooltip>
+              <div className="h-5">
+                {playback.source && <Badge variant="secondary">{playbackSourceLabel(playback.source)}</Badge>}
+              </div>
+            </div>
           </div>
           <div className="mt-6">
             <Slider
@@ -562,4 +568,9 @@ function formatDuration(milliseconds: number): string {
   const minutes = Math.floor(milliseconds / 60_000);
   const seconds = Math.floor((milliseconds % 60_000) / 1000);
   return `${minutes} 分 ${seconds} 秒`;
+}
+
+function playbackSourceLabel(source: NonNullable<PlayerSnapshot['source']>): string {
+  const format = source.container.toUpperCase();
+  return source.bitrateKbps ? `${format} · ${source.bitrateKbps} kbps` : format;
 }

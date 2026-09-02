@@ -143,6 +143,9 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&session); err != nil {
 		t.Fatal(err)
 	}
+	if session.Source.Container != "wav" || session.Source.BitrateKbps != 128 {
+		t.Fatalf("unexpected playback source: %+v", session.Source)
+	}
 
 	request, err := http.NewRequest(http.MethodGet, server.URL+session.Source.Href, nil)
 	if err != nil {

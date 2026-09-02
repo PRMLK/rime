@@ -47,6 +47,7 @@ export type PlaybackSession = {
     contentType: string;
     container: string;
     codec?: string;
+    bitrateKbps?: number;
     seekMethod: 'byteRange' | 'time';
   };
   expiresAt: string;

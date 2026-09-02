@@ -186,19 +186,20 @@ func (s *Store) UpsertScannedFile(ctx context.Context, scanID string, file scann
 	}
 	contentVersion := fmt.Sprintf("%d-%d", file.Size, file.ModifiedUnixMs)
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO media_files(id, track_id, path, container, codec, content_type, size, modified_unix_ms, content_version, available, seen_scan_id)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+		INSERT INTO media_files(id, track_id, path, container, codec, content_type, bitrate_kbps, size, modified_unix_ms, content_version, available, seen_scan_id)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
 		ON CONFLICT(path) DO UPDATE SET
 			track_id = excluded.track_id,
 			container = excluded.container,
 			codec = excluded.codec,
 			content_type = excluded.content_type,
+			bitrate_kbps = excluded.bitrate_kbps,
 			size = excluded.size,
 			modified_unix_ms = excluded.modified_unix_ms,
 			content_version = excluded.content_version,
 			available = 1,
 			seen_scan_id = excluded.seen_scan_id`,
-		mediaID, trackID, file.Path, file.Metadata.Container, file.Metadata.Codec, file.Metadata.ContentType,
+		mediaID, trackID, file.Path, file.Metadata.Container, file.Metadata.Codec, file.Metadata.ContentType, file.Metadata.BitrateKbps,
 		file.Size, file.ModifiedUnixMs, contentVersion, scanID)
 	if err != nil {
 		return err
@@ -427,7 +428,7 @@ func (s *Store) GetArtwork(ctx context.Context, artworkID string) (artwork.Asset
 }
 
 func (s *Store) AvailableMedia(ctx context.Context, trackID string) ([]catalog.MediaFile, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, track_id, path, container, codec, content_type, size, modified_unix_ms, content_version FROM media_files WHERE track_id = ? AND available = 1 ORDER BY size DESC`, trackID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, track_id, path, container, codec, content_type, bitrate_kbps, size, modified_unix_ms, content_version FROM media_files WHERE track_id = ? AND available = 1 ORDER BY size DESC`, trackID)
 	if err != nil {
 		return nil, err
 	}
@@ -435,7 +436,7 @@ func (s *Store) AvailableMedia(ctx context.Context, trackID string) ([]catalog.M
 	var result []catalog.MediaFile
 	for rows.Next() {
 		var media catalog.MediaFile
-		if err := rows.Scan(&media.ID, &media.TrackID, &media.Path, &media.Container, &media.Codec, &media.ContentType, &media.Size, &media.ModifiedUnixMs, &media.ContentVersion); err != nil {
+		if err := rows.Scan(&media.ID, &media.TrackID, &media.Path, &media.Container, &media.Codec, &media.ContentType, &media.BitrateKbps, &media.Size, &media.ModifiedUnixMs, &media.ContentVersion); err != nil {
 			return nil, err
 		}
 		result = append(result, media)
@@ -453,10 +454,10 @@ func (s *Store) PlaybackSessionMedia(ctx context.Context, sessionID string, now 
 	var trackID string
 	var media catalog.MediaFile
 	err := s.db.QueryRowContext(ctx, `
-		SELECT ps.track_id, mf.id, mf.track_id, mf.path, mf.container, mf.codec, mf.content_type, mf.size, mf.modified_unix_ms, mf.content_version
+		SELECT ps.track_id, mf.id, mf.track_id, mf.path, mf.container, mf.codec, mf.content_type, mf.bitrate_kbps, mf.size, mf.modified_unix_ms, mf.content_version
 		FROM playback_sessions ps JOIN media_files mf ON mf.id = ps.media_file_id
 		WHERE ps.id = ? AND ps.expires_at > ? AND mf.available = 1`, sessionID, now.Format(time.RFC3339Nano)).
-		Scan(&trackID, &media.ID, &media.TrackID, &media.Path, &media.Container, &media.Codec, &media.ContentType, &media.Size, &media.ModifiedUnixMs, &media.ContentVersion)
+		Scan(&trackID, &media.ID, &media.TrackID, &media.Path, &media.Container, &media.Codec, &media.ContentType, &media.BitrateKbps, &media.Size, &media.ModifiedUnixMs, &media.ContentVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return catalog.Track{}, catalog.MediaFile{}, playback.ErrSessionNotFound
 	}

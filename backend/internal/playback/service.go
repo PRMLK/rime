@@ -40,6 +40,7 @@ type Source struct {
 	ContentType string `json:"contentType"`
 	Container   string `json:"container"`
 	Codec       string `json:"codec,omitempty"`
+	BitrateKbps int    `json:"bitrateKbps,omitempty"`
 	SeekMethod  string `json:"seekMethod"`
 }
 
@@ -113,6 +114,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Session, e
 			ContentType: selected.ContentType,
 			Container:   selected.Container,
 			Codec:       selected.Codec,
+			BitrateKbps: selected.BitrateKbps,
 			SeekMethod:  "byteRange",
 		},
 		ExpiresAt: expiresAt,
