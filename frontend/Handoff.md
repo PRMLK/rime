@@ -48,11 +48,11 @@ UI 代码可以共用，但原生产物通常不能在一台机器上可靠地�
 ### 页面结构
 
 ```text
-index.html
-  -> src/main.tsx
+frontend/index.html
+  -> frontend/src/main.tsx
     -> Viewbox（开发套件）
       -> iframe /mobile.html
-        -> src/mobile.tsx
+        -> frontend/src/mobile.tsx
           -> MobilePlayer（独立移动端页面）
 ```
 
@@ -72,14 +72,14 @@ index.html
 
 | 文件 | 职责 |
 | --- | --- |
-| `src/main.tsx` | 保持干净，仅挂载 Viewbox |
-| `src/components/Viewbox.tsx` | 开发套件、开关与设备比例切换 |
-| `src/components/Viewbox.css` | 外层浅色画布与 Viewbox 尺寸规则 |
-| `mobile.html` | 独立移动端 HTML 入口 |
-| `src/mobile.tsx` | 挂载移动端 React 页面 |
-| `src/components/MobilePlayer.tsx` | 播放器主页面、底栏与局部状态 |
-| `src/index.css` | Tailwind、shadcn 主题令牌与全局样式 |
-| `vite.config.ts` | Vite 与 Tailwind 配置；声明双 HTML 入口 |
+| `frontend/src/main.tsx` | 保持干净，仅挂载 Viewbox |
+| `frontend/src/components/Viewbox.tsx` | 开发套件、开关与设备比例切换 |
+| `frontend/src/components/Viewbox.css` | 外层浅色画布与 Viewbox 尺寸规则 |
+| `frontend/mobile.html` | 独立移动端 HTML 入口 |
+| `frontend/src/mobile.tsx` | 挂载移动端 React 页面 |
+| `frontend/src/components/MobilePlayer.tsx` | 播放器主页面、底栏与局部状态 |
+| `frontend/src/index.css` | Tailwind、shadcn 主题令牌与全局样式 |
+| `frontend/vite.config.ts` | Vite 与 Tailwind 配置；声明双 HTML 入口 |
 
 ### 当前限制与后续优先级
 
@@ -94,6 +94,7 @@ index.html
 前置条件：安装与 Vite 7 兼容的 Node.js 运行时及 npm。
 
 ```bash
+cd frontend
 npm ci
 npm run dev
 ```
@@ -106,6 +107,7 @@ npm run dev
 生产构建：
 
 ```bash
+cd frontend
 npm run build
 ```
 
@@ -114,6 +116,7 @@ npm run build
 本地查看生产构建：
 
 ```bash
+cd frontend
 npm run preview
 ```
 
