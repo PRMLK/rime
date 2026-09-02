@@ -16,6 +16,35 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SystemInfo'
+  /system/tasks:
+    get:
+      operationId: listScheduledTasks
+      responses:
+        '200':
+          description: Scheduled system tasks and their latest run state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduledTaskPage'
+  /system/tasks/{taskId}/runs:
+    post:
+      operationId: runScheduledTask
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '202':
+          description: Scheduled task run started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduledTask'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
   /search:
     get:
       operationId: searchTracks
@@ -176,6 +205,23 @@ components:
           type: array
           items: { $ref: '#/components/schemas/Track' }
         nextCursor: { type: string }
+    ScheduledTask:
+      type: object
+      required: [id, name, status]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        status: { type: string, enum: [idle, running] }
+        lastRunAt: { type: string, format: date-time }
+        lastDurationMs: { type: integer, format: int64, minimum: 0 }
+        lastSucceeded: { type: boolean }
+    ScheduledTaskPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ScheduledTask' }
     MediaFormat:
       type: object
       required: [container]

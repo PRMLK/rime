@@ -23,6 +23,7 @@ import (
 	"rime/backend/internal/library/scanner"
 	"rime/backend/internal/playback"
 	"rime/backend/internal/search"
+	"rime/backend/internal/tasks"
 )
 
 //go:embed migrations/*.sql
@@ -207,6 +208,64 @@ func (s *Store) UpsertScannedFile(ctx context.Context, scanID string, file scann
 
 func (s *Store) CompleteScan(ctx context.Context, scanID string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE media_files SET available = 0 WHERE seen_scan_id <> ?`, scanID)
+	return err
+}
+
+func (s *Store) EnsureScheduledTask(ctx context.Context, taskID, name string, position int) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO scheduled_tasks(id, name, position) VALUES(?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET name = excluded.name, position = excluded.position`,
+		taskID, name, position)
+	return err
+}
+
+func (s *Store) ListScheduledTasks(ctx context.Context) ([]tasks.Task, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, name, last_run_at, last_duration_ms, last_succeeded
+		FROM scheduled_tasks ORDER BY position, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]tasks.Task, 0)
+	for rows.Next() {
+		var task tasks.Task
+		var lastRunAt sql.NullString
+		var lastDurationMs sql.NullInt64
+		var lastSucceeded sql.NullBool
+		if err := rows.Scan(&task.ID, &task.Name, &lastRunAt, &lastDurationMs, &lastSucceeded); err != nil {
+			return nil, err
+		}
+		if lastRunAt.Valid {
+			parsed, err := time.Parse(time.RFC3339Nano, lastRunAt.String)
+			if err != nil {
+				return nil, fmt.Errorf("parse scheduled task run time: %w", err)
+			}
+			task.LastRunAt = &parsed
+		}
+		if lastDurationMs.Valid {
+			task.LastDurationMs = &lastDurationMs.Int64
+		}
+		if lastSucceeded.Valid {
+			task.LastSucceeded = &lastSucceeded.Bool
+		}
+		result = append(result, task)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) RecordScheduledTaskRun(ctx context.Context, taskID string, started time.Time, duration time.Duration, runErr error) error {
+	succeeded := runErr == nil
+	var errorText any
+	if runErr != nil {
+		errorText = runErr.Error()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE scheduled_tasks
+		SET last_run_at = ?, last_duration_ms = ?, last_succeeded = ?, last_error = ?
+		WHERE id = ?`,
+		started.UTC().Format(time.RFC3339Nano), duration.Milliseconds(), succeeded, errorText, taskID)
 	return err
 }
 

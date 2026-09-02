@@ -17,6 +17,7 @@ import (
 	"rime/backend/internal/playback"
 	"rime/backend/internal/search"
 	"rime/backend/internal/store/sqlite"
+	"rime/backend/internal/tasks"
 	v1 "rime/backend/internal/transport/http/native/v1"
 )
 
@@ -51,16 +52,34 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	defer store.Close()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	libraryScanner := scanner.New(cfg.MusicDir, artworkCache, store, logger)
 
 	if cfg.ScanOnStartup {
-		report, err := scanner.New(cfg.MusicDir, artworkCache, store, logger).Scan(context.Background())
+		report, err := libraryScanner.Scan(ctx)
 		if err != nil {
 			return err
 		}
 		logger.Info("music scan complete", "discovered", report.Discovered, "indexed", report.Indexed, "failed", report.Failed, "duration", report.Duration)
 	}
+	taskService, err := tasks.New(ctx, store, tasks.Definition{
+		ID:   "library.scan",
+		Name: "扫描音乐库",
+		Run: func(ctx context.Context) error {
+			report, err := libraryScanner.Scan(ctx)
+			if err == nil {
+				logger.Info("scheduled music scan complete", "discovered", report.Discovered, "indexed", report.Indexed, "failed", report.Failed, "duration", report.Duration)
+			}
+			return err
+		},
+	})
+	if err != nil {
+		return err
+	}
+	defer taskService.Close()
 
-	handler := v1.New(search.New(store), playback.New(store), artwork.NewService(store, artworkCache), logger)
+	handler := v1.New(search.New(store), playback.New(store), artwork.NewService(store, artworkCache), taskService, logger)
 	server := &http.Server{
 		Addr:              cfg.Address,
 		Handler:           handler,
@@ -68,8 +87,6 @@ func run(logger *slog.Logger) error {
 		IdleTimeout:       90 * time.Second,
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

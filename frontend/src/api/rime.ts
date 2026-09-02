@@ -25,6 +25,19 @@ export type SearchPage = {
   nextCursor?: string;
 };
 
+export type ScheduledTask = {
+  id: string;
+  name: string;
+  status: 'idle' | 'running';
+  lastRunAt?: string;
+  lastDurationMs?: number;
+  lastSucceeded?: boolean;
+};
+
+export type ScheduledTaskPage = {
+  items: ScheduledTask[];
+};
+
 export type PlaybackSession = {
   sessionId: string;
   track: Track;
@@ -77,6 +90,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export function searchTracks(query: string, signal?: AbortSignal): Promise<SearchPage> {
   const parameters = new URLSearchParams({ query, limit: '30' });
   return request<SearchPage>(`/api/v1/search?${parameters}`, { signal });
+}
+
+export function getScheduledTasks(signal?: AbortSignal): Promise<ScheduledTaskPage> {
+  return request<ScheduledTaskPage>('/api/v1/system/tasks', { signal });
+}
+
+export function runScheduledTask(taskId: string): Promise<ScheduledTask> {
+  return request<ScheduledTask>(`/api/v1/system/tasks/${encodeURIComponent(taskId)}/runs`, { method: 'POST' });
 }
 
 export function artworkUrl(artworkId: string | undefined, size: 128 | 256 | 512 | 1024): string | undefined {

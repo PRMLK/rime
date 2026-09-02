@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"rime/backend/internal/artwork"
 	"rime/backend/internal/catalog"
@@ -22,6 +23,7 @@ import (
 	"rime/backend/internal/playback"
 	"rime/backend/internal/search"
 	"rime/backend/internal/store/sqlite"
+	"rime/backend/internal/tasks"
 	v1 "rime/backend/internal/transport/http/native/v1"
 )
 
@@ -68,8 +70,22 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 		t.Fatalf("rebuild deleted artwork cache: %v", err)
 	}
 
-	server := httptest.NewServer(v1.New(search.New(store), playback.New(store), artwork.NewService(store, artworkCache), logger))
+	taskService, err := tasks.New(context.Background(), store, tasks.Definition{
+		ID:   "library.scan",
+		Name: "扫描音乐库",
+		Run: func(ctx context.Context) error {
+			_, err := scanner.New(musicDir, artworkCache, store, logger).Scan(ctx)
+			return err
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(taskService.Close)
+	server := httptest.NewServer(v1.New(search.New(store), playback.New(store), artwork.NewService(store, artworkCache), taskService, logger))
 	t.Cleanup(server.Close)
+
+	assertScheduledTaskRun(t, server.URL)
 
 	response, err := http.Get(server.URL + "/api/v1/search?query=Morning")
 	if err != nil {
@@ -148,6 +164,45 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 	if !bytes.Equal(got, audio[8:16]) {
 		t.Fatalf("range body = %v, want %v", got, audio[8:16])
 	}
+}
+
+func assertScheduledTaskRun(t *testing.T, serverURL string) {
+	t.Helper()
+	response, err := http.Post(serverURL+"/api/v1/system/tasks/library.scan/runs", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusAccepted {
+		t.Fatalf("run scheduled task status: %s", response.Status)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		response, err = http.Get(serverURL + "/api/v1/system/tasks")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var page struct {
+			Items []tasks.Task `json:"items"`
+		}
+		if err := json.NewDecoder(response.Body).Decode(&page); err != nil {
+			response.Body.Close()
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if len(page.Items) != 1 {
+			t.Fatalf("scheduled tasks = %+v", page.Items)
+		}
+		if page.Items[0].Status == "idle" && page.Items[0].LastRunAt != nil {
+			if page.Items[0].LastDurationMs == nil || page.Items[0].LastSucceeded == nil || !*page.Items[0].LastSucceeded {
+				t.Fatalf("scheduled task result = %+v", page.Items[0])
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("scheduled task did not complete")
 }
 
 func writeCover(t *testing.T, path string, width, height int) {

@@ -17,19 +17,23 @@ import (
 	"rime/backend/internal/artwork"
 	"rime/backend/internal/playback"
 	"rime/backend/internal/search"
+	"rime/backend/internal/tasks"
 )
 
 type Handler struct {
 	search   *search.Service
 	playback *playback.Service
 	artwork  *artwork.Service
+	tasks    *tasks.Service
 	logger   *slog.Logger
 }
 
-func New(searchService *search.Service, playbackService *playback.Service, artworkService *artwork.Service, logger *slog.Logger) http.Handler {
-	handler := &Handler{search: searchService, playback: playbackService, artwork: artworkService, logger: logger}
+func New(searchService *search.Service, playbackService *playback.Service, artworkService *artwork.Service, taskService *tasks.Service, logger *slog.Logger) http.Handler {
+	handler := &Handler{search: searchService, playback: playbackService, artwork: artworkService, tasks: taskService, logger: logger}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/system/info", handler.systemInfo)
+	mux.HandleFunc("GET /api/v1/system/tasks", handler.listTasks)
+	mux.HandleFunc("POST /api/v1/system/tasks/{taskID}/runs", handler.runTask)
 	mux.HandleFunc("GET /api/v1/search", handler.searchTracks)
 	mux.HandleFunc("POST /api/v1/playback/sessions", handler.createPlaybackSession)
 	mux.HandleFunc("GET /api/v1/playback/sessions/{sessionID}/stream", handler.stream)
@@ -76,8 +80,36 @@ func (h *Handler) systemInfo(w http.ResponseWriter, _ *http.Request) {
 			"search.tracks.v1",
 			"playback.direct.v1",
 			"playback.events.v1",
+			"system.tasks.v1",
 		},
 	})
+}
+
+func (h *Handler) listTasks(w http.ResponseWriter, r *http.Request) {
+	items, err := h.tasks.List(r.Context())
+	if err != nil {
+		h.logger.Error("list scheduled tasks", "error", err)
+		writeProblem(w, r, http.StatusInternalServerError, "internal_error", "Internal error", "The scheduled tasks could not be loaded.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (h *Handler) runTask(w http.ResponseWriter, r *http.Request) {
+	task, err := h.tasks.RunNow(r.Context(), r.PathValue("taskID"))
+	if err != nil {
+		switch {
+		case errors.Is(err, tasks.ErrNotFound):
+			writeProblem(w, r, http.StatusNotFound, "scheduled_task_not_found", "Scheduled task not found", "The requested scheduled task does not exist.")
+		case errors.Is(err, tasks.ErrAlreadyRunning):
+			writeProblem(w, r, http.StatusConflict, "scheduled_task_running", "Scheduled task is running", "The requested scheduled task is already running.")
+		default:
+			h.logger.Error("run scheduled task", "task_id", r.PathValue("taskID"), "error", err)
+			writeProblem(w, r, http.StatusInternalServerError, "internal_error", "Internal error", "The scheduled task could not be started.")
+		}
+		return
+	}
+	writeJSON(w, http.StatusAccepted, task)
 }
 
 func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {

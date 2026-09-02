@@ -1,9 +1,12 @@
 import {
-  ChevronDown, Heart, Home, LibraryBig, LoaderCircle, Pause, Play, Search,
-  SkipBack, SkipForward, Sparkles, UserRound,
+  ArrowLeft, CalendarClock, ChevronDown, ChevronRight, Heart, Home, LibraryBig,
+  LoaderCircle, Pause, Play, Search, Settings, SkipBack, SkipForward, Sparkles, UserRound,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
-import { artworkUrl, searchTracks, type Track } from '@/api/rime';
+import {
+  artworkUrl, getScheduledTasks, runScheduledTask, searchTracks,
+  type ScheduledTask, type Track,
+} from '@/api/rime';
 import nowPlayingCover from '@/assets/now-playing.jpg';
 import { Button } from '@/components/ui/button';
 import {
@@ -15,6 +18,9 @@ import {
   DrawerTrigger,
 } from '@/components/ui/drawer';
 import { Input } from '@/components/ui/input';
+import {
+  Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle,
+} from '@/components/ui/item';
 import { Separator } from '@/components/ui/separator';
 import { Slider } from '@/components/ui/slider';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -39,6 +45,7 @@ export function MobilePlayer() {
   const playback = useSyncExternalStore(player.subscribe, player.getSnapshot);
   const [activeTab, setActiveTab] = useState<NavigationTab>('home');
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isLiked, setIsLiked] = useState(false);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Track[]>([]);
@@ -111,7 +118,7 @@ export function MobilePlayer() {
                 onChooseTrack={chooseTrack}
               />
             )}
-            {activeTab === 'library' && <LibraryView />}
+            {activeTab === 'library' && <LibraryView onOpenSystemSettings={() => setIsSettingsOpen(true)} />}
           </div>
         </main>
 
@@ -178,6 +185,7 @@ export function MobilePlayer() {
           onChooseTrack={chooseTrack}
         />
       </Drawer>
+      <SystemSettingsDrawer open={isSettingsOpen} onOpenChange={setIsSettingsOpen} />
     </TooltipProvider>
   );
 }
@@ -318,7 +326,7 @@ function SearchView({ query, results, isSearching, error, activeTrackId, onQuery
   );
 }
 
-function LibraryView() {
+function LibraryView({ onOpenSystemSettings }: { onOpenSystemSettings: () => void }) {
   return (
     <section className="mt-8" aria-labelledby="library-heading">
       <h2 id="library-heading" className="text-sm font-semibold">我的音乐</h2>
@@ -330,7 +338,160 @@ function LibraryView() {
           </Button>
         ))}
       </div>
+      <Separator className="my-8" />
+      <h2 className="text-sm font-semibold">设置</h2>
+      <ItemGroup className="mt-3 gap-0">
+        <Item
+          render={<button type="button" onClick={onOpenSystemSettings} />}
+          className="cursor-pointer rounded-none px-0 py-4 hover:bg-muted/50"
+        >
+          <ItemMedia variant="icon"><Settings aria-hidden="true" /></ItemMedia>
+          <ItemContent><ItemTitle>系统设置</ItemTitle></ItemContent>
+          <ItemActions><ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" /></ItemActions>
+        </Item>
+      </ItemGroup>
     </section>
+  );
+}
+
+function SystemSettingsDrawer({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const [view, setView] = useState<'root' | 'tasks'>('root');
+  const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string>();
+  const [refreshVersion, setRefreshVersion] = useState(0);
+
+  useEffect(() => {
+    if (!open || view !== 'tasks') return;
+    const controller = new AbortController();
+    let timer: number | undefined;
+    setIsLoading(true);
+    setError(undefined);
+
+    const load = async () => {
+      try {
+        const page = await getScheduledTasks(controller.signal);
+        if (controller.signal.aborted) return;
+        setScheduledTasks(page.items);
+        setIsLoading(false);
+        if (page.items.some((task) => task.status === 'running')) {
+          timer = window.setTimeout(load, 750);
+        }
+      } catch (loadError: unknown) {
+        if (loadError instanceof DOMException && loadError.name === 'AbortError') return;
+        setError(loadError instanceof Error ? loadError.message : '计划任务加载失败');
+        setIsLoading(false);
+      }
+    };
+
+    void load();
+    return () => {
+      controller.abort();
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [open, refreshVersion, view]);
+
+  const changeOpen = (nextOpen: boolean) => {
+    onOpenChange(nextOpen);
+    if (!nextOpen) setView('root');
+  };
+
+  const runTask = async (task: ScheduledTask) => {
+    setError(undefined);
+    setScheduledTasks((items) => items.map((item) => item.id === task.id ? { ...item, status: 'running' } : item));
+    try {
+      const runningTask = await runScheduledTask(task.id);
+      setScheduledTasks((items) => items.map((item) => item.id === task.id ? runningTask : item));
+      setRefreshVersion((version) => version + 1);
+    } catch (runError: unknown) {
+      setError(runError instanceof Error ? runError.message : '计划任务执行失败');
+      setRefreshVersion((version) => version + 1);
+    }
+  };
+
+  return (
+    <Drawer open={open} onOpenChange={changeOpen} swipeDirection="down">
+      <DrawerContent className="h-[calc(100dvh-0.5rem)] max-h-[calc(100dvh-0.5rem)]">
+        <DrawerHeader className="mx-auto w-full max-w-xl flex-row items-center gap-2 px-4 pb-2 pt-3 text-left">
+          {view === 'root' ? (
+            <DrawerClose
+              render={<Button variant="ghost" size="icon" aria-label="退出系统设置"><ChevronDown aria-hidden="true" /></Button>}
+            />
+          ) : (
+            <Button variant="ghost" size="icon" aria-label="返回系统设置" onClick={() => setView('root')}>
+              <ArrowLeft aria-hidden="true" />
+            </Button>
+          )}
+          <DrawerTitle className="min-w-0 flex-1 text-center text-sm">{view === 'root' ? '系统设置' : '计划任务'}</DrawerTitle>
+          <span className="size-8 shrink-0" aria-hidden="true" />
+        </DrawerHeader>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-[max(env(safe-area-inset-bottom),1.5rem)]">
+          <section className="mx-auto w-full max-w-xl" aria-label={view === 'root' ? '系统设置项目' : '计划任务列表'}>
+            {view === 'root' ? (
+              <ItemGroup className="gap-0">
+                <Item
+                  render={<button type="button" onClick={() => setView('tasks')} />}
+                  className="cursor-pointer rounded-none px-0 py-4 hover:bg-muted/50"
+                >
+                  <ItemMedia variant="icon"><CalendarClock aria-hidden="true" /></ItemMedia>
+                  <ItemContent><ItemTitle>计划任务</ItemTitle></ItemContent>
+                  <ItemActions><ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" /></ItemActions>
+                </Item>
+              </ItemGroup>
+            ) : (
+              <ScheduledTaskList tasks={scheduledTasks} isLoading={isLoading} error={error} onRunTask={runTask} />
+            )}
+          </section>
+        </div>
+      </DrawerContent>
+    </Drawer>
+  );
+}
+
+function ScheduledTaskList({ tasks, isLoading, error, onRunTask }: {
+  tasks: ScheduledTask[];
+  isLoading: boolean;
+  error?: string;
+  onRunTask: (task: ScheduledTask) => void;
+}) {
+  if (isLoading && tasks.length === 0) {
+    return <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" aria-hidden="true" />正在加载</div>;
+  }
+
+  return (
+    <>
+      {error && <p className="pb-3 text-sm text-destructive">{error}</p>}
+      <ItemGroup className="gap-0">
+        {tasks.map((task) => (
+          <Item key={task.id} className="rounded-none border-b px-0 py-4 last:border-b-0">
+            <ItemContent>
+              <ItemTitle className="text-base font-semibold">{task.name}</ItemTitle>
+              <ItemDescription className="text-xs">{scheduledTaskDetail(task)}</ItemDescription>
+            </ItemContent>
+            <ItemActions>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="secondary"
+                      size="icon"
+                      aria-label={`立即执行${task.name}`}
+                      disabled={task.status === 'running'}
+                      onClick={() => onRunTask(task)}
+                    >
+                      {task.status === 'running' ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : <Play aria-hidden="true" />}
+                    </Button>
+                  }
+                />
+                <TooltipContent>{task.status === 'running' ? '正在执行' : '立即执行'}</TooltipContent>
+              </Tooltip>
+            </ItemActions>
+          </Item>
+        ))}
+      </ItemGroup>
+      {!isLoading && !error && tasks.length === 0 && <p className="py-12 text-center text-sm text-muted-foreground">暂无计划任务</p>}
+    </>
   );
 }
 
@@ -373,4 +534,32 @@ function formatTime(milliseconds: number): string {
   if (!Number.isFinite(milliseconds) || milliseconds < 0) return '0:00';
   const totalSeconds = Math.floor(milliseconds / 1000);
   return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, '0')}`;
+}
+
+function scheduledTaskDetail(task: ScheduledTask): string {
+  if (!task.lastRunAt || task.lastDurationMs === undefined) {
+    return task.status === 'running' ? '正在执行' : '尚未执行';
+  }
+  const runAt = new Date(task.lastRunAt);
+  const formattedRunAt = Number.isNaN(runAt.getTime())
+    ? task.lastRunAt
+    : new Intl.DateTimeFormat('zh-CN', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      }).format(runAt);
+  const status = task.status === 'running' ? '正在执行 · ' : '';
+  const result = task.lastSucceeded === false ? ' · 上次执行失败' : '';
+  return `${status}上次执行：${formattedRunAt} · 耗时 ${formatDuration(task.lastDurationMs)}${result}`;
+}
+
+function formatDuration(milliseconds: number): string {
+  if (milliseconds < 1000) return `${milliseconds} 毫秒`;
+  if (milliseconds < 60_000) return `${(milliseconds / 1000).toFixed(milliseconds < 10_000 ? 1 : 0)} 秒`;
+  const minutes = Math.floor(milliseconds / 60_000);
+  const seconds = Math.floor((milliseconds % 60_000) / 1000);
+  return `${minutes} 分 ${seconds} 秒`;
 }
