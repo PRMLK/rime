@@ -583,11 +583,16 @@ function AlbumDetailView({
     );
   }
 
+  /*
+   * 容器查询单位让头图的高度、封面、信息区起点及后续间距都以实际内容宽度为基准。
+   * 576px 宽时与图二的横向比例一致；缩窄时所有关键位置连续等比收缩，
+   * 不再通过 sm（小屏断点）切换到另一套纵向布局。
+   */
   return (
-    <section className="mt-0 grid" aria-labelledby="album-title">
+    <section className="@container/album-detail mt-0 grid" aria-labelledby="album-title">
       <AlbumArtworkCard
         artworkOverflow="visible"
-        className="album-detail-hero relative col-start-1 row-start-1 h-48 w-full gap-0 border py-0 ring-0"
+        className="album-detail-hero relative col-start-1 row-start-1 h-[33.333cqw] w-full gap-0 rounded-[1.736cqw] border py-0 ring-0"
         data-artwork-color={artworkAccentColor ? '' : undefined}
         style={albumHeroStyle}
       >
@@ -597,29 +602,28 @@ function AlbumDetailView({
             onClose={onClose}
             onChooseTrack={onChooseTrack}
             onOpenArtist={onOpenArtist}
+            size="fluid"
           />
         </CardHeader>
-        <CardContent className="absolute inset-x-0 bottom-0 translate-y-14 px-4 py-0">
+        <CardContent className="absolute inset-x-0 bottom-0 translate-y-[9.722cqw] px-[2.778cqw] py-0">
           {/* 视觉区锚定在头图底部并下移；外层定位左对齐，组件内部保持封面与黑胶的相对布局。 */}
-          <AlbumVinylArtwork artwork={detail} className="ml-3 mr-auto" />
+          <AlbumVinylArtwork artwork={detail} size="fluid" className="ml-[2.083cqw] mr-auto" />
         </CardContent>
       </AlbumArtworkCard>
 
-      {/*
-       * 信息块在窄屏时位于封面下方，确保可用宽度；从 sm（小屏以上）断点开始与头图共用网格首行，
-       * 在封面右侧与其顶部对齐，避免复制标题节点或让文字覆盖封面。
-      */}
-      <div className="relative z-10 col-start-1 row-start-2 flex min-w-0 flex-col items-center gap-2 px-4 pt-20 text-center sm:row-start-1 sm:mr-4 sm:ml-64 sm:mt-22 sm:px-0 sm:pt-0 sm:self-start">
-        <h2 id="album-title" className="line-clamp-2 text-2xl font-semibold">{detail.title}</h2>
+      <div className="relative z-10 col-start-1 row-start-1 mt-[15.278cqw] mr-[2.778cqw] ml-[44.444cqw] flex min-w-0 self-start flex-col items-center gap-[1.389cqw] px-0 pt-0 text-center">
+        <h2 id="album-title" className="line-clamp-2 text-[4.167cqw] leading-[5.556cqw] font-semibold">{detail.title}</h2>
         <div className="flex justify-center">
-          <ArtistLinks artists={detail.artists} onOpenArtist={onOpenArtist} />
+          <ArtistLinks artists={detail.artists} onOpenArtist={onOpenArtist} size="fluid" />
         </div>
-        <Badge variant="secondary">{detail.tracks.length} 首</Badge>
+        <Badge variant="secondary" className="h-[3.472cqw] px-[1.389cqw] py-[0.347cqw] text-[2.083cqw]">
+          {detail.tracks.length} 首
+        </Badge>
       </div>
 
-      <Separator className="col-start-1 row-start-3 my-8 sm:row-start-2 sm:mt-24" />
-      <h3 className="col-start-1 row-start-4 text-sm font-semibold sm:row-start-3">曲目</h3>
-      <ItemGroup className="col-start-1 row-start-5 mt-2 gap-0 sm:row-start-4">
+      <Separator className="col-start-1 row-start-2 mt-[16.667cqw] mb-[5.556cqw]" />
+      <h3 className="col-start-1 row-start-3 text-sm font-semibold">曲目</h3>
+      <ItemGroup className="col-start-1 row-start-4 mt-2 gap-0">
         {detail.tracks.map((track) => (
           <Item
             key={track.id}
@@ -684,6 +688,7 @@ function useAlbumArtworkAccentColor(artworkId?: string) {
  * @param onClose 关闭当前专辑详情并返回浏览栈上一页的回调。
  * @param onChooseTrack 选择菜单中“播放第一首”时调用的播放回调。
  * @param onOpenArtist 选择菜单中某位歌手时调用的详情跳转回调。
+ * @param size 控制工具栏是否跟随专辑头图流式缩放；详情头图传入 `fluid`，其他场景保持 `fixed`。
  * @returns 与专辑头图、加载态和失败态共用的工具栏元素。
  */
 function AlbumDetailToolbar({
@@ -691,23 +696,30 @@ function AlbumDetailToolbar({
   onClose,
   onChooseTrack,
   onOpenArtist,
+  size = 'fixed',
 }: {
   detail?: AlbumDetail;
   onClose: () => void;
   onChooseTrack?: (track: Track) => void;
   onOpenArtist?: (artistId: string) => void;
+  size?: 'fixed' | 'fluid';
 }) {
   const firstTrack = detail?.tracks[0];
+  const isFluid = size === 'fluid';
+  const toolbarClassName = isFluid ? 'pt-[2.083cqw]' : 'pt-3';
+  const toolbarButtonClassName = isFluid
+    ? 'size-[5.556cqw] rounded-[1.389cqw] [&_svg]:size-[2.778cqw]!'
+    : undefined;
 
   return (
-    <div className="flex items-center justify-between pt-3">
-      <Button variant="ghost" size="icon" aria-label="返回上一页" onClick={onClose}>
+    <div className={cn('flex items-center justify-between', toolbarClassName)}>
+      <Button variant="ghost" size="icon" className={toolbarButtonClassName} aria-label="返回上一页" onClick={onClose}>
         <ArrowLeft aria-hidden="true" />
       </Button>
       {detail && onChooseTrack && onOpenArtist ? (
         <DropdownMenu>
           <Tooltip>
-            <TooltipTrigger render={<DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label="专辑更多操作" />} />}>
+            <TooltipTrigger render={<DropdownMenuTrigger render={<Button variant="ghost" size="icon" className={toolbarButtonClassName} aria-label="专辑更多操作" />} />}>
               <MoreHorizontal aria-hidden="true" />
             </TooltipTrigger>
             <TooltipContent>更多操作</TooltipContent>
@@ -741,7 +753,7 @@ function AlbumDetailToolbar({
           </DropdownMenuContent>
         </DropdownMenu>
       ) : (
-        <Button variant="ghost" size="icon" aria-label="专辑更多操作" disabled>
+        <Button variant="ghost" size="icon" className={toolbarButtonClassName} aria-label="专辑更多操作" disabled>
           <MoreHorizontal aria-hidden="true" />
         </Button>
       )}
@@ -755,27 +767,30 @@ function AlbumDetailToolbar({
  * @returns 与加载完成后尺寸一致的专辑头图和曲目骨架元素。
  */
 function AlbumDetailLoading({ onClose }: { onClose: () => void }) {
+  /*
+   * 加载态与内容态复用同一组容器比例，避免数据到达前后发生布局跳变。
+   */
   return (
-    <section className="mt-0 grid" aria-label="正在加载专辑" role="status">
+    <section className="@container/album-detail mt-0 grid" aria-label="正在加载专辑" role="status">
       <AlbumArtworkCard
         artworkOverflow="visible"
-        className="album-detail-hero relative col-start-1 row-start-1 h-48 w-full gap-0 border py-0 ring-0"
+        className="album-detail-hero relative col-start-1 row-start-1 h-[33.333cqw] w-full gap-0 rounded-[1.736cqw] border py-0 ring-0"
       >
         <CardHeader className="gap-0 px-4 pt-0 pb-0">
-          <AlbumDetailToolbar onClose={onClose} />
+          <AlbumDetailToolbar onClose={onClose} size="fluid" />
         </CardHeader>
-        <CardContent className="absolute inset-x-0 bottom-0 translate-y-14 px-4 py-0">
-          <div className="relative ml-6.5 mr-auto h-40 w-56 max-w-full" aria-hidden="true">
-            <Skeleton className="absolute top-1/2 right-0 size-32 -translate-y-1/2 rounded-full" />
-            <AlbumArtworkSkeleton className="relative size-40" />
+        <CardContent className="absolute inset-x-0 bottom-0 translate-y-[9.722cqw] px-[2.778cqw] py-0">
+          <div className="relative ml-[4.514cqw] mr-auto h-[27.778cqw] w-[38.889cqw] max-w-full" aria-hidden="true">
+            <Skeleton className="absolute top-1/2 right-0 size-[22.222cqw] -translate-y-1/2 rounded-full" />
+            <AlbumArtworkSkeleton className="relative size-[27.778cqw]" />
           </div>
         </CardContent>
       </AlbumArtworkCard>
-      <div className="relative z-10 col-start-1 row-start-2 flex min-w-0 flex-col items-center gap-3 px-4 pt-20 sm:row-start-1 sm:mr-4 sm:ml-64 sm:mt-22 sm:px-0 sm:pt-0 sm:self-start">
-        <Skeleton className="h-7 w-4/5" />
-        <Skeleton className="h-4 w-2/5" />
+      <div className="relative z-10 col-start-1 row-start-1 mt-[15.278cqw] mr-[2.778cqw] ml-[44.444cqw] flex min-w-0 self-start flex-col items-center gap-[1.389cqw] px-0 pt-0">
+        <Skeleton className="h-[4.861cqw] w-4/5" />
+        <Skeleton className="h-[2.778cqw] w-2/5" />
       </div>
-      <div className="col-start-1 row-start-3 mt-8 flex flex-col gap-1 sm:row-start-2 sm:mt-24">
+      <div className="col-start-1 row-start-2 mt-[16.667cqw] flex flex-col gap-1">
         {[0, 1, 2, 3].map((item) => <Skeleton key={item} className="h-14 w-full" />)}
       </div>
     </section>
@@ -880,16 +895,31 @@ function DetailEmpty({ title, description }: { title: string; description: strin
  * 将专辑歌手渲染为可打开的文本按钮，并在多位歌手之间提供分隔符。
  * @param artists 要显示的歌手引用列表。
  * @param onOpenArtist 收到歌手 ID 后打开详情页的回调。
+ * @param size 控制文字与间距是否跟随专辑头图流式缩放；默认保持其他调用位置的固定规格。
  * @returns 可换行的歌手导航元素。
  */
-function ArtistLinks({ artists, onOpenArtist }: { artists: ArtistRef[]; onOpenArtist: (artistId: string) => void }) {
-  if (artists.length === 0) return <p className="mt-2 text-sm text-muted-foreground">未知歌手</p>;
+function ArtistLinks({
+  artists,
+  onOpenArtist,
+  size = 'fixed',
+}: {
+  artists: ArtistRef[];
+  onOpenArtist: (artistId: string) => void;
+  size?: 'fixed' | 'fluid';
+}) {
+  const isFluid = size === 'fluid';
+  const textClassName = isFluid ? 'text-[2.431cqw] leading-[3.472cqw]' : 'text-sm';
+  const layoutClassName = isFluid
+    ? 'mt-[1.389cqw] gap-x-[0.694cqw] gap-y-[0.694cqw]'
+    : 'mt-2 gap-x-1 gap-y-1';
+
+  if (artists.length === 0) return <p className={cn(layoutClassName, textClassName, 'text-muted-foreground')}>未知歌手</p>;
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-x-1 gap-y-1">
+    <div className={cn('flex flex-wrap items-center', layoutClassName)}>
       {artists.map((artist, index) => (
-        <span key={artist.id} className="flex items-center gap-1">
-          {index > 0 && <span className="text-sm text-muted-foreground">/</span>}
-          <Button variant="link" className="h-auto p-0 text-sm" onClick={() => onOpenArtist(artist.id)}>
+        <span key={artist.id} className={cn('flex items-center', isFluid ? 'gap-[0.694cqw]' : 'gap-1')}>
+          {index > 0 && <span className={cn(textClassName, 'text-muted-foreground')}>/</span>}
+          <Button variant="link" className={cn('h-auto p-0', textClassName)} onClick={() => onOpenArtist(artist.id)}>
             {artist.name}
           </Button>
         </span>

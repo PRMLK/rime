@@ -2,6 +2,9 @@ import type { Album } from '@/api/rime';
 import { AlbumArtwork } from '@/components/AlbumArtwork';
 import { cn } from '@/lib/utils';
 
+/** 黑胶唱片的尺寸策略。 */
+type VinylRecordSize = 'fixed' | 'fluid';
+
 /**
  * 渲染专辑详情头图中位于封面后方的黑胶唱片。
  *
@@ -9,6 +12,7 @@ import { cn } from '@/lib/utils';
  * 避免调用方手动组合多个元素时出现尺寸或裁切不一致。
  *
  * @param artwork 提供中心标签图片与替代文本的专辑资料。
+ * @param size 控制唱片及其内圈、中心封面的尺寸策略；`fluid` 会以父容器的宽度连续缩放。
  * @param className 用于指定唱片在外部画布中的位置或层级，不应覆盖唱片尺寸与圆形样式。
  * @returns 不参与无障碍朗读的装饰性黑胶唱片元素。
  *
@@ -17,23 +21,50 @@ import { cn } from '@/lib/utils';
  */
 export function VinylRecord({
   artwork,
+  size = 'fixed',
   className,
 }: {
   artwork: Pick<Album, 'artworkId' | 'title'>;
+  size?: VinylRecordSize;
   className?: string;
 }) {
+  const isFluid = size === 'fluid';
+
   return (
     <div
       aria-hidden="true"
-      className={cn('size-32 rounded-full bg-primary', className)}
+      className={cn(
+        'rounded-full bg-primary',
+        isFluid ? 'size-[22.222cqw]' : 'size-32',
+        className,
+      )}
     >
-      {/* 内圈用半透明边框表达唱片纹路，中心标签维持唱片与封面的视觉关联。 */}
-      <div className="absolute inset-3 rounded-full border border-primary-foreground/20" />
+      {/* 外圈纹路用半透明边框表达唱片的压纹质感。 */}
+      <div
+        className={cn(
+          'absolute rounded-full border border-primary-foreground/20',
+          isFluid ? 'inset-[2.083cqw] border-[0.174cqw]' : 'inset-3',
+        )}
+      />
+      {/*
+       * 中间细环位于外圈与中心封标之间。18px / 576px = 3.125%，因此流式模式下
+       * 与唱片直径保持固定比例；使用 primary-foreground（主色前景）可在深浅主题中
+       * 始终呈现为克制的白色细线，而不引入固定色值。
+       */}
+      <div
+        className={cn(
+          'absolute rounded-full border border-primary-foreground/20',
+          isFluid ? 'inset-[3.125cqw] border-[0.174cqw]' : 'inset-[18px]',
+        )}
+      />
       <AlbumArtwork
         artwork={artwork}
         size="md"
         shape="circle"
-        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 border border-primary-foreground/20"
+        className={cn(
+          'absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 border border-primary-foreground/20',
+          isFluid && 'size-[9.722cqw] border-[0.174cqw]',
+        )}
       />
     </div>
   );
