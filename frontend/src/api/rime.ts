@@ -126,8 +126,15 @@ export function searchTracks(query: string, signal?: AbortSignal): Promise<Searc
   return request<SearchPage>(`/api/v1/search?${parameters}`, { signal });
 }
 
-export function getRecentAlbums(signal?: AbortSignal): Promise<AlbumPage> {
-  return request<AlbumPage>('/api/v1/albums/recent?limit=12', { signal });
+/**
+ * 获取按入库时间倒序排列的专辑。
+ * @param limit 需要返回的专辑数量，后端当前允许的范围为 1 至 50。
+ * @param signal 用于在离开页面时取消未完成请求的 AbortSignal（中止信号）。
+ * @returns 包含最近入库专辑的 Promise（异步结果）。
+ */
+export function getRecentAlbums(limit = 12, signal?: AbortSignal): Promise<AlbumPage> {
+  const parameters = new URLSearchParams({ limit: String(limit) });
+  return request<AlbumPage>(`/api/v1/albums/recent?${parameters}`, { signal });
 }
 
 /**
