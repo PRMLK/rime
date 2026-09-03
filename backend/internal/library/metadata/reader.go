@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"go.senan.xyz/taglib"
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 type Track struct {
@@ -42,19 +43,19 @@ func (Reader) Read(path string) (Track, error) {
 	}
 
 	extension := strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
-	title := first(tags, "TITLE")
+	title := cleanTagValue(first(tags, "TITLE"))
 	if title == "" {
 		title = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	}
-	artists := values(tags, "ARTIST")
+	artists := cleanTagValues(values(tags, "ARTIST"))
 	if len(artists) == 0 {
 		artists = []string{"Unknown Artist"}
 	}
-	albumArtists := values(tags, "ALBUMARTIST", "ALBUM ARTIST")
+	albumArtists := cleanTagValues(values(tags, "ALBUMARTIST", "ALBUM ARTIST"))
 	if len(albumArtists) == 0 {
 		albumArtists = artists
 	}
-	album := first(tags, "ALBUM")
+	album := cleanTagValue(first(tags, "ALBUM"))
 	if album == "" {
 		album = "Unknown Album"
 	}
@@ -138,6 +139,61 @@ func first(tags map[string][]string, keys ...string) string {
 		return ""
 	}
 	return entries[0]
+}
+
+func cleanTagValues(entries []string) []string {
+	result := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if value := cleanTagValue(entry); value != "" {
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
+// cleanTagValue removes a duplicated GBK value that was misread as Latin-1
+// when a tag also contains its correct Unicode form, such as "ÓµÓÐ;拥有".
+func cleanTagValue(value string) string {
+	parts := strings.Split(value, ";")
+	if len(parts) < 2 {
+		return value
+	}
+
+	clean := make([]string, 0, len(parts))
+	removedMojibake := false
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if isGBKMojibake(part) {
+			removedMojibake = true
+			continue
+		}
+		clean = append(clean, part)
+	}
+	if removedMojibake && len(clean) > 0 {
+		return strings.Join(clean, ";")
+	}
+	return value
+}
+
+func isGBKMojibake(value string) bool {
+	bytes := make([]byte, 0, len(value))
+	for _, character := range value {
+		if character > 0xff {
+			return false
+		}
+		bytes = append(bytes, byte(character))
+	}
+
+	decoded, err := simplifiedchinese.GBK.NewDecoder().Bytes(bytes)
+	if err != nil || string(decoded) == value {
+		return false
+	}
+	for _, character := range string(decoded) {
+		if character >= 0x4e00 && character <= 0x9fff {
+			return true
+		}
+	}
+	return false
 }
 
 func number(value string) int {

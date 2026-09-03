@@ -22,6 +22,7 @@ type Listener = () => void;
 export class HtmlAudioPlayer {
   private readonly audio = new Audio();
   private readonly listeners = new Set<Listener>();
+  private readonly endedListeners = new Set<Listener>();
   private readonly playerId = getPlayerId();
   private snapshot: PlayerSnapshot = { status: 'idle', positionMs: 0, durationMs: 0 };
   private session?: PlaybackSession;
@@ -43,6 +44,11 @@ export class HtmlAudioPlayer {
   subscribe = (listener: Listener): (() => void) => {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  };
+
+  subscribeToEnded = (listener: Listener): (() => void) => {
+    this.endedListeners.add(listener);
+    return () => this.endedListeners.delete(listener);
   };
 
   async load(track: Track): Promise<void> {
@@ -101,6 +107,7 @@ export class HtmlAudioPlayer {
     }
     this.session = undefined;
     this.listeners.clear();
+    this.endedListeners.clear();
   }
 
   private publish(update: Partial<PlayerSnapshot>): void {
@@ -128,6 +135,7 @@ export class HtmlAudioPlayer {
   private handleEnded = (): void => {
     this.publish({ status: 'paused', positionMs: this.snapshot.durationMs });
     this.report('ended');
+    this.endedListeners.forEach((listener) => listener());
   };
 
   private handleTimeUpdate = (): void => {

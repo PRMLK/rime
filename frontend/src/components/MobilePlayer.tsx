@@ -1,6 +1,21 @@
 import {
-  ArrowLeft, CalendarClock, ChevronDown, ChevronRight, Disc3, Heart, Home, LibraryBig,
-  LoaderCircle, Pause, Play, Search, Settings, SkipBack, SkipForward, Sparkles, UserRound,
+  ArrowPathRoundedSquareIcon as RepeatOutlineIcon,
+  BackwardIcon as BackwardOutlineIcon,
+  ForwardIcon as ForwardOutlineIcon,
+  HomeIcon as HomeOutlineIcon,
+  ListBulletIcon as QueueOutlineIcon,
+  MagnifyingGlassIcon as SearchOutlineIcon,
+  UserIcon as UserOutlineIcon,
+} from '@heroicons/react/24/outline';
+import {
+  HomeIcon as HomeSolidIcon,
+  PauseIcon as PauseSolidIcon,
+  PlayIcon as PlaySolidIcon,
+  UserIcon as UserSolidIcon,
+} from '@heroicons/react/24/solid';
+import {
+  ArrowLeft, CalendarClock, ChevronDown, ChevronRight, Disc3, Heart, LibraryBig,
+  LoaderCircle, Pause, Play, Settings, SkipBack, SkipForward, Sparkles, UserRound,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import {
@@ -29,21 +44,33 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Slider } from '@/components/ui/slider';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { HtmlAudioPlayer, type PlayerSnapshot } from '@/services/player/HtmlAudioPlayer';
 
 type NavigationTab = 'home' | 'search' | 'library';
+type PlaybackMode = 'sequence' | 'repeat';
 
 type DetailView =
   | { kind: 'album'; id: string }
   | { kind: 'artist'; id: string };
 
 const navigationItems = [
-  { id: 'home', label: '首页', icon: Home },
-  { id: 'search', label: '搜索', icon: Search },
-  { id: 'library', label: '我的', icon: UserRound },
+  { id: 'home', label: '首页', icon: HomeOutlineIcon, activeIcon: HomeSolidIcon, activeStrokeWidth: undefined },
+  { id: 'search', label: '搜索', icon: SearchOutlineIcon, activeIcon: SearchOutlineIcon, activeStrokeWidth: 2.75 },
+  { id: 'library', label: '我的', icon: UserOutlineIcon, activeIcon: UserSolidIcon, activeStrokeWidth: undefined },
 ] as const;
+
+const miniPlayerControlClassName = [
+  'relative size-11 rounded-full border-transparent bg-transparent hover:bg-transparent active:!translate-y-0',
+  'focus-visible:border-transparent focus-visible:ring-0',
+  'before:pointer-events-none before:absolute before:inset-2 before:rounded-full before:bg-foreground/8',
+  'before:scale-75 before:opacity-0 before:transition-[opacity,transform] before:duration-150 before:ease-out',
+  'hover:before:opacity-100 active:before:scale-95 active:before:opacity-100',
+  'focus-visible:before:scale-100 focus-visible:before:opacity-100 focus-visible:before:ring-2 focus-visible:before:ring-ring/50',
+  'motion-reduce:before:transition-none [&_svg]:relative [&_svg]:z-10',
+].join(' ');
 
 const libraryItems = [
   { title: '我喜欢的音乐', detail: '尚未同步' },
@@ -58,6 +85,7 @@ export function MobilePlayer() {
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isLiked, setIsLiked] = useState(false);
+  const [playbackMode, setPlaybackMode] = useState<PlaybackMode>('sequence');
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Track[]>([]);
   const [isSearching, setIsSearching] = useState(true);
@@ -68,6 +96,11 @@ export function MobilePlayer() {
   const pageLabel = activeDetail?.kind === 'album' ? '专辑' : activeDetail?.kind === 'artist' ? '歌手' : activeLabel;
   const isPlaying = playback.status === 'playing';
   const playbackLabel = isPlaying ? '暂停播放' : '开始播放';
+  const playbackModeLabel = playbackMode === 'sequence' ? '顺序播放' : '单曲循环';
+  const PlaybackModeIcon = playbackMode === 'sequence' ? QueueOutlineIcon : RepeatOutlineIcon;
+  const playbackProgress = playback.durationMs > 0
+    ? Math.min((playback.positionMs / playback.durationMs) * 100, 100)
+    : 0;
   const currentIndex = playback.track ? results.findIndex((track) => track.id === playback.track?.id) : -1;
   const queue = currentIndex >= 0 ? results.slice(currentIndex + 1) : results.slice(0, 3);
 
@@ -94,19 +127,27 @@ export function MobilePlayer() {
 
   useEffect(() => () => player.dispose(), [player]);
 
-  const chooseTrack = async (track: Track) => {
+  const chooseTrack = useCallback(async (track: Track) => {
     try {
       await player.load(track);
     } catch {
       // The player state exposes the actionable error next to the track.
     }
-  };
+  }, [player]);
 
-  const playRelative = (offset: number) => {
+  const playRelative = useCallback((offset: number) => {
     if (currentIndex < 0) return;
     const track = results[currentIndex + offset];
     if (track) void chooseTrack(track);
-  };
+  }, [chooseTrack, currentIndex, results]);
+
+  useEffect(() => player.subscribeToEnded(() => {
+    if (playbackMode === 'repeat' && playback.track) {
+      void chooseTrack(playback.track);
+      return;
+    }
+    playRelative(1);
+  }), [chooseTrack, playback.track, playbackMode, playRelative, player]);
 
   /**
    * 将专辑详情压入当前浏览栈，使从歌手页进入专辑后能逐层返回。
@@ -137,103 +178,151 @@ export function MobilePlayer() {
   return (
     <TooltipProvider>
       <Drawer open={isPlayerOpen} onOpenChange={setIsPlayerOpen} swipeDirection="down">
-        <div className="flex h-[100dvh] flex-col overflow-hidden bg-background text-foreground">
-        <main className="min-h-0 flex-1 overflow-y-auto px-5 pt-6">
-          <div className="mx-auto w-full max-w-xl pb-8">
-            <header className="flex items-center gap-2">
-              {activeDetail && (
-                <Button variant="ghost" size="icon" aria-label="返回上一页" onClick={closeDetail}>
-                  <ArrowLeft aria-hidden="true" />
-                </Button>
+        <Tabs
+          value={activeTab}
+          onValueChange={(value) => {
+            setActiveTab(value as NavigationTab);
+            setDetailStack([]);
+          }}
+          className="h-[100dvh] gap-0 overflow-hidden bg-background text-foreground"
+        >
+          <main className="min-h-0 flex-1 overflow-y-auto px-5 pt-6">
+            <div className="mx-auto w-full max-w-xl pb-8">
+              <header className="flex items-center gap-2">
+                {activeDetail && (
+                  <Button variant="ghost" size="icon" aria-label="返回上一页" onClick={closeDetail}>
+                    <ArrowLeft aria-hidden="true" />
+                  </Button>
+                )}
+                <div>
+                  <p className="text-xs text-muted-foreground">Rime Music</p>
+                  <h1 className="mt-1 text-xl font-semibold">{pageLabel}</h1>
+                </div>
+              </header>
+
+              {activeDetail ? (
+                <TabsContent value={activeTab}>
+                  {activeDetail.kind === 'album' && (
+                    <AlbumDetailView
+                      albumId={activeDetail.id}
+                      activeTrackId={playback.track?.id}
+                      onChooseTrack={chooseTrack}
+                      onOpenArtist={openArtist}
+                    />
+                  )}
+                  {activeDetail.kind === 'artist' && <ArtistDetailView artistId={activeDetail.id} onOpenAlbum={openAlbum} />}
+                </TabsContent>
+              ) : (
+                <>
+                  <TabsContent value="home"><HomeView onOpenAlbum={openAlbum} /></TabsContent>
+                  <TabsContent value="search">
+                    <SearchView
+                      query={query}
+                      results={results}
+                      isSearching={isSearching}
+                      error={searchError}
+                      activeTrackId={playback.track?.id}
+                      onQueryChange={setQuery}
+                      onChooseTrack={chooseTrack}
+                    />
+                  </TabsContent>
+                  <TabsContent value="library">
+                    <LibraryView onOpenSystemSettings={() => setIsSettingsOpen(true)} />
+                  </TabsContent>
+                </>
               )}
-              <div>
-                <p className="text-xs text-muted-foreground">Rime Music</p>
-                <h1 className="mt-1 text-xl font-semibold">{pageLabel}</h1>
-              </div>
-            </header>
-
-            {activeDetail?.kind === 'album' && (
-              <AlbumDetailView
-                albumId={activeDetail.id}
-                activeTrackId={playback.track?.id}
-                onChooseTrack={chooseTrack}
-                onOpenArtist={openArtist}
-              />
-            )}
-            {activeDetail?.kind === 'artist' && <ArtistDetailView artistId={activeDetail.id} onOpenAlbum={openAlbum} />}
-            {!activeDetail && activeTab === 'home' && <HomeView onOpenAlbum={openAlbum} />}
-            {!activeDetail && activeTab === 'search' && (
-              <SearchView
-                query={query}
-                results={results}
-                isSearching={isSearching}
-                error={searchError}
-                activeTrackId={playback.track?.id}
-                onQueryChange={setQuery}
-                onChooseTrack={chooseTrack}
-              />
-            )}
-            {!activeDetail && activeTab === 'library' && <LibraryView onOpenSystemSettings={() => setIsSettingsOpen(true)} />}
-          </div>
-        </main>
-
-        <footer className="shrink-0 border-t bg-background">
-          <section className="mx-auto flex min-h-20 w-full max-w-xl items-center gap-3 px-4 py-3" aria-label="正在播放">
-            <DrawerTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  className="h-auto min-w-0 flex-1 justify-start px-0 py-0 text-left"
-                  disabled={!playback.track}
-                  aria-label={playback.track ? `展开《${playback.track.title}》播放器` : '暂无播放曲目'}
-                />
-              }
-            >
-              <ArtworkImage track={playback.track} size={128} className="size-12 shrink-0 rounded-md object-cover" />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium">{playback.track?.title ?? '未在播放'}</span>
-                <span className="mt-0.5 block truncate text-xs text-muted-foreground">{artistLine(playback.track)}</span>
-              </span>
-            </DrawerTrigger>
-            <div className="flex shrink-0 items-center">
-              <PlayerButton label="上一首" disabled={currentIndex <= 0} onClick={() => playRelative(-1)}><SkipBack aria-hidden="true" /></PlayerButton>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button variant="secondary" size="icon" aria-label={playbackLabel} aria-pressed={isPlaying} disabled={!playback.track || playback.status === 'loading'} onClick={() => void player.toggle()}>
-                      {playback.status === 'loading' ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : isPlaying ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
-                    </Button>
-                  }
-                />
-                <TooltipContent>{playbackLabel}</TooltipContent>
-              </Tooltip>
-              <PlayerButton label="下一首" disabled={currentIndex < 0 || currentIndex >= results.length - 1} onClick={() => playRelative(1)}><SkipForward aria-hidden="true" /></PlayerButton>
             </div>
-          </section>
-          <Separator />
-          <nav className="mx-auto grid h-[4.75rem] w-full max-w-xl grid-cols-3 px-2 pb-[max(env(safe-area-inset-bottom),0.25rem)]" aria-label="主导航">
-            {navigationItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = activeTab === item.id;
-              return (
-                <Button
-                  key={item.id}
-                  variant={isActive ? 'secondary' : 'ghost'}
-                  className="h-full w-full flex-col gap-1 rounded-md px-0 py-2 text-[0.6875rem]"
-                  aria-current={isActive ? 'page' : undefined}
-                  onClick={() => {
-                    setActiveTab(item.id);
-                    setDetailStack([]);
-                  }}
+          </main>
+
+          <footer className="shrink-0 border-t bg-background">
+            <section className="mx-auto grid w-full max-w-xl grid-rows-[2.75rem_2.75rem] px-4" aria-label="正在播放">
+              <div className="flex min-w-0 items-center gap-3">
+                <DrawerTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      className="relative h-11 min-w-0 flex-1 items-center justify-start px-0 py-0 text-left hover:bg-transparent active:!translate-y-0 focus-visible:border-transparent focus-visible:ring-0 before:pointer-events-none before:absolute before:left-0 before:top-1.5 before:z-0 before:size-10 before:rounded-md before:bg-foreground/8 before:scale-90 before:opacity-0 before:transition-[opacity,transform] before:duration-150 before:ease-out active:before:scale-100 active:before:opacity-100 focus-visible:before:scale-100 focus-visible:before:opacity-100 focus-visible:before:ring-2 focus-visible:before:ring-ring/50 motion-reduce:before:transition-none"
+                      disabled={!playback.track}
+                      aria-label={playback.track ? `展开《${playback.track.title}》播放器` : '暂无播放曲目'}
+                    />
+                  }
                 >
-                  <Icon data-icon="inline-start" aria-hidden="true" />
-                  <span>{item.label}</span>
-                </Button>
-              );
-            })}
-          </nav>
-        </footer>
-        </div>
+                  <ArtworkImage track={playback.track} size={128} className="relative z-10 size-10 translate-y-1 shrink-0 rounded-md object-cover" />
+                  <span className="relative z-10 min-w-0 translate-y-1 flex-1 self-center">
+                    <span className="block truncate text-[0.8125rem] leading-4 font-medium">{playback.track?.title ?? '未在播放'}</span>
+                    <span className="block truncate text-[0.625rem] leading-3 text-muted-foreground">{artistLine(playback.track)}</span>
+                    <span className="block truncate text-[0.625rem] leading-3 text-muted-foreground">No lyrics</span>
+                  </span>
+                </DrawerTrigger>
+                <div className="flex shrink-0 items-center">
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          variant="ghost"
+                          size="icon-lg"
+                          className={miniPlayerControlClassName}
+                          aria-label={playbackModeLabel}
+                          aria-pressed={playbackMode === 'repeat'}
+                          onClick={() => setPlaybackMode((mode) => mode === 'sequence' ? 'repeat' : 'sequence')}
+                        >
+                          <PlaybackModeIcon aria-hidden="true" strokeWidth={2} />
+                        </Button>
+                      }
+                    />
+                    <TooltipContent>{playbackModeLabel}</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          variant="ghost"
+                          size="icon-lg"
+                          className={miniPlayerControlClassName}
+                          aria-label={playbackLabel}
+                          aria-pressed={isPlaying}
+                          disabled={!playback.track || playback.status === 'loading'}
+                          onClick={() => void player.toggle()}
+                        >
+                          {playback.status === 'loading'
+                            ? <LoaderCircle className="animate-spin" aria-hidden="true" />
+                            : isPlaying
+                              ? <PauseSolidIcon aria-hidden="true" />
+                              : <PlaySolidIcon aria-hidden="true" />}
+                        </Button>
+                      }
+                    />
+                    <TooltipContent>{playbackLabel}</TooltipContent>
+                  </Tooltip>
+                </div>
+              </div>
+              <div className="grid grid-cols-[2.75rem_auto_minmax(0,1fr)_auto_2.75rem] items-center gap-2">
+                <PlayerButton className={cn(miniPlayerControlClassName, 'before:translate-y-2 [&_svg]:translate-y-2')} label="上一首" disabled={currentIndex <= 0} onClick={() => playRelative(-1)}><BackwardOutlineIcon aria-hidden="true" strokeWidth={2} /></PlayerButton>
+                <span className="translate-y-2 text-right text-[0.625rem] tabular-nums text-muted-foreground">{formatTime(playback.positionMs)}</span>
+                <span className="h-0.5 translate-y-2 rounded-full bg-border" aria-hidden="true">
+                  <span className="block h-full rounded-full bg-foreground" style={{ width: `${playbackProgress}%` }} />
+                </span>
+                <span className="translate-y-2 text-[0.625rem] tabular-nums text-muted-foreground">{formatTime(playback.durationMs)}</span>
+                <PlayerButton className={cn(miniPlayerControlClassName, 'before:translate-y-2 [&_svg]:translate-y-2')} label="下一首" disabled={currentIndex < 0 || currentIndex >= results.length - 1} onClick={() => playRelative(1)}><ForwardOutlineIcon aria-hidden="true" strokeWidth={2} /></PlayerButton>
+              </div>
+            </section>
+            <Separator />
+            <nav className="mx-auto w-full max-w-xl pb-[max(env(safe-area-inset-bottom),0rem)]" aria-label="主导航">
+              <TabsList variant="line" size="mobile">
+                {navigationItems.map((item) => {
+                  const isActive = activeTab === item.id;
+                  const Icon = isActive ? item.activeIcon : item.icon;
+                  return (
+                    <TabsTrigger key={item.id} value={item.id} variant="mobile">
+                      <span data-slot="mobile-tab-icon"><Icon aria-hidden="true" strokeWidth={isActive ? item.activeStrokeWidth : 2} /></span>
+                      <span data-slot="mobile-tab-label">{item.label}</span>
+                    </TabsTrigger>
+                  );
+                })}
+              </TabsList>
+            </nav>
+          </footer>
+        </Tabs>
 
         <NowPlayingDrawer
           playback={playback}
@@ -1042,10 +1131,10 @@ function AlbumArtworkImage({ album, className = 'aspect-square w-full bg-muted o
   );
 }
 
-function PlayerButton({ label, disabled, onClick, children }: { label: string; disabled: boolean; onClick: () => void; children: ReactNode }) {
+function PlayerButton({ label, disabled, onClick, children, className }: { label: string; disabled: boolean; onClick: () => void; children: ReactNode; className?: string }) {
   return (
     <Tooltip>
-      <TooltipTrigger render={<Button variant="ghost" size="icon" aria-label={label} disabled={disabled} onClick={onClick}>{children}</Button>} />
+      <TooltipTrigger render={<Button variant="ghost" size="icon" className={className} aria-label={label} disabled={disabled} onClick={onClick}>{children}</Button>} />
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
   );
