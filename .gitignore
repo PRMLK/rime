@@ -17,3 +17,6 @@ dist/
 backend/data/
 backend/music/
 runtime/
+
+# For individual use by developers
+AGENTS.md
