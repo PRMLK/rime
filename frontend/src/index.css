@@ -81,6 +81,9 @@
     --sidebar-accent-foreground: oklch(0.205 0 0);
     --sidebar-border: oklch(0.922 0 0);
     --sidebar-ring: oklch(0.708 0 0);
+    --album-detail-hero-start: oklch(0.968 0.016 8);
+    --album-detail-hero-middle: oklch(0.985 0.009 350);
+    --album-detail-hero-end: oklch(0.994 0.004 300);
 }
 
 .dark {
@@ -115,6 +118,9 @@
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.556 0 0);
+    --album-detail-hero-start: oklch(0.24 0.014 8);
+    --album-detail-hero-middle: oklch(0.22 0.01 350);
+    --album-detail-hero-end: oklch(0.205 0.006 300);
 }
 
 @layer base {
@@ -127,4 +133,30 @@
   html {
     @apply font-sans;
     }
+}
+
+@layer components {
+  /*
+   * 专辑详情顶部使用独立的柔和渐变，而非复用列表的纯色弱化背景。
+   * 色彩令牌在浅色与深色主题中分别定义，保证封面、黑胶和工具栏在两种主题下
+   * 都保持足够对比度；渐变向右下角逐步收束，形成与参考图一致的轻盈层次。
+   */
+  .album-detail-hero {
+    background-image: linear-gradient(
+      135deg,
+      var(--album-detail-hero-start) 0%,
+      var(--album-detail-hero-middle) 48%,
+      var(--album-detail-hero-end) 100%
+    );
+  }
+
+  /* 封面主色仅作为低比例混色，保留浅色背景与文字、控件的可读性。 */
+  .album-detail-hero[data-artwork-color] {
+    background-image: linear-gradient(
+      135deg,
+      color-mix(in oklch, var(--album-detail-artwork-color) 18%, var(--background)) 0%,
+      color-mix(in oklch, var(--album-detail-artwork-color) 10%, var(--background)) 52%,
+      color-mix(in oklch, var(--album-detail-artwork-color) 4%, var(--background)) 100%
+    );
+  }
 }

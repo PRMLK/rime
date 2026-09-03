@@ -17,13 +17,14 @@ import {
   ArrowLeft, CalendarClock, ChevronDown, ChevronRight, Disc3, Heart, LibraryBig,
   LoaderCircle, MoreHorizontal, Pause, Play, Settings, SkipBack, SkipForward, Sparkles, UserRound,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
 import {
-  ApiError, getAlbumDetail, getArtistDetail, getRecentAlbums, getScheduledTasks, getTrackLyrics, runScheduledTask, searchTracks,
+  ApiError, artworkUrl, getAlbumDetail, getArtistDetail, getRecentAlbums, getScheduledTasks, getTrackLyrics, runScheduledTask, searchTracks,
   type Album, type AlbumDetail, type ArtistDetail, type ArtistRef, type LyricsDocument, type ScheduledTask, type Track,
 } from '@/api/rime';
 import { AlbumArtwork } from '@/components/AlbumArtwork';
 import { AlbumArtworkCard } from '@/components/AlbumArtworkCard';
+import { AlbumVinylArtwork } from '@/components/AlbumVinylArtwork';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CardContent, CardHeader } from '@/components/ui/card';
@@ -56,6 +57,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Slider } from '@/components/ui/slider';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { getArtworkAccentColor } from '@/lib/artwork-color';
 import { cn } from '@/lib/utils';
 import { HtmlAudioPlayer, type PlayerSnapshot } from '@/services/player/HtmlAudioPlayer';
 
@@ -551,6 +553,10 @@ function AlbumDetailView({
   const [detail, setDetail] = useState<AlbumDetail>();
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string>();
+  const artworkAccentColor = useAlbumArtworkAccentColor(detail?.artworkId);
+  const albumHeroStyle = artworkAccentColor
+    ? { '--album-detail-artwork-color': artworkAccentColor } as CSSProperties
+    : undefined;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -580,31 +586,32 @@ function AlbumDetailView({
   }
 
   return (
-    <section className="mt-0" aria-labelledby="album-title">
-      <AlbumArtworkCard className="gap-0 border bg-muted py-0 ring-0">
+    <section className="mt-0 grid" aria-labelledby="album-title">
+      <AlbumArtworkCard
+        artworkOverflow="visible"
+        className="album-detail-hero relative col-start-1 row-start-1 h-48 w-full gap-0 border py-0 ring-0"
+        data-artwork-color={artworkAccentColor ? '' : undefined}
+        style={albumHeroStyle}
+      >
         <CardHeader className="gap-0 px-4 pt-0 pb-0">
-          <AlbumDetailToolbar detail={detail} onClose={onClose} onChooseTrack={onChooseTrack} onOpenArtist={onOpenArtist} />
-          <p className="mt-2 text-center text-sm font-medium text-muted-foreground">{artistNames(detail.artists)}</p>
+          <AlbumDetailToolbar
+            detail={detail}
+            onClose={onClose}
+            onChooseTrack={onChooseTrack}
+            onOpenArtist={onOpenArtist}
+          />
         </CardHeader>
-        <CardContent className="px-4 pt-8 pb-8">
-          <div className="relative mx-auto h-40 w-56 max-w-full" aria-hidden="true">
-            {/* 画布比封面更宽，唱片先于封面渲染，右侧固定露出 64px；中心标签复用专辑封面并圆形裁切。 */}
-            <div className="absolute top-1/2 right-0 size-32 -translate-y-1/2 rounded-full bg-primary">
-              <div className="absolute inset-3 rounded-full border border-primary-foreground/20" />
-              <AlbumArtwork
-                artwork={detail}
-                size="md"
-                shape="circle"
-                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 border border-primary-foreground/20"
-              />
-            </div>
-            <AlbumArtwork artwork={detail} size="lg" className="relative shadow-sm" />
-          </div>
+        <CardContent className="absolute inset-x-0 bottom-0 translate-y-14 px-4 py-0">
+          {/* 视觉区锚定在头图底部并下移；外层定位左对齐，组件内部保持封面与黑胶的相对布局。 */}
+          <AlbumVinylArtwork artwork={detail} className="ml-3 mr-auto" />
         </CardContent>
       </AlbumArtworkCard>
 
-      <div className="flex flex-col items-center gap-2 px-4 pt-6 text-center">
-        <p className="text-sm text-muted-foreground">专辑</p>
+      {/*
+       * 信息块在窄屏时位于封面下方，确保可用宽度；从 sm（小屏以上）断点开始与头图共用网格首行，
+       * 在封面右侧与其顶部对齐，避免复制标题节点或让文字覆盖封面。
+      */}
+      <div className="relative z-10 col-start-1 row-start-2 flex min-w-0 flex-col items-center gap-2 px-4 pt-20 text-center sm:row-start-1 sm:mr-4 sm:ml-64 sm:mt-22 sm:px-0 sm:pt-0 sm:self-start">
         <h2 id="album-title" className="line-clamp-2 text-2xl font-semibold">{detail.title}</h2>
         <div className="flex justify-center">
           <ArtistLinks artists={detail.artists} onOpenArtist={onOpenArtist} />
@@ -612,9 +619,9 @@ function AlbumDetailView({
         <Badge variant="secondary">{detail.tracks.length} 首</Badge>
       </div>
 
-      <Separator className="my-8" />
-      <h3 className="text-sm font-semibold">曲目</h3>
-      <ItemGroup className="mt-2 gap-0">
+      <Separator className="col-start-1 row-start-3 my-8 sm:row-start-2 sm:mt-24" />
+      <h3 className="col-start-1 row-start-4 text-sm font-semibold sm:row-start-3">曲目</h3>
+      <ItemGroup className="col-start-1 row-start-5 mt-2 gap-0 sm:row-start-4">
         {detail.tracks.map((track) => (
           <Item
             key={track.id}
@@ -636,6 +643,41 @@ function AlbumDetailView({
       </ItemGroup>
     </section>
   );
+}
+
+/**
+ * 根据当前专辑封面异步取得头图渐变需要的强调色。
+ *
+ * 专辑切换时会先清空旧颜色，避免前一张封面的色彩短暂显示在新专辑上；异步请求返回后
+ * 会再次确认组件仍处于当前请求范围内，防止较慢的旧请求覆盖新专辑的颜色。
+ *
+ * @param artworkId 当前专辑封面的唯一标识；没有封面时返回 `undefined`。
+ * @returns 可作为 CSS 自定义属性值的 `rgb()` 颜色字符串；提取失败时返回 `undefined`。
+ */
+function useAlbumArtworkAccentColor(artworkId?: string) {
+  const [accentColor, setAccentColor] = useState<string>();
+
+  useEffect(() => {
+    const source = artworkUrl(artworkId, 128);
+    let isCurrent = true;
+    setAccentColor(undefined);
+
+    if (!source) {
+      return () => {
+        isCurrent = false;
+      };
+    }
+
+    void getArtworkAccentColor(source).then((color) => {
+      if (isCurrent) setAccentColor(color);
+    });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [artworkId]);
+
+  return accentColor;
 }
 
 /**
@@ -716,22 +758,26 @@ function AlbumDetailToolbar({
  */
 function AlbumDetailLoading({ onClose }: { onClose: () => void }) {
   return (
-    <section className="mt-0" aria-label="正在加载专辑" role="status">
-      <AlbumArtworkCard className="gap-0 border bg-muted py-0 ring-0">
+    <section className="mt-0 grid" aria-label="正在加载专辑" role="status">
+      <AlbumArtworkCard
+        artworkOverflow="visible"
+        className="album-detail-hero relative col-start-1 row-start-1 h-48 w-full gap-0 border py-0 ring-0"
+      >
         <CardHeader className="gap-0 px-4 pt-0 pb-0">
           <AlbumDetailToolbar onClose={onClose} />
-          <Skeleton className="mx-auto mt-2 h-4 w-24" />
         </CardHeader>
-        <CardContent className="px-4 pt-8 pb-8">
-          <Skeleton className="mx-auto size-40 rounded-md" />
+        <CardContent className="absolute inset-x-0 bottom-0 translate-y-14 px-4 py-0">
+          <div className="relative ml-6.5 mr-auto h-40 w-56 max-w-full" aria-hidden="true">
+            <Skeleton className="absolute top-1/2 right-0 size-32 -translate-y-1/2 rounded-full" />
+            <Skeleton className="relative size-40 rounded-md" />
+          </div>
         </CardContent>
       </AlbumArtworkCard>
-      <div className="flex flex-col items-center gap-3 px-4 pt-6">
-        <Skeleton className="h-4 w-12" />
+      <div className="relative z-10 col-start-1 row-start-2 flex min-w-0 flex-col items-center gap-3 px-4 pt-20 sm:row-start-1 sm:mr-4 sm:ml-64 sm:mt-22 sm:px-0 sm:pt-0 sm:self-start">
         <Skeleton className="h-7 w-4/5" />
         <Skeleton className="h-4 w-2/5" />
       </div>
-      <div className="mt-8 flex flex-col gap-1">
+      <div className="col-start-1 row-start-3 mt-8 flex flex-col gap-1 sm:row-start-2 sm:mt-24">
         {[0, 1, 2, 3].map((item) => <Skeleton key={item} className="h-14 w-full" />)}
       </div>
     </section>
