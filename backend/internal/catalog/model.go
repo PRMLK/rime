@@ -21,6 +21,20 @@ type Album struct {
 	AddedAt   time.Time   `json:"addedAt"`
 }
 
+// AlbumDetail 表示可在专辑详情页展示的专辑资料。
+// 嵌入 Album 以保持列表和详情共用同一套基础字段；Tracks 仅包含当前可播放的曲目。
+type AlbumDetail struct {
+	Album
+	Tracks []Track `json:"tracks"`
+}
+
+// ArtistDetail 表示可在歌手详情页展示的歌手资料。
+// Albums 按专辑名称排序，且只包含至少有一首可播放曲目的专辑。
+type ArtistDetail struct {
+	ArtistRef
+	Albums []Album `json:"albums"`
+}
+
 type Track struct {
 	ID          string      `json:"id"`
 	Title       string      `json:"title"`

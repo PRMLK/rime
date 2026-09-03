@@ -83,6 +83,40 @@ paths:
                 $ref: '#/components/schemas/AlbumPage'
         '400':
           $ref: '#/components/responses/Problem'
+  /albums/{albumId}:
+    get:
+      operationId: getAlbumDetail
+      parameters:
+        - name: albumId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Album metadata and its available tracks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlbumDetail'
+        '404':
+          $ref: '#/components/responses/Problem'
+  /artists/{artistId}:
+    get:
+      operationId: getArtistDetail
+      parameters:
+        - name: artistId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Artist metadata and their available albums
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtistDetail'
+        '404':
+          $ref: '#/components/responses/Problem'
   /tracks/{trackId}/lyrics:
     get:
       operationId: getTrackLyrics
@@ -232,6 +266,24 @@ components:
       required: [items]
       properties:
         items:
+          type: array
+          items: { $ref: '#/components/schemas/Album' }
+    AlbumDetail:
+      allOf:
+        - $ref: '#/components/schemas/Album'
+        - type: object
+          required: [tracks]
+          properties:
+            tracks:
+              type: array
+              items: { $ref: '#/components/schemas/Track' }
+    ArtistDetail:
+      type: object
+      required: [id, name, albums]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        albums:
           type: array
           items: { $ref: '#/components/schemas/Album' }
     Track:

@@ -255,6 +255,143 @@ func (s *Store) RecentAlbums(ctx context.Context, limit int) ([]catalog.Album, e
 	return result, rows.Err()
 }
 
+// AlbumDetail 读取一个专辑的基础资料、专辑歌手及全部可播放曲目。
+// 参数 ctx 用于取消数据库查询，albumID 为目标专辑 ID。
+// 返回 sql.ErrNoRows 表示该专辑不存在，或其中已经没有可播放的媒体文件。
+func (s *Store) AlbumDetail(ctx context.Context, albumID string) (catalog.AlbumDetail, error) {
+	var detail catalog.AlbumDetail
+	var artworkID sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT al.id, al.title, al.artwork_id
+		FROM albums al
+		WHERE al.id = ?
+		  AND EXISTS (
+			SELECT 1
+			FROM tracks t
+			JOIN media_files mf ON mf.track_id = t.id
+			WHERE t.album_id = al.id AND mf.available = 1
+		  )`, albumID).
+		Scan(&detail.ID, &detail.Title, &artworkID)
+	if err != nil {
+		return catalog.AlbumDetail{}, err
+	}
+	if artworkID.Valid {
+		detail.ArtworkID = &artworkID.String
+	}
+	detail.Artists, err = s.albumArtists(ctx, albumID)
+	if err != nil {
+		return catalog.AlbumDetail{}, err
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT t.id
+		FROM tracks t
+		WHERE t.album_id = ?
+		  AND EXISTS (SELECT 1 FROM media_files mf WHERE mf.track_id = t.id AND mf.available = 1)
+		ORDER BY t.disc_number, t.track_number, t.normalized_title, t.id`, albumID)
+	if err != nil {
+		return catalog.AlbumDetail{}, err
+	}
+	defer rows.Close()
+
+	detail.Tracks = make([]catalog.Track, 0)
+	for rows.Next() {
+		var trackID string
+		if err := rows.Scan(&trackID); err != nil {
+			return catalog.AlbumDetail{}, err
+		}
+		track, err := s.GetTrack(ctx, trackID)
+		if err != nil {
+			return catalog.AlbumDetail{}, err
+		}
+		detail.Tracks = append(detail.Tracks, track)
+	}
+	if err := rows.Err(); err != nil {
+		return catalog.AlbumDetail{}, err
+	}
+	return detail, nil
+}
+
+// ArtistDetail 读取歌手资料，以及该歌手参与且仍有可播放曲目的专辑。
+// 参数 ctx 用于取消数据库查询，artistID 为目标歌手 ID。
+// 返回 sql.ErrNoRows 表示歌手不存在，或该歌手没有任何可播放曲目。
+func (s *Store) ArtistDetail(ctx context.Context, artistID string) (catalog.ArtistDetail, error) {
+	var detail catalog.ArtistDetail
+	err := s.db.QueryRowContext(ctx, `
+		SELECT ar.id, ar.name
+		FROM artists ar
+		WHERE ar.id = ?
+		  AND EXISTS (
+			SELECT 1
+			FROM tracks t
+			JOIN media_files mf ON mf.track_id = t.id
+			LEFT JOIN album_artists aa ON aa.album_id = t.album_id AND aa.artist_id = ar.id
+			LEFT JOIN track_artists ta ON ta.track_id = t.id AND ta.artist_id = ar.id
+			WHERE mf.available = 1 AND (aa.artist_id IS NOT NULL OR ta.artist_id IS NOT NULL)
+		  )`, artistID).
+		Scan(&detail.ID, &detail.Name)
+	if err != nil {
+		return catalog.ArtistDetail{}, err
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT al.id, al.title, al.artwork_id,
+			(
+				SELECT MAX(mf.indexed_at)
+				FROM tracks t
+				JOIN media_files mf ON mf.track_id = t.id
+				WHERE t.album_id = al.id AND mf.available = 1
+			) AS added_at
+		FROM albums al
+		WHERE EXISTS (
+			SELECT 1
+			FROM tracks t
+			JOIN media_files mf ON mf.track_id = t.id
+			WHERE t.album_id = al.id AND mf.available = 1
+		  )
+		  AND (
+			EXISTS (SELECT 1 FROM album_artists aa WHERE aa.album_id = al.id AND aa.artist_id = ?)
+			OR EXISTS (
+				SELECT 1
+				FROM tracks t
+				JOIN track_artists ta ON ta.track_id = t.id
+				WHERE t.album_id = al.id AND ta.artist_id = ?
+			)
+		  )
+		ORDER BY al.normalized_title, al.id`, artistID, artistID)
+	if err != nil {
+		return catalog.ArtistDetail{}, err
+	}
+	defer rows.Close()
+
+	detail.Albums = make([]catalog.Album, 0)
+	for rows.Next() {
+		var album catalog.Album
+		var artworkID sql.NullString
+		var addedAt string
+		if err := rows.Scan(&album.ID, &album.Title, &artworkID, &addedAt); err != nil {
+			return catalog.ArtistDetail{}, err
+		}
+		parsed, err := time.Parse(time.RFC3339Nano, addedAt)
+		if err != nil {
+			return catalog.ArtistDetail{}, fmt.Errorf("parse artist album indexed time: %w", err)
+		}
+		album.AddedAt = parsed
+		if artworkID.Valid {
+			album.ArtworkID = &artworkID.String
+		}
+		album.Artists, err = s.albumArtists(ctx, album.ID)
+		if err != nil {
+			return catalog.ArtistDetail{}, err
+		}
+		detail.Albums = append(detail.Albums, album)
+	}
+	if err := rows.Err(); err != nil {
+		return catalog.ArtistDetail{}, err
+	}
+	return detail, nil
+}
+
 func (s *Store) albumArtists(ctx context.Context, albumID string) ([]catalog.ArtistRef, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ar.id, ar.name

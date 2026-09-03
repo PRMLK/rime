@@ -122,6 +122,7 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 	if len(page.Items) != 1 || page.Items[0].Title != "Morning Bell" {
 		t.Fatalf("unexpected search page: %+v", page)
 	}
+	assertAlbumAndArtistDetails(t, server.URL, page.Items[0])
 	if page.Items[0].ArtworkID == nil {
 		t.Fatal("search result has no artwork ID")
 	}
@@ -194,6 +195,51 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 	}
 	if !bytes.Equal(got, audio[8:16]) {
 		t.Fatalf("range body = %v, want %v", got, audio[8:16])
+	}
+}
+
+// assertAlbumAndArtistDetails 验证专辑与歌手详情接口返回的关联资料。
+// 参数 t 提供测试断言上下文，serverURL 是测试服务地址，track 提供已知有效的关联 ID。
+// 函数不返回值；任一响应结构或内容不符合预期时立即终止测试。
+func assertAlbumAndArtistDetails(t *testing.T, serverURL string, track catalog.Track) {
+	t.Helper()
+
+	response, err := http.Get(serverURL + "/api/v1/albums/" + track.Album.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("album detail status: %s", response.Status)
+	}
+	var albumDetail catalog.AlbumDetail
+	if err := json.NewDecoder(response.Body).Decode(&albumDetail); err != nil {
+		t.Fatal(err)
+	}
+	if albumDetail.ID != track.Album.ID || len(albumDetail.Tracks) != 1 || albumDetail.Tracks[0].ID != track.ID {
+		t.Fatalf("unexpected album detail: %+v", albumDetail)
+	}
+	if len(albumDetail.Artists) != 1 {
+		t.Fatalf("album detail has unexpected artists: %+v", albumDetail.Artists)
+	}
+
+	response, err = http.Get(serverURL + "/api/v1/artists/" + albumDetail.Artists[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("artist detail status: %s", response.Status)
+	}
+	var artistDetail catalog.ArtistDetail
+	if err := json.NewDecoder(response.Body).Decode(&artistDetail); err != nil {
+		t.Fatal(err)
+	}
+	if artistDetail.ID != albumDetail.Artists[0].ID || len(artistDetail.Albums) != 1 || artistDetail.Albums[0].ID != track.Album.ID {
+		t.Fatalf("unexpected artist detail: %+v", artistDetail)
+	}
+	if artistDetail.Albums[0].AddedAt.IsZero() {
+		t.Fatal("artist album detail has no addedAt")
 	}
 }
 

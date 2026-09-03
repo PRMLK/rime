@@ -4,8 +4,8 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import {
-  ApiError, artworkUrl, getRecentAlbums, getScheduledTasks, getTrackLyrics, runScheduledTask, searchTracks,
-  type Album, type ArtistRef, type LyricsDocument, type ScheduledTask, type Track,
+  ApiError, artworkUrl, getAlbumDetail, getArtistDetail, getRecentAlbums, getScheduledTasks, getTrackLyrics, runScheduledTask, searchTracks,
+  type Album, type AlbumDetail, type ArtistDetail, type ArtistRef, type LyricsDocument, type ScheduledTask, type Track,
 } from '@/api/rime';
 import nowPlayingCover from '@/assets/now-playing.jpg';
 import { Badge } from '@/components/ui/badge';
@@ -35,6 +35,10 @@ import { HtmlAudioPlayer, type PlayerSnapshot } from '@/services/player/HtmlAudi
 
 type NavigationTab = 'home' | 'search' | 'library';
 
+type DetailView =
+  | { kind: 'album'; id: string }
+  | { kind: 'artist'; id: string };
+
 const navigationItems = [
   { id: 'home', label: '首页', icon: Home },
   { id: 'search', label: '搜索', icon: Search },
@@ -58,7 +62,10 @@ export function MobilePlayer() {
   const [results, setResults] = useState<Track[]>([]);
   const [isSearching, setIsSearching] = useState(true);
   const [searchError, setSearchError] = useState<string>();
+  const [detailStack, setDetailStack] = useState<DetailView[]>([]);
   const activeLabel = navigationItems.find((item) => item.id === activeTab)?.label ?? '首页';
+  const activeDetail = detailStack[detailStack.length - 1];
+  const pageLabel = activeDetail?.kind === 'album' ? '专辑' : activeDetail?.kind === 'artist' ? '歌手' : activeLabel;
   const isPlaying = playback.status === 'playing';
   const playbackLabel = isPlaying ? '暂停播放' : '开始播放';
   const currentIndex = playback.track ? results.findIndex((track) => track.id === playback.track?.id) : -1;
@@ -101,21 +108,61 @@ export function MobilePlayer() {
     if (track) void chooseTrack(track);
   };
 
+  /**
+   * 将专辑详情压入当前浏览栈，使从歌手页进入专辑后能逐层返回。
+   * @param albumId 专辑的唯一标识。
+   * @returns 无返回值；状态更新后界面显示对应的专辑详情。
+   */
+  const openAlbum = useCallback((albumId: string) => {
+    setDetailStack((stack) => [...stack, { kind: 'album', id: albumId }]);
+  }, []);
+
+  /**
+   * 将歌手详情压入当前浏览栈，使返回按钮能回到来源专辑。
+   * @param artistId 歌手的唯一标识。
+   * @returns 无返回值；状态更新后界面显示对应的歌手详情。
+   */
+  const openArtist = useCallback((artistId: string) => {
+    setDetailStack((stack) => [...stack, { kind: 'artist', id: artistId }]);
+  }, []);
+
+  /**
+   * 关闭当前详情视图，并恢复到浏览栈中的上一页。
+   * @returns 无返回值；位于栈底时回到当前主导航页面。
+   */
+  const closeDetail = useCallback(() => {
+    setDetailStack((stack) => stack.slice(0, -1));
+  }, []);
+
   return (
     <TooltipProvider>
       <Drawer open={isPlayerOpen} onOpenChange={setIsPlayerOpen} swipeDirection="down">
         <div className="flex h-[100dvh] flex-col overflow-hidden bg-background text-foreground">
         <main className="min-h-0 flex-1 overflow-y-auto px-5 pt-6">
           <div className="mx-auto w-full max-w-xl pb-8">
-            <header>
+            <header className="flex items-center gap-2">
+              {activeDetail && (
+                <Button variant="ghost" size="icon" aria-label="返回上一页" onClick={closeDetail}>
+                  <ArrowLeft aria-hidden="true" />
+                </Button>
+              )}
               <div>
                 <p className="text-xs text-muted-foreground">Rime Music</p>
-                <h1 className="mt-1 text-xl font-semibold">{activeLabel}</h1>
+                <h1 className="mt-1 text-xl font-semibold">{pageLabel}</h1>
               </div>
             </header>
 
-            {activeTab === 'home' && <HomeView />}
-            {activeTab === 'search' && (
+            {activeDetail?.kind === 'album' && (
+              <AlbumDetailView
+                albumId={activeDetail.id}
+                activeTrackId={playback.track?.id}
+                onChooseTrack={chooseTrack}
+                onOpenArtist={openArtist}
+              />
+            )}
+            {activeDetail?.kind === 'artist' && <ArtistDetailView artistId={activeDetail.id} onOpenAlbum={openAlbum} />}
+            {!activeDetail && activeTab === 'home' && <HomeView onOpenAlbum={openAlbum} />}
+            {!activeDetail && activeTab === 'search' && (
               <SearchView
                 query={query}
                 results={results}
@@ -126,7 +173,7 @@ export function MobilePlayer() {
                 onChooseTrack={chooseTrack}
               />
             )}
-            {activeTab === 'library' && <LibraryView onOpenSystemSettings={() => setIsSettingsOpen(true)} />}
+            {!activeDetail && activeTab === 'library' && <LibraryView onOpenSystemSettings={() => setIsSettingsOpen(true)} />}
           </div>
         </main>
 
@@ -169,7 +216,16 @@ export function MobilePlayer() {
               const Icon = item.icon;
               const isActive = activeTab === item.id;
               return (
-                <Button key={item.id} variant={isActive ? 'secondary' : 'ghost'} className="h-full w-full flex-col gap-1 rounded-md px-0 py-2 text-[0.6875rem]" aria-current={isActive ? 'page' : undefined} onClick={() => setActiveTab(item.id)}>
+                <Button
+                  key={item.id}
+                  variant={isActive ? 'secondary' : 'ghost'}
+                  className="h-full w-full flex-col gap-1 rounded-md px-0 py-2 text-[0.6875rem]"
+                  aria-current={isActive ? 'page' : undefined}
+                  onClick={() => {
+                    setActiveTab(item.id);
+                    setDetailStack([]);
+                  }}
+                >
                   <Icon data-icon="inline-start" aria-hidden="true" />
                   <span>{item.label}</span>
                 </Button>
@@ -198,7 +254,12 @@ export function MobilePlayer() {
   );
 }
 
-function HomeView() {
+/**
+ * 渲染首页的最近入库专辑，并允许用户打开任一专辑详情。
+ * @param onOpenAlbum 收到专辑 ID 后切换到专辑详情页的回调。
+ * @returns 首页最近专辑区域的 React 元素。
+ */
+function HomeView({ onOpenAlbum }: { onOpenAlbum: (albumId: string) => void }) {
   const [albums, setAlbums] = useState<Album[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string>();
@@ -245,19 +306,235 @@ function HomeView() {
           <CarouselContent className="-ml-3">
             {albums.map((album) => (
               <CarouselItem key={album.id} className="basis-2/5 pl-3">
-                <Card size="xs" className="h-full rounded-md py-0 ring-0">
-                  <AlbumArtworkImage album={album} />
-                  <CardHeader className="gap-0.5 px-0 pb-3">
-                    <CardTitle className="truncate">{album.title}</CardTitle>
-                    <CardDescription className="truncate">{artistNames(album.artists)}</CardDescription>
-                  </CardHeader>
-                </Card>
+                <AlbumCard album={album} onOpenAlbum={onOpenAlbum} />
               </CarouselItem>
             ))}
           </CarouselContent>
         </Carousel>
       )}
     </section>
+  );
+}
+
+/**
+ * 渲染可点击的专辑封面卡片，供首页和歌手详情页共用。
+ * @param album 要展示的专辑资料。
+ * @param onOpenAlbum 收到专辑 ID 后打开详情页的回调。
+ * @returns 使用 shadcn Card（卡片）组合的专辑入口。
+ */
+function AlbumCard({ album, onOpenAlbum }: { album: Album; onOpenAlbum: (albumId: string) => void }) {
+  return (
+    <Button
+      variant="ghost"
+      className="h-auto w-full p-0 text-left"
+      aria-label={`打开专辑《${album.title}》`}
+      onClick={() => onOpenAlbum(album.id)}
+    >
+      <Card size="xs" className="h-full w-full rounded-md py-0 ring-0">
+        <AlbumArtworkImage album={album} />
+        <CardHeader className="gap-0.5 px-0 pb-3">
+          <CardTitle className="truncate">{album.title}</CardTitle>
+          <CardDescription className="truncate">{artistNames(album.artists)}</CardDescription>
+        </CardHeader>
+      </Card>
+    </Button>
+  );
+}
+
+/**
+ * 请求并渲染一个专辑的基础资料与曲目列表。
+ * @param albumId 需要加载的专辑 ID。
+ * @param activeTrackId 当前正在播放曲目的 ID，用于突出显示列表项。
+ * @param onChooseTrack 选择一首曲目开始播放的回调。
+ * @param onOpenArtist 打开歌手详情页的回调。
+ * @returns 专辑详情的 React 元素，包含加载、错误和正常状态。
+ */
+function AlbumDetailView({
+  albumId,
+  activeTrackId,
+  onChooseTrack,
+  onOpenArtist,
+}: {
+  albumId: string;
+  activeTrackId?: string;
+  onChooseTrack: (track: Track) => void;
+  onOpenArtist: (artistId: string) => void;
+}) {
+  const [detail, setDetail] = useState<AlbumDetail>();
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setIsLoading(true);
+    setError(undefined);
+    setDetail(undefined);
+    getAlbumDetail(albumId, controller.signal)
+      .then(setDetail)
+      .catch((loadError: unknown) => {
+        if (loadError instanceof DOMException && loadError.name === 'AbortError') return;
+        setError(loadError instanceof Error ? loadError.message : '专辑加载失败');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsLoading(false);
+      });
+    return () => controller.abort();
+  }, [albumId]);
+
+  if (isLoading) return <DetailLoading label="正在加载专辑" />;
+  if (error || !detail) return <DetailEmpty title="专辑加载失败" description={error ?? '未找到可播放的专辑'} />;
+
+  return (
+    <section className="mt-8" aria-labelledby="album-title">
+      <div className="flex items-start gap-4">
+        <AlbumArtworkImage album={detail} className="size-32 shrink-0 rounded-md object-cover" />
+        <div className="min-w-0 flex-1 pt-1">
+          <p className="text-xs text-muted-foreground">专辑</p>
+          <h2 id="album-title" className="mt-1 line-clamp-2 text-xl font-semibold">{detail.title}</h2>
+          <ArtistLinks artists={detail.artists} onOpenArtist={onOpenArtist} />
+          <Badge className="mt-3" variant="secondary">{detail.tracks.length} 首</Badge>
+        </div>
+      </div>
+
+      <Separator className="my-6" />
+      <h3 className="text-sm font-semibold">曲目</h3>
+      <ItemGroup className="mt-2 gap-0">
+        {detail.tracks.map((track) => (
+          <Item
+            key={track.id}
+            render={<button type="button" onClick={() => onChooseTrack(track)} aria-label={`播放《${track.title}》`} />}
+            variant={activeTrackId === track.id ? 'muted' : 'default'}
+            className="cursor-pointer rounded-none border-b px-0 py-3 last:border-b-0"
+          >
+            <ItemMedia variant="icon"><Disc3 aria-hidden="true" /></ItemMedia>
+            <ItemContent>
+              <ItemTitle>{track.title}</ItemTitle>
+              <ItemDescription>{artistNames(track.artists)}</ItemDescription>
+            </ItemContent>
+            <ItemActions>
+              <span className="text-xs text-muted-foreground">{formatTime(track.durationMs)}</span>
+              <Play aria-hidden="true" />
+            </ItemActions>
+          </Item>
+        ))}
+      </ItemGroup>
+    </section>
+  );
+}
+
+/**
+ * 请求并渲染一个歌手及其参与的专辑。
+ * @param artistId 需要加载的歌手 ID。
+ * @param onOpenAlbum 收到专辑 ID 后打开详情页的回调。
+ * @returns 歌手详情的 React 元素，包含加载、错误和正常状态。
+ */
+function ArtistDetailView({ artistId, onOpenAlbum }: { artistId: string; onOpenAlbum: (albumId: string) => void }) {
+  const [detail, setDetail] = useState<ArtistDetail>();
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setIsLoading(true);
+    setError(undefined);
+    setDetail(undefined);
+    getArtistDetail(artistId, controller.signal)
+      .then(setDetail)
+      .catch((loadError: unknown) => {
+        if (loadError instanceof DOMException && loadError.name === 'AbortError') return;
+        setError(loadError instanceof Error ? loadError.message : '歌手加载失败');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsLoading(false);
+      });
+    return () => controller.abort();
+  }, [artistId]);
+
+  if (isLoading) return <DetailLoading label="正在加载歌手" />;
+  if (error || !detail) return <DetailEmpty title="歌手加载失败" description={error ?? '未找到可播放的作品'} />;
+
+  return (
+    <section className="mt-8" aria-labelledby="artist-name">
+      <div className="flex items-center gap-3">
+        <div className="flex size-14 shrink-0 items-center justify-center rounded-md bg-muted" aria-hidden="true">
+          <UserRound />
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs text-muted-foreground">歌手</p>
+          <h2 id="artist-name" className="mt-1 truncate text-xl font-semibold">{detail.name}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">{detail.albums.length} 张专辑</p>
+        </div>
+      </div>
+
+      <Separator className="my-6" />
+      <h3 className="text-sm font-semibold">专辑</h3>
+      <div className="mt-3 grid grid-cols-2 gap-3">
+        {detail.albums.map((album) => <AlbumCard key={album.id} album={album} onOpenAlbum={onOpenAlbum} />)}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * 渲染详情页请求期间的固定尺寸骨架屏，避免内容加载后发生布局跳动。
+ * @param label 供辅助技术读取的加载状态说明。
+ * @returns 详情页骨架屏的 React 元素。
+ */
+function DetailLoading({ label }: { label: string }) {
+  return (
+    <section className="mt-8" aria-label={label} role="status">
+      <div className="flex items-start gap-4">
+        <Skeleton className="size-32 shrink-0 rounded-md" />
+        <div className="flex flex-1 flex-col gap-3 pt-1">
+          <Skeleton className="h-3 w-12" />
+          <Skeleton className="h-6 w-4/5" />
+          <Skeleton className="h-4 w-2/5" />
+        </div>
+      </div>
+      <div className="mt-8 flex flex-col gap-1">
+        {[0, 1, 2, 3].map((item) => <Skeleton key={item} className="h-14 w-full" />)}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * 渲染详情页请求失败或资源不存在时的空状态。
+ * @param title 空状态的标题。
+ * @param description 对失败原因或下一步的简短说明。
+ * @returns 使用 shadcn Empty（空状态）组合的 React 元素。
+ */
+function DetailEmpty({ title, description }: { title: string; description: string }) {
+  return (
+    <Empty className="mt-8 border">
+      <EmptyHeader>
+        <EmptyMedia variant="icon"><Disc3 aria-hidden="true" /></EmptyMedia>
+        <EmptyTitle>{title}</EmptyTitle>
+        <EmptyDescription>{description}</EmptyDescription>
+      </EmptyHeader>
+    </Empty>
+  );
+}
+
+/**
+ * 将专辑歌手渲染为可打开的文本按钮，并在多位歌手之间提供分隔符。
+ * @param artists 要显示的歌手引用列表。
+ * @param onOpenArtist 收到歌手 ID 后打开详情页的回调。
+ * @returns 可换行的歌手导航元素。
+ */
+function ArtistLinks({ artists, onOpenArtist }: { artists: ArtistRef[]; onOpenArtist: (artistId: string) => void }) {
+  if (artists.length === 0) return <p className="mt-2 text-sm text-muted-foreground">未知歌手</p>;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-x-1 gap-y-1">
+      {artists.map((artist, index) => (
+        <span key={artist.id} className="flex items-center gap-1">
+          {index > 0 && <span className="text-sm text-muted-foreground">/</span>}
+          <Button variant="link" className="h-auto p-0 text-sm" onClick={() => onOpenArtist(artist.id)}>
+            {artist.name}
+          </Button>
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -746,12 +1023,18 @@ function ArtworkImage({ track, size, className }: { track?: Track; size: 128 | 2
   );
 }
 
-function AlbumArtworkImage({ album }: { album: Album }) {
+/**
+ * 渲染专辑封面，并在服务端封面不可用时回退到本地默认图片。
+ * @param album 要展示的专辑资料。
+ * @param className 用于约束封面尺寸和圆角的可选布局类名。
+ * @returns 专辑封面的 img 元素。
+ */
+function AlbumArtworkImage({ album, className = 'aspect-square w-full bg-muted object-cover' }: { album: Album; className?: string }) {
   const source = artworkUrl(album.artworkId, 512);
   const [failedSource, setFailedSource] = useState<string>();
   return (
     <img
-      className="aspect-square w-full bg-muted object-cover"
+      className={className}
       src={source && source !== failedSource ? source : nowPlayingCover}
       alt={`《${album.title}》专辑封面`}
       onError={() => source && setFailedSource(source)}

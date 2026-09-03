@@ -40,6 +40,8 @@ func New(searchService *search.Service, browseService *browse.Service, lyricsSer
 	mux.HandleFunc("POST /api/v1/system/tasks/{taskID}/runs", handler.runTask)
 	mux.HandleFunc("GET /api/v1/search", handler.searchTracks)
 	mux.HandleFunc("GET /api/v1/albums/recent", handler.recentAlbums)
+	mux.HandleFunc("GET /api/v1/albums/{albumID}", handler.albumDetail)
+	mux.HandleFunc("GET /api/v1/artists/{artistID}", handler.artistDetail)
 	mux.HandleFunc("GET /api/v1/tracks/{trackID}/lyrics", handler.trackLyrics)
 	mux.HandleFunc("POST /api/v1/playback/sessions", handler.createPlaybackSession)
 	mux.HandleFunc("GET /api/v1/playback/sessions/{sessionID}/stream", handler.stream)
@@ -124,6 +126,40 @@ func (h *Handler) recentAlbums(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, page)
+}
+
+// albumDetail 返回一个专辑及其全部可播放曲目。
+// 参数 w 写入 HTTP 响应，r 提供 albumID 路径参数及请求上下文。
+// 专辑不存在或没有可播放曲目时返回 404，其他存储错误返回 500。
+func (h *Handler) albumDetail(w http.ResponseWriter, r *http.Request) {
+	detail, err := h.browse.AlbumDetail(r.Context(), r.PathValue("albumID"))
+	if err != nil {
+		if errors.Is(err, browse.ErrAlbumNotFound) {
+			writeProblem(w, r, http.StatusNotFound, "album_not_found", "Album not found", "The requested album is unavailable.")
+			return
+		}
+		h.logger.Error("get album detail", "album_id", r.PathValue("albumID"), "error", err)
+		writeProblem(w, r, http.StatusInternalServerError, "internal_error", "Internal error", "The album could not be loaded.")
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
+}
+
+// artistDetail 返回一个歌手及其参与的可播放专辑。
+// 参数 w 写入 HTTP 响应，r 提供 artistID 路径参数及请求上下文。
+// 歌手不存在或没有可播放曲目时返回 404，其他存储错误返回 500。
+func (h *Handler) artistDetail(w http.ResponseWriter, r *http.Request) {
+	detail, err := h.browse.ArtistDetail(r.Context(), r.PathValue("artistID"))
+	if err != nil {
+		if errors.Is(err, browse.ErrArtistNotFound) {
+			writeProblem(w, r, http.StatusNotFound, "artist_not_found", "Artist not found", "The requested artist is unavailable.")
+			return
+		}
+		h.logger.Error("get artist detail", "artist_id", r.PathValue("artistID"), "error", err)
+		writeProblem(w, r, http.StatusInternalServerError, "internal_error", "Internal error", "The artist could not be loaded.")
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
 }
 
 func (h *Handler) listTasks(w http.ResponseWriter, r *http.Request) {

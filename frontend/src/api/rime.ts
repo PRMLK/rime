@@ -21,6 +21,14 @@ export type AlbumPage = {
   items: Album[];
 };
 
+export type AlbumDetail = Album & {
+  tracks: Track[];
+};
+
+export type ArtistDetail = ArtistRef & {
+  albums: Album[];
+};
+
 export type Track = {
   id: string;
   title: string;
@@ -120,6 +128,26 @@ export function searchTracks(query: string, signal?: AbortSignal): Promise<Searc
 
 export function getRecentAlbums(signal?: AbortSignal): Promise<AlbumPage> {
   return request<AlbumPage>('/api/v1/albums/recent?limit=12', { signal });
+}
+
+/**
+ * 获取专辑详情及其可播放曲目。
+ * @param albumId 专辑的唯一标识。
+ * @param signal 用于在离开详情页时取消未完成请求的 AbortSignal（中止信号）。
+ * @returns 包含专辑信息和曲目列表的 Promise（异步结果）。
+ */
+export function getAlbumDetail(albumId: string, signal?: AbortSignal): Promise<AlbumDetail> {
+  return request<AlbumDetail>(`/api/v1/albums/${encodeURIComponent(albumId)}`, { signal });
+}
+
+/**
+ * 获取歌手详情及其参与的可播放专辑。
+ * @param artistId 歌手的唯一标识。
+ * @param signal 用于在离开详情页时取消未完成请求的 AbortSignal（中止信号）。
+ * @returns 包含歌手信息和专辑列表的 Promise（异步结果）。
+ */
+export function getArtistDetail(artistId: string, signal?: AbortSignal): Promise<ArtistDetail> {
+  return request<ArtistDetail>(`/api/v1/artists/${encodeURIComponent(artistId)}`, { signal });
 }
 
 export function getTrackLyrics(trackId: string, signal?: AbortSignal): Promise<LyricsDocument> {
