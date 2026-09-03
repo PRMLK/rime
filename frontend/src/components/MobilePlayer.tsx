@@ -19,13 +19,14 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import {
-  ApiError, artworkUrl, getAlbumDetail, getArtistDetail, getRecentAlbums, getScheduledTasks, getTrackLyrics, runScheduledTask, searchTracks,
+  ApiError, getAlbumDetail, getArtistDetail, getRecentAlbums, getScheduledTasks, getTrackLyrics, runScheduledTask, searchTracks,
   type Album, type AlbumDetail, type ArtistDetail, type ArtistRef, type LyricsDocument, type ScheduledTask, type Track,
 } from '@/api/rime';
-import nowPlayingCover from '@/assets/now-playing.jpg';
+import { AlbumArtwork } from '@/components/AlbumArtwork';
+import { AlbumArtworkCard } from '@/components/AlbumArtworkCard';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { CardContent, CardHeader } from '@/components/ui/card';
 import { Carousel, CarouselContent, CarouselItem } from '@/components/ui/carousel';
 import {
   Drawer,
@@ -275,7 +276,7 @@ export function MobilePlayer() {
                     />
                   }
                 >
-                  <ArtworkImage track={playback.track} size={128} className="relative z-10 size-10 translate-y-1 shrink-0 rounded-md object-cover" />
+                  <AlbumArtwork artwork={playback.track} size="sm" className="relative z-10 translate-y-1" />
                   <span className="relative z-10 min-w-0 translate-y-1 flex-1 self-center">
                     <span className="block truncate text-[0.8125rem] leading-4 font-medium">{playback.track?.title ?? '未在播放'}</span>
                     <span className="block truncate text-[0.625rem] leading-3 text-muted-foreground">{artistLine(playback.track)}</span>
@@ -510,17 +511,17 @@ function AlbumCard({ album, onOpenAlbum }: { album: Album; onOpenAlbum: (albumId
   return (
     <Button
       variant="ghost"
-      className="h-auto w-full p-0 text-left"
+      className="h-auto w-full flex-col items-start justify-start gap-2 p-0 text-left"
       aria-label={`打开专辑《${album.title}》`}
       onClick={() => onOpenAlbum(album.id)}
     >
-      <Card size="xs" className="h-full w-full rounded-md py-0 ring-0">
-        <AlbumArtworkImage album={album} />
-        <CardHeader className="gap-0.5 px-0 pb-3">
-          <CardTitle className="truncate">{album.title}</CardTitle>
-          <CardDescription className="truncate">{artistNames(album.artists)}</CardDescription>
-        </CardHeader>
-      </Card>
+      <AlbumArtworkCard size="xs" className="w-full gap-0 py-0 ring-0">
+        <AlbumArtwork artwork={album} size="fluid" />
+      </AlbumArtworkCard>
+      <span className="flex w-full flex-col gap-0.5">
+        <span className="truncate text-sm font-medium">{album.title}</span>
+        <span className="truncate text-xs text-muted-foreground">{artistNames(album.artists)}</span>
+      </span>
     </Button>
   );
 }
@@ -580,21 +581,27 @@ function AlbumDetailView({
 
   return (
     <section className="mt-0" aria-labelledby="album-title">
-      <div className="overflow-hidden rounded-lg border bg-muted px-4 pb-8">
-        <AlbumDetailToolbar detail={detail} onClose={onClose} onChooseTrack={onChooseTrack} onOpenArtist={onOpenArtist} />
-        <p className="mt-2 text-center text-sm font-medium text-muted-foreground">{artistNames(detail.artists)}</p>
-        <div className="relative mx-auto mt-8 h-40 w-56 max-w-full" aria-hidden="true">
-          {/* 画布比封面更宽，唱片先于封面渲染，右侧固定露出 64px；中心标签复用专辑封面并圆形裁切。 */}
-          <div className="absolute top-1/2 right-0 size-32 -translate-y-1/2 rounded-full bg-primary">
-            <div className="absolute inset-3 rounded-full border border-primary-foreground/20" />
-            <AlbumArtworkImage
-              album={detail}
-              className="absolute top-1/2 left-1/2 size-14 -translate-x-1/2 -translate-y-1/2 rounded-full border border-primary-foreground/20 object-cover"
-            />
+      <AlbumArtworkCard className="gap-0 border bg-muted py-0 ring-0">
+        <CardHeader className="gap-0 px-4 pt-0 pb-0">
+          <AlbumDetailToolbar detail={detail} onClose={onClose} onChooseTrack={onChooseTrack} onOpenArtist={onOpenArtist} />
+          <p className="mt-2 text-center text-sm font-medium text-muted-foreground">{artistNames(detail.artists)}</p>
+        </CardHeader>
+        <CardContent className="px-4 pt-8 pb-8">
+          <div className="relative mx-auto h-40 w-56 max-w-full" aria-hidden="true">
+            {/* 画布比封面更宽，唱片先于封面渲染，右侧固定露出 64px；中心标签复用专辑封面并圆形裁切。 */}
+            <div className="absolute top-1/2 right-0 size-32 -translate-y-1/2 rounded-full bg-primary">
+              <div className="absolute inset-3 rounded-full border border-primary-foreground/20" />
+              <AlbumArtwork
+                artwork={detail}
+                size="md"
+                shape="circle"
+                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 border border-primary-foreground/20"
+              />
+            </div>
+            <AlbumArtwork artwork={detail} size="lg" className="relative shadow-sm" />
           </div>
-          <AlbumArtworkImage album={detail} className="relative size-40 rounded-md object-cover shadow-sm" />
-        </div>
-      </div>
+        </CardContent>
+      </AlbumArtworkCard>
 
       <div className="flex flex-col items-center gap-2 px-4 pt-6 text-center">
         <p className="text-sm text-muted-foreground">专辑</p>
@@ -710,11 +717,15 @@ function AlbumDetailToolbar({
 function AlbumDetailLoading({ onClose }: { onClose: () => void }) {
   return (
     <section className="mt-0" aria-label="正在加载专辑" role="status">
-      <div className="overflow-hidden rounded-lg border bg-muted px-4 pb-8">
-        <AlbumDetailToolbar onClose={onClose} />
-        <Skeleton className="mx-auto mt-2 h-4 w-24" />
-        <Skeleton className="mx-auto mt-8 size-40 rounded-md" />
-      </div>
+      <AlbumArtworkCard className="gap-0 border bg-muted py-0 ring-0">
+        <CardHeader className="gap-0 px-4 pt-0 pb-0">
+          <AlbumDetailToolbar onClose={onClose} />
+          <Skeleton className="mx-auto mt-2 h-4 w-24" />
+        </CardHeader>
+        <CardContent className="px-4 pt-8 pb-8">
+          <Skeleton className="mx-auto size-40 rounded-md" />
+        </CardContent>
+      </AlbumArtworkCard>
       <div className="flex flex-col items-center gap-3 px-4 pt-6">
         <Skeleton className="h-4 w-12" />
         <Skeleton className="h-7 w-4/5" />
@@ -893,7 +904,7 @@ function NowPlayingDrawer({
             {showLyrics ? (
               <LyricsPanel track={playback.track} positionMs={position} />
             ) : (
-              <ArtworkImage track={playback.track} size={1024} className="size-full object-cover" />
+              <AlbumArtwork artwork={playback.track} size="full" />
             )}
           </div>
           <div className="mt-4 flex items-start justify-between gap-4">
@@ -1124,7 +1135,7 @@ function SearchView({ query, results, isSearching, error, activeTrackId, onQuery
       <div className="mt-2">
         {error ? <p className="py-8 text-center text-sm text-destructive">{error}</p> : !isSearching && results.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">没有找到匹配的音乐</p> : results.map((track) => (
           <Button key={track.id} variant={activeTrackId === track.id ? 'secondary' : 'ghost'} className="h-auto w-full justify-start rounded-none px-2 py-3 text-left" onClick={() => onChooseTrack(track)}>
-            <ArtworkImage track={track} size={128} className="size-10 shrink-0 rounded-md object-cover" />
+            <AlbumArtwork artwork={track} size="sm" />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium">{track.title}</span>
               <span className="mt-1 block truncate text-xs text-muted-foreground">{artistLine(track)} · {track.album.title}</span>
@@ -1309,41 +1320,9 @@ function ScheduledTaskList({ tasks, isLoading, error, onRunTask }: {
 function QueueItem({ track, onChooseTrack }: { track: Track; onChooseTrack: (track: Track) => void }) {
   return (
     <Button variant="ghost" className="h-auto w-full justify-start rounded-none border-b px-0 py-3 text-left last:border-b-0" onClick={() => onChooseTrack(track)}>
-      <ArtworkImage track={track} size={128} className="size-10 shrink-0 rounded-md object-cover" />
+      <AlbumArtwork artwork={track} size="sm" />
       <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{track.title}</span><span className="mt-0.5 block truncate text-xs text-muted-foreground">{artistLine(track)}</span></span>
     </Button>
-  );
-}
-
-function ArtworkImage({ track, size, className }: { track?: Track; size: 128 | 256 | 512 | 1024; className: string }) {
-  const source = artworkUrl(track?.artworkId, size);
-  const [failedSource, setFailedSource] = useState<string>();
-  return (
-    <img
-      className={className}
-      src={source && source !== failedSource ? source : nowPlayingCover}
-      alt={track ? `《${track.title}》专辑封面` : '默认专辑封面'}
-      onError={() => source && setFailedSource(source)}
-    />
-  );
-}
-
-/**
- * 渲染专辑封面，并在服务端封面不可用时回退到本地默认图片。
- * @param album 要展示的专辑资料。
- * @param className 用于约束封面尺寸和圆角的可选布局类名。
- * @returns 专辑封面的 img 元素。
- */
-function AlbumArtworkImage({ album, className = 'aspect-square w-full bg-muted object-cover' }: { album: Album; className?: string }) {
-  const source = artworkUrl(album.artworkId, 512);
-  const [failedSource, setFailedSource] = useState<string>();
-  return (
-    <img
-      className={className}
-      src={source && source !== failedSource ? source : nowPlayingCover}
-      alt={`《${album.title}》专辑封面`}
-      onError={() => source && setFailedSource(source)}
-    />
   );
 }
 
