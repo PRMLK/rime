@@ -22,7 +22,7 @@ import {
   ApiError, artworkUrl, getAlbumDetail, getArtistDetail, getRecentAlbums, getScheduledTasks, getTrackLyrics, runScheduledTask, searchTracks,
   type Album, type AlbumDetail, type ArtistDetail, type ArtistRef, type LyricsDocument, type ScheduledTask, type Track,
 } from '@/api/rime';
-import { AlbumArtwork } from '@/components/AlbumArtwork';
+import { AlbumArtwork, AlbumArtworkFrame, AlbumArtworkSkeleton } from '@/components/AlbumArtwork';
 import { AlbumArtworkCard } from '@/components/AlbumArtworkCard';
 import { AlbumVinylArtwork } from '@/components/AlbumVinylArtwork';
 import { Badge } from '@/components/ui/badge';
@@ -272,7 +272,7 @@ export function MobilePlayer() {
                   render={
                     <Button
                       variant="ghost"
-                      className="relative h-11 min-w-0 flex-1 items-center justify-start px-0 py-0 text-left hover:bg-transparent active:!translate-y-0 focus-visible:border-transparent focus-visible:ring-0 before:pointer-events-none before:absolute before:left-0 before:top-1.5 before:z-0 before:size-10 before:rounded-md before:bg-foreground/8 before:scale-90 before:opacity-0 before:transition-[opacity,transform] before:duration-150 before:ease-out active:before:scale-100 active:before:opacity-100 focus-visible:before:scale-100 focus-visible:before:opacity-100 focus-visible:before:ring-2 focus-visible:before:ring-ring/50 motion-reduce:before:transition-none"
+                      className="relative h-11 min-w-0 flex-1 items-center justify-start px-0 py-0 text-left hover:bg-transparent active:!translate-y-0 focus-visible:border-transparent focus-visible:ring-0 before:pointer-events-none before:absolute before:left-0 before:top-1.5 before:z-0 before:size-10 before:rounded-[clamp(0.5rem,10%,2rem)] before:bg-foreground/8 before:scale-90 before:opacity-0 before:transition-[opacity,transform] before:duration-150 before:ease-out active:before:scale-100 active:before:opacity-100 focus-visible:before:scale-100 focus-visible:before:ring-2 focus-visible:before:ring-ring/50 motion-reduce:before:transition-none"
                       disabled={!playback.track}
                       aria-label={playback.track ? `展开《${playback.track.title}》播放器` : '暂无播放曲目'}
                     />
@@ -419,7 +419,7 @@ function HomeView({
         <div className="mt-3 flex gap-3 overflow-hidden" role="status" aria-label="正在加载最近入库的专辑">
           {[0, 1, 2, 3].map((item) => (
             <div key={item} className="w-2/5 shrink-0">
-              <Skeleton className="aspect-square w-full" />
+              <AlbumArtworkSkeleton className="aspect-square w-full" />
               <Skeleton className="mt-3 h-3 w-4/5" />
               <Skeleton className="mt-2 h-3 w-3/5" />
             </div>
@@ -480,7 +480,7 @@ function RecentAlbumsView({ onOpenAlbum }: { onOpenAlbum: (albumId: string) => v
         <div className="grid grid-cols-2 gap-3">
           {[0, 1, 2, 3, 4, 5].map((item) => (
             <div key={item}>
-              <Skeleton className="aspect-square w-full" />
+              <AlbumArtworkSkeleton className="aspect-square w-full" />
               <Skeleton className="mt-3 h-3 w-4/5" />
               <Skeleton className="mt-2 h-3 w-3/5" />
             </div>
@@ -513,13 +513,11 @@ function AlbumCard({ album, onOpenAlbum }: { album: Album; onOpenAlbum: (albumId
   return (
     <Button
       variant="ghost"
-      className="h-auto w-full flex-col items-start justify-start gap-2 p-0 text-left"
+      className="h-auto w-full flex-col items-start justify-start gap-2 rounded-[calc(clamp(0.5rem,10%,2rem)+4px)] border-0 p-1 text-left"
       aria-label={`打开专辑《${album.title}》`}
       onClick={() => onOpenAlbum(album.id)}
     >
-      <AlbumArtworkCard size="xs" className="w-full gap-0 py-0 ring-0">
-        <AlbumArtwork artwork={album} size="fluid" />
-      </AlbumArtworkCard>
+      <AlbumArtwork artwork={album} size="fluid" />
       <span className="flex w-full flex-col gap-0.5">
         <span className="truncate text-sm font-medium">{album.title}</span>
         <span className="truncate text-xs text-muted-foreground">{artistNames(album.artists)}</span>
@@ -769,7 +767,7 @@ function AlbumDetailLoading({ onClose }: { onClose: () => void }) {
         <CardContent className="absolute inset-x-0 bottom-0 translate-y-14 px-4 py-0">
           <div className="relative ml-6.5 mr-auto h-40 w-56 max-w-full" aria-hidden="true">
             <Skeleton className="absolute top-1/2 right-0 size-32 -translate-y-1/2 rounded-full" />
-            <Skeleton className="relative size-40 rounded-md" />
+            <AlbumArtworkSkeleton className="relative size-40" />
           </div>
         </CardContent>
       </AlbumArtworkCard>
@@ -946,13 +944,13 @@ function NowPlayingDrawer({
 
       <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-[max(env(safe-area-inset-bottom),1.5rem)]">
         <section className="mx-auto w-full max-w-xl" aria-labelledby="now-playing-heading">
-          <div className="mx-auto mt-2 aspect-square w-full max-w-md overflow-hidden rounded-lg bg-muted">
+          <AlbumArtworkFrame className="mx-auto mt-2 aspect-square w-full max-w-md bg-muted">
             {showLyrics ? (
               <LyricsPanel track={playback.track} positionMs={position} />
             ) : (
               <AlbumArtwork artwork={playback.track} size="full" />
             )}
-          </div>
+          </AlbumArtworkFrame>
           <div className="mt-4 flex items-start justify-between gap-4">
             <div className="min-w-0">
               <h2 id="now-playing-heading" className="truncate text-lg font-semibold">{playback.track?.title ?? '未在播放'}</h2>

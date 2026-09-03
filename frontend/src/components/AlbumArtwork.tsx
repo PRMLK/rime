@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, type ComponentProps } from 'react';
 import { artworkUrl, type Album, type Track } from '@/api/rime';
 import nowPlayingCover from '@/assets/now-playing.jpg';
+import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 
 /** 可被专辑封面组件读取的最小资料集合。曲目会使用其所属专辑的封面。 */
@@ -18,16 +19,45 @@ export type AlbumArtworkSize = 'sm' | 'md' | 'lg' | 'fluid' | 'full';
 type AlbumArtworkShape = 'square' | 'circle';
 
 /**
+ * 专辑封面圆角规范。
+ *
+ * 正方形封面以边长的 10% 作为主比例，并设定 8px 最小圆角：40px 的迷你封面
+ * 若只按比例计算会得到难以辨识的 4px，因此以最小值维持与大封面一致的视觉曲率。
+ * 唱片中心标签是例外，保持圆形。
+ */
+const albumArtworkCornerClassName = 'rounded-[clamp(0.5rem,10%,2rem)]';
+
+/**
+ * 为歌词与全尺寸封面提供相同的裁切轮廓。
+ *
+ * 完整播放器会在封面和歌词之间切换；由此容器统一裁切，切换时不会改变外轮廓。
+ */
+export function AlbumArtworkFrame({ className, ...props }: ComponentProps<'div'>) {
+  return (
+    <div
+      data-slot="album-artwork-frame"
+      className={cn('overflow-hidden', albumArtworkCornerClassName, className)}
+      {...props}
+    />
+  );
+}
+
+/** 加载中的专辑封面占位，复用与真实封面相同的轮廓。 */
+export function AlbumArtworkSkeleton({ className, ...props }: ComponentProps<typeof Skeleton>) {
+  return <Skeleton className={cn(albumArtworkCornerClassName, className)} {...props} />;
+}
+
+/**
  * 将显示尺寸与服务端图片分辨率集中管理。
  *
  * 这样调用方只表达所在界面的视觉规格，组件会请求足够清晰且不过度浪费带宽的图片。
- * `fluid` 作为 AlbumArtworkCard（专辑展示卡片）的唯一内容时，由卡片统一裁切四角；
- * `full` 则由播放器画布裁切，因此这两种规格不在图片元素上重复设置圆角。
+ * 无论显示规格如何，正方形封面均由组件统一应用边长 10% 的圆角；`full` 在
+ * 播放器中可配合 AlbumArtworkFrame 让歌词面板保持同一轮廓。
  */
 const artworkSizeConfig: Record<AlbumArtworkSize, { imageSize: 128 | 256 | 512 | 1024; className: string }> = {
-  sm: { imageSize: 128, className: 'size-10 shrink-0 rounded-md' },
-  md: { imageSize: 128, className: 'size-14 shrink-0 rounded-md' },
-  lg: { imageSize: 512, className: 'size-40 shrink-0 rounded-md' },
+  sm: { imageSize: 128, className: 'size-10 shrink-0' },
+  md: { imageSize: 128, className: 'size-14 shrink-0' },
+  lg: { imageSize: 512, className: 'size-40 shrink-0' },
   fluid: { imageSize: 512, className: 'aspect-square w-full' },
   full: { imageSize: 1024, className: 'size-full' },
 };
@@ -65,7 +95,7 @@ export function AlbumArtwork({
       className={cn(
         config.className,
         'bg-muted object-cover',
-        shape === 'circle' && 'rounded-full',
+        shape === 'circle' ? 'rounded-full' : albumArtworkCornerClassName,
         className,
       )}
       src={source && source !== failedSource ? source : nowPlayingCover}
