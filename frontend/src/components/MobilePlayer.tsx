@@ -434,7 +434,8 @@ function HomeView({
   }, []);
 
   return (
-    <section className="mt-6" aria-labelledby="recent-albums-heading">
+    <section className="mt-8" aria-labelledby="recent-albums-heading">
+      {/* 主导航页面统一在页头下保留 2rem 间距，与各详情页保持一致。 */}
       <h2 id="recent-albums-heading">
         <Button variant="ghost" className="h-auto gap-0 p-0 text-sm font-semibold" onClick={onOpenRecentAlbums}>
           最近入库
@@ -610,13 +611,19 @@ function AlbumDetailView({
   }
 
   return (
-    <section className="@container/album-detail mt-0 grid" aria-labelledby="album-title">
-      <div className="relative col-start-1 row-start-1 h-[33.333cqw] w-full">
+    <section className="@container/album-detail mt-8 grid" aria-labelledby="album-title">
+      {/* 与 ArtistDetailView（歌手详情视图）统一使用 mt-8：页头与详情内容之间保留稳定呼吸空间。 */}
+      {/*
+       * 头图区的高度与流式封面边长保持一致。此前容器额外预留了一段高度，
+       * 又在“曲目”标题上重复追加上边距，窄屏下会在专辑信息与列表之间留下
+       * 不必要的大块空白。信息列通过 h-full + justify-center 在同一视觉重心内居中。
+       */}
+      <div className="relative col-start-1 row-start-1 h-[27.778cqw] w-full">
         <div className="absolute inset-x-0 top-0 px-[2.778cqw]">
           {/* 页头已位于根布局；封面从内容区顶部开始，避免重复保留页头高度。 */}
           <AlbumVinylArtwork artwork={detail} size="fluid" className="ml-[2.083cqw] mr-auto" />
         </div>
-        <div className="absolute top-0 right-[2.778cqw] left-[44.444cqw] flex min-w-0 flex-col items-center gap-[1.389cqw] text-center">
+        <div className="absolute top-0 right-[2.778cqw] left-[44.444cqw] flex h-full min-w-0 flex-col items-center justify-center gap-[1.389cqw] text-center">
           <h2 id="album-title" className="line-clamp-2 text-[4.167cqw] leading-[5.556cqw] font-semibold">{detail.title}</h2>
           <div className="flex justify-center">
             <ArtistLinks artists={detail.artists} onOpenArtist={onOpenArtist} size="fluid" />
@@ -627,7 +634,7 @@ function AlbumDetailView({
         </div>
       </div>
 
-      <h3 className="col-start-1 row-start-2 mt-[22.222cqw] px-4 text-sm font-semibold">曲目</h3>
+      <h3 className="col-start-1 row-start-2 mt-[8.333cqw] px-4 text-sm font-semibold">曲目</h3>
       <ItemGroup className="col-start-1 row-start-3 mt-2 gap-0 px-4">
         {detail.tracks.map((track, index) => (
           <TrackListRow
@@ -687,23 +694,26 @@ function useAlbumArtworkAccentColor(artworkId?: string) {
  */
 function AlbumDetailLoading() {
   /*
-   * 加载态保留与内容态一致的流式高度与元素锚点，背景高度变化不会顶开曲目骨架。
+   * 加载态严格复用内容态的头图高度和列表间距，避免封面资料返回后把曲目骨架
+   * 突然向下推移。右侧骨架也垂直居中，以对应标题、歌手和曲目数量徽章的最终位置。
   */
   return (
-    <section className="@container/album-detail mt-0 grid" aria-label="正在加载专辑" role="status">
-      <div className="relative col-start-1 row-start-1 h-[33.333cqw] w-full">
+    <section className="@container/album-detail mt-8 grid" aria-label="正在加载专辑" role="status">
+      {/* 加载态与内容态共享页头下的间距，避免请求完成时头图整体上移。 */}
+      <div className="relative col-start-1 row-start-1 h-[27.778cqw] w-full">
         <div className="absolute inset-x-0 top-0 px-[2.778cqw]">
           <div className="relative ml-[4.514cqw] mr-auto h-[27.778cqw] w-[38.889cqw] max-w-full" aria-hidden="true">
             <Skeleton className="absolute top-1/2 right-0 size-[22.222cqw] -translate-y-1/2 rounded-full" />
             <AlbumArtworkSkeleton className="relative size-[27.778cqw]" />
           </div>
         </div>
-        <div className="absolute top-0 right-[2.778cqw] left-[44.444cqw] flex min-w-0 flex-col items-center gap-[1.389cqw]">
+        <div className="absolute top-0 right-[2.778cqw] left-[44.444cqw] flex h-full min-w-0 flex-col items-center justify-center gap-[1.389cqw]">
           <Skeleton className="h-[4.861cqw] w-4/5" />
           <Skeleton className="h-[2.778cqw] w-2/5" />
+          <Skeleton className="h-[3.472cqw] w-[8.333cqw]" />
         </div>
       </div>
-      <div className="col-start-1 row-start-2 mt-[16.667cqw] flex flex-col gap-1 px-4">
+      <div className="col-start-1 row-start-2 mt-[8.333cqw] flex flex-col gap-1 px-4">
         {[0, 1, 2, 3].map((item) => <Skeleton key={item} className="h-14 w-full" />)}
       </div>
     </section>
