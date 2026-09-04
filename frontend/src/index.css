@@ -3,6 +3,14 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
 
+@font-face {
+  font-family: 'Rock Salt';
+  src: url('./assets/fonts/RockSalt-Regular.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -136,6 +144,16 @@
 }
 
 @layer components {
+  .rime-logo {
+    display: inline-block;
+    font-family: 'Rock Salt', cursive;
+    font-size: 0.875rem;
+    font-weight: 400;
+    line-height: 1;
+    transform: rotate(-7deg);
+    transform-origin: left center;
+  }
+
   /*
    * 专辑详情顶部使用独立的柔和渐变，而非复用列表的纯色弱化背景。
    * 色彩令牌在浅色与深色主题中分别定义，保证封面、黑胶和工具栏在两种主题下
