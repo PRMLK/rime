@@ -3,14 +3,17 @@ import { Ellipsis, Heart, Play, type LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
-type AlbumDetailHeroInfoAlbum = Pick<AlbumDetail, 'artists' | 'title' | 'tracks'>;
+type AlbumDetailHeroInfoAlbum = Pick<AlbumDetail, 'artists' | 'description' | 'title' | 'tracks'>;
 
 /**
  * 渲染专辑详情顶部右侧的名称与操作区域。
  *
  * 父级 `AlbumDetailHero（专辑详情头图）` 负责计算可用画布尺寸，本组件只以父级
  * 容器查询宽度作为缩放基准。因此标题、歌手和按钮会随整个头图等比缩放，同时保持
- * 它们原有的相对大小、顺序和左对齐方式。
+ * 它们原有的相对大小、顺序和左对齐方式。名称、歌手与操作按钮组成紧凑的信息组：
+ * 标题从名称区顶部开始，简介入口和操作行紧跟在歌手下方，避免由上下两端分布产生
+ * 过大的空白。文字组采用极小的光学内缩，以补偿粗体中文字形的左侧外扩与圆角按钮
+ * 透明角造成的视觉偏差；操作按钮仍以自身外框作为横向锚点。
  *
  * @param props - 名称区域所需的专辑资料与交互回调。
  * @param props.album - 提供标题、歌手与全部播放曲目列表的最小专辑资料。
@@ -31,25 +34,72 @@ export function AlbumDetailHeroInfo({
   onPlayAll: (tracks: AlbumDetail['tracks']) => void;
 }) {
   return (
-    <div className="col-start-3 flex min-w-0 flex-col items-start justify-center gap-[1.389cqw] text-left">
-      <h2 id="album-title" className="line-clamp-2 w-full text-[5.556cqw] leading-[6.944cqw] font-semibold">
-        {album.title}
-      </h2>
-      <AlbumDetailHeroArtistLinks artists={album.artists} onOpenArtist={onOpenArtist} />
-      <div className="mt-[1.389cqw] flex min-w-0 items-center gap-[1.389cqw]">
+    <div className="col-start-3 flex h-full min-h-0 min-w-0 flex-col items-start pt-[6.25cqw] text-left">
+      {/*
+        标题、歌手和简介整体向下留出与封面相称的顶部呼吸空间。0.694cqw 的左内缩
+        仅作用于文字，抵消粗体中文字形的视觉外扩；随后三段纵向间距统一为该值，
+        保持信息组紧凑且具有一致节奏。
+      */}
+      <div className="flex w-full min-w-0 flex-col items-start pl-[0.694cqw]">
+        <h2 id="album-title" className="line-clamp-2 w-full text-[5cqw] leading-[6.25cqw] font-semibold">
+          {album.title}
+        </h2>
+        <AlbumDetailHeroArtistLinks artists={album.artists} onOpenArtist={onOpenArtist} />
+        <AlbumDetailHeroDescriptionEntry description={album.description} />
+      </div>
+      <div className="mt-[0.694cqw] flex min-w-0 items-center gap-[1.389cqw]">
+        {/*
+          标题以 5cqw 缩放；图标同样以头图容器宽度为基准，主播放使用 4.167cqw，
+          次要操作使用 3.333cqw。播放按钮的圆角以 2.083cqw 同步缩放，圆形次要
+          按钮则由 rounded-full（50% 半径）天然保持自适应，整体保留主次操作差异。
+        */}
         <Button
           size="icon"
-          className="size-[9.722cqw]"
+          className="size-[9.722cqw] rounded-[2.083cqw]"
           aria-label="全部播放"
           disabled={album.tracks.length === 0}
           onClick={() => onPlayAll(album.tracks)}
         >
-          <Play data-icon="inline-start" aria-hidden="true" />
+          <Play className="size-[4.167cqw]" data-icon="inline-start" aria-hidden="true" />
         </Button>
         <AlbumDetailHeroUnavailableAction icon={Heart} label="收藏专辑" />
         <AlbumDetailHeroUnavailableAction icon={Ellipsis} label="更多操作" />
       </div>
     </div>
+  );
+}
+
+/**
+ * 渲染用于预览版式的单行专辑简介入口。
+ *
+ * 入口使用无底色的 `Button（按钮）` 变体，避免在网格画布上形成新的卡片边界；文字
+ * 采用 `truncate（单行省略）`，当名称区变窄时由文本自身的省略号提示仍有更多内容。
+ * 未传入、为空或仅包含空白字符时改为 `invisible（不可见但保留空间）`，确保默认
+ * 没有简介资料的专辑仍保留一行高度和上下间距。当前仅显示入口效果，不传递或执行
+ * 简介页跳转逻辑。
+ *
+ * @param props - 可选的简介文本。
+ * @param props.description - 用于入口展示的简介；空值会隐藏入口。
+ * @returns 带简介文案、超出后自动省略的单行入口；没有简介时返回不可见占位行。
+ */
+function AlbumDetailHeroDescriptionEntry({ description }: { description?: string }) {
+  const normalizedDescription = description?.trim();
+  const shouldShowDescription = Boolean(normalizedDescription);
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      className={cn(
+        'mt-[0.694cqw] h-[3.125cqw] w-full min-w-0 justify-start p-0 text-[2.083cqw] leading-[3.125cqw] text-muted-foreground',
+        !shouldShowDescription && 'invisible',
+      )}
+      aria-hidden={!shouldShowDescription}
+      aria-label={shouldShowDescription ? `查看专辑简介：${normalizedDescription}` : undefined}
+      tabIndex={shouldShowDescription ? undefined : -1}
+    >
+      <span className="w-full truncate">{normalizedDescription}</span>
+    </Button>
   );
 }
 
@@ -68,19 +118,24 @@ function AlbumDetailHeroArtistLinks({
   artists: ArtistRef[];
   onOpenArtist: (artistId: string) => void;
 }) {
-  const textClassName = 'text-[2.431cqw] leading-[3.472cqw]';
-  const layoutClassName = 'mt-[1.389cqw] gap-x-[0.694cqw] gap-y-[0.694cqw]';
+  const textClassName = 'text-[2.222cqw] leading-[3.125cqw]';
+  const layoutClassName = 'mt-[0.694cqw] gap-x-[0.694cqw] gap-y-[0.694cqw]';
+  const artistToneClassName = 'opacity-70';
 
   if (artists.length === 0) {
-    return <p className={cn(layoutClassName, textClassName, 'text-muted-foreground')}>未知歌手</p>;
+    return <p className={cn(layoutClassName, textClassName, artistToneClassName)}>未知歌手</p>;
   }
 
   return (
     <div className={cn('flex flex-wrap items-center justify-start', layoutClassName)}>
       {artists.map((artist, index) => (
         <span key={artist.id} className="flex items-center gap-[0.694cqw]">
-          {index > 0 && <span className={cn(textClassName, 'text-muted-foreground')}>/</span>}
-          <Button variant="ghost" className={cn('h-auto p-0', textClassName)} onClick={() => onOpenArtist(artist.id)}>
+          {index > 0 && <span className={cn(textClassName, artistToneClassName)}>/</span>}
+          <Button
+            variant="ghost"
+            className={cn('h-auto p-0', textClassName, artistToneClassName)}
+            onClick={() => onOpenArtist(artist.id)}
+          >
             {artist.name}
           </Button>
         </span>
@@ -98,7 +153,10 @@ function AlbumDetailHeroArtistLinks({
  * @param props - 图标与操作名称。
  * @param props.icon - 用于该不可用操作的 Lucide 图标组件。
  * @param props.label - 面向辅助技术的操作名称。
- * @returns 可点击但当前不产生副作用的圆形图标按钮。
+ * 图标以 3.333cqw 随 `AlbumDetailHero（专辑详情头图）` 缩放，避免外层圆形按钮
+ * 放大或缩小时仍保留固定像素图标。
+ *
+ * @returns 可点击但当前不产生副作用的次要圆形图标按钮。
  */
 function AlbumDetailHeroUnavailableAction({
   icon: Icon,
@@ -111,11 +169,11 @@ function AlbumDetailHeroUnavailableAction({
     <Button
       variant="outline"
       size="icon"
-      className="size-[9.722cqw] rounded-full"
+      className="size-[8.333cqw] rounded-full bg-transparent"
       aria-label={label}
       onClick={handleReservedAlbumAction}
     >
-      <Icon data-icon="inline-start" aria-hidden="true" />
+      <Icon className="size-[3.333cqw]" data-icon="inline-start" aria-hidden="true" />
     </Button>
   );
 }

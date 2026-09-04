@@ -28,6 +28,13 @@ export type AlbumPage = {
 
 export type AlbumDetail = Album & {
   tracks: Track[];
+  /**
+   * 专辑详情接口可选返回的简介文本。
+   *
+   * 服务端尚未提供或返回空白文本时，客户端会保留简介区域的版式空间但不显示入口；
+   * 这样后续补充资料不会改变顶部操作区的垂直位置。
+   */
+  description?: string;
 };
 
 export type ArtistDetail = ArtistRef & {

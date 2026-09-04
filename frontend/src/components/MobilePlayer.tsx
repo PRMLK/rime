@@ -316,6 +316,7 @@ export function MobilePlayer() {
                     <AlbumDetailView
                       albumId={activeDetail.id}
                       activeTrackId={playback.track?.id}
+                      isPlaying={isPlaying && playback.track?.album.id === activeDetail.id}
                       onChooseTrack={chooseStandaloneTrack}
                       onPlayAll={playAlbumTracks}
                       onOpenArtist={openArtist}
@@ -633,6 +634,7 @@ function AlbumCard({ album, onOpenAlbum }: { album: Album; onOpenAlbum: (albumId
  * 请求并渲染一个专辑的基础资料与曲目列表。
  * @param albumId 需要加载的专辑 ID。
  * @param activeTrackId 当前正在播放曲目的 ID，用于突出显示列表项。
+ * @param isPlaying 当前是否正在播放该专辑的曲目，用于驱动头图黑胶旋转。
  * @param onChooseTrack 选择一首曲目开始播放的回调。
  * @param onPlayAll 从第一首开始播放整张专辑的回调。
  * @param onOpenArtist 打开歌手详情页的回调。
@@ -642,6 +644,7 @@ function AlbumCard({ album, onOpenAlbum }: { album: Album; onOpenAlbum: (albumId
 function AlbumDetailView({
   albumId,
   activeTrackId,
+  isPlaying,
   onChooseTrack,
   onPlayAll,
   onOpenArtist,
@@ -649,6 +652,7 @@ function AlbumDetailView({
 }: {
   albumId: string;
   activeTrackId?: string;
+  isPlaying: boolean;
   onChooseTrack: (track: Track) => void;
   onPlayAll: (tracks: Track[]) => void;
   onOpenArtist: (artistId: string) => void;
@@ -691,7 +695,7 @@ function AlbumDetailView({
 
   return (
     <section className="mt-8" aria-labelledby="album-title">
-      <AlbumDetailHero album={detail} onOpenArtist={onOpenArtist} onPlayAll={onPlayAll} />
+      <AlbumDetailHero album={detail} isPlaying={isPlaying} onOpenArtist={onOpenArtist} onPlayAll={onPlayAll} />
 
       <h3 className="mt-8 text-sm font-semibold">曲目{detail.tracks.length}</h3>
       <ItemGroup className="mt-2 gap-0">
