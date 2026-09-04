@@ -1,24 +1,17 @@
-type ColorBucket = {
-  redTotal: number;
-  greenTotal: number;
-  blueTotal: number;
-  weight: number;
-};
+import { Vibrant } from 'node-vibrant/browser';
 
-const sampleSize = 24;
-const colorBucketSize = 32;
 const accentColorCache = new Map<string, string | undefined>();
 const pendingColorRequests = new Map<string, Promise<string | undefined>>();
 
 /**
- * 从封面图片中提取适合作为界面强调色的主色。
+ * 从封面中提取适合氛围背景的鲜明主色。
  *
- * 图片会先缩小到固定尺寸再采样，并按量化后的色彩分桶选择权重最高的一组，
- * 这样可以避开黑白边框、阴影和少量噪点，优先得到封面的主要色彩。结果按图片地址
- * 缓存；同一封面在列表、详情或反复进入页面时不会重复创建图片和读取画布。
+ * 使用 node-vibrant 的浏览器量化器生成语义化色板。它将鲜明色与柔和色分离，避免
+ * 大面积留白、灰阶或阴影仅因像素数量多而主导播放器背景。结果按图片地址缓存；同一
+ * 封面在列表、详情或反复进入页面时不会重复量化。
  *
  * @param source 用于加载封面的同源图片地址。
- * @returns CSS `rgb()` 颜色字符串；图片加载或画布读取失败时返回 `undefined`，由调用方使用主题默认色。
+ * @returns CSS `rgb()` 颜色字符串；图片加载或量化失败时返回 `undefined`，由调用方使用主题默认色。
  */
 export function getArtworkAccentColor(source: string): Promise<string | undefined> {
   if (accentColorCache.has(source)) {
@@ -41,82 +34,75 @@ export function getArtworkAccentColor(source: string): Promise<string | undefine
 }
 
 /**
- * 读取封面像素并计算权重最高的颜色分桶。
+ * 根据莫奈主色选择对比度更高的浅色或深色前景。
  *
- * 低透明度、接近纯黑和接近纯白的像素不会参与统计，避免封面边框或留白主导结果；
- * 饱和度更高的像素获得更大权重，使提取结果更接近用户感知的专辑主色。
- *
- * @param source 用于加载封面的同源图片地址。
- * @returns 采样得到的 CSS `rgb()` 颜色字符串；没有有效像素时返回 `undefined`。
+ * 使用 WCAG 相对亮度公式比较黑、白两种前景的对比度，不额外改变已经确定的
+ * 封面取色结果。
  */
-async function sampleArtworkAccentColor(source: string): Promise<string | undefined> {
-  const image = await loadArtworkImage(source);
-  const canvas = document.createElement('canvas');
-  canvas.width = sampleSize;
-  canvas.height = sampleSize;
-
-  const context = canvas.getContext('2d', { willReadFrequently: true });
-  if (!context) return undefined;
-
-  context.drawImage(image, 0, 0, sampleSize, sampleSize);
-  const pixels = context.getImageData(0, 0, sampleSize, sampleSize).data;
-  const buckets = new Map<string, ColorBucket>();
-
-  for (let index = 0; index < pixels.length; index += 4) {
-    const red = pixels[index];
-    const green = pixels[index + 1];
-    const blue = pixels[index + 2];
-    const alpha = pixels[index + 3];
-    const brightest = Math.max(red, green, blue);
-    const darkest = Math.min(red, green, blue);
-    const lightness = (brightest + darkest) / 510;
-    const vividness = (brightest - darkest) / 255;
-
-    // 透明、纯暗和纯亮区域通常是边框、留白或透明底，不代表封面主题。
-    if (alpha < 128 || lightness < 0.08 || lightness > 0.94) continue;
-
-    const key = [
-      Math.floor(red / colorBucketSize),
-      Math.floor(green / colorBucketSize),
-      Math.floor(blue / colorBucketSize),
-    ].join(':');
-    const weight = (0.12 + vividness * 0.88) * (vividness < 0.06 ? 0.35 : 1);
-    const bucket = buckets.get(key) ?? { redTotal: 0, greenTotal: 0, blueTotal: 0, weight: 0 };
-
-    bucket.redTotal += red * weight;
-    bucket.greenTotal += green * weight;
-    bucket.blueTotal += blue * weight;
-    bucket.weight += weight;
-    buckets.set(key, bucket);
+export function prefersLightArtworkForeground(color?: string): boolean {
+  const channels = color?.match(/[\d.]+/g)?.slice(0, 3).map(Number);
+  if (!channels || channels.length !== 3 || channels.some((channel) => !Number.isFinite(channel))) {
+    return false;
   }
 
-  let dominantBucket: ColorBucket | undefined;
-  for (const bucket of buckets.values()) {
-    if (!dominantBucket || bucket.weight > dominantBucket.weight) dominantBucket = bucket;
-  }
-  if (!dominantBucket) return undefined;
-
-  const red = Math.round(dominantBucket.redTotal / dominantBucket.weight);
-  const green = Math.round(dominantBucket.greenTotal / dominantBucket.weight);
-  const blue = Math.round(dominantBucket.blueTotal / dominantBucket.weight);
-  return `rgb(${red} ${green} ${blue})`;
+  const [red, green, blue] = channels.map((channel) => {
+    const normalized = Math.min(255, Math.max(0, channel)) / 255;
+    return normalized <= 0.04045
+      ? normalized / 12.92
+      : ((normalized + 0.055) / 1.055) ** 2.4;
+  });
+  const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+  const lightContrast = 1.05 / (luminance + 0.05);
+  const darkContrast = (luminance + 0.05) / 0.05;
+  return lightContrast >= darkContrast;
 }
 
 /**
- * 异步加载可供 Canvas（画布）绘制的封面图片。
+ * 根据文字实际覆盖区域的像素分布选择浅色或深色前景。
  *
- * 事件监听在设置 `src` 前完成，以兼容浏览器从缓存中同步命中图片的场景。封面接口为
- * 同源地址，因此后续 `getImageData` 可以正常读取像素；网络或解码错误会交由上层回退。
- *
- * @param source 用于加载封面的同源图片地址。
- * @returns 已完成解码并可绘制的 HTMLImageElement（图片元素）。
+ * 使用第 10 百分位的对比度而非平均亮度，避免少量极亮或极暗像素导致误判。
  */
-function loadArtworkImage(source: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    image.decoding = 'async';
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error('无法加载封面颜色样本'));
-    image.src = source;
+export function prefersLightArtworkForegroundForPixels(pixels: Uint8ClampedArray): boolean {
+  const lightContrasts: number[] = [];
+  const darkContrasts: number[] = [];
+
+  for (let index = 0; index < pixels.length; index += 4) {
+    if (pixels[index + 3] < 128) continue;
+    const luminance = relativeLuminance(pixels[index], pixels[index + 1], pixels[index + 2]);
+    lightContrasts.push(1.05 / (luminance + 0.05));
+    darkContrasts.push((luminance + 0.05) / 0.05);
+  }
+
+  if (lightContrasts.length === 0) return false;
+  lightContrasts.sort((left, right) => left - right);
+  darkContrasts.sort((left, right) => left - right);
+  const index = Math.floor((lightContrasts.length - 1) * 0.1);
+  return lightContrasts[index] >= darkContrasts[index];
+}
+
+function relativeLuminance(red: number, green: number, blue: number): number {
+  const [linearRed, linearGreen, linearBlue] = [red, green, blue].map((channel) => {
+    const normalized = Math.min(255, Math.max(0, channel)) / 255;
+    return normalized <= 0.04045
+      ? normalized / 12.92
+      : ((normalized + 0.055) / 1.055) ** 2.4;
   });
+  return 0.2126 * linearRed + 0.7152 * linearGreen + 0.0722 * linearBlue;
+}
+
+async function sampleArtworkAccentColor(source: string): Promise<string | undefined> {
+  const palette = await Vibrant.from(source)
+    .maxColorCount(32)
+    .quality(3)
+    .getPalette();
+  const swatch = palette.Vibrant
+    ?? palette.DarkVibrant
+    ?? palette.LightVibrant
+    ?? palette.Muted
+    ?? palette.DarkMuted
+    ?? palette.LightMuted;
+
+  if (!swatch) return undefined;
+
+  return `rgb(${swatch.rgb.join(' ')})`;
 }

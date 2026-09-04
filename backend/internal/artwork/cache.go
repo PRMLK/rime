@@ -15,29 +15,49 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
+	"github.com/muesli/smartcrop"
+	"github.com/muesli/smartcrop/nfnt"
 	"go.senan.xyz/taglib"
 	_ "golang.org/x/image/webp"
 )
 
 const maxSourceBytes = 32 << 20
 
+const (
+	FocusAlgorithmVersion = 1
+	focusCropWidth        = 300
+	focusCropHeight       = 88
+)
+
+type Focus struct {
+	X float64
+	Y float64
+}
+
 type Asset struct {
-	ID          string
-	ContentHash string
-	ContentType string
-	Extension   string
-	StorageKey  string
-	SourceKind  string
-	SourcePath  string
-	Size        int64
-	Width       int
-	Height      int
+	ID           string
+	ContentHash  string
+	ContentType  string
+	Extension    string
+	StorageKey   string
+	SourceKind   string
+	SourcePath   string
+	Size         int64
+	Width        int
+	Height       int
+	FocusX       float64
+	FocusY       float64
+	FocusVersion int
 }
 
 type Cache struct {
 	root      string
 	musicRoot string
+	focusMu   sync.Mutex
+	focuses   map[string]Focus
+	analyzer  smartcrop.Analyzer
 }
 
 func NewCache(root, musicRoot string) (*Cache, error) {
@@ -52,7 +72,12 @@ func NewCache(root, musicRoot string) (*Cache, error) {
 	if err := os.MkdirAll(filepath.Join(root, "original"), 0o750); err != nil {
 		return nil, fmt.Errorf("create artwork cache: %w", err)
 	}
-	return &Cache{root: root, musicRoot: musicRoot}, nil
+	return &Cache{
+		root:      root,
+		musicRoot: musicRoot,
+		focuses:   make(map[string]Focus),
+		analyzer:  smartcrop.NewAnalyzer(nfnt.NewDefaultResizer()),
+	}, nil
 }
 
 func (c *Cache) Resolve(audioPath string, hasEmbedded bool) (*Asset, error) {
@@ -121,17 +146,21 @@ func (c *Cache) store(data []byte, sourceKind, sourcePath string) (*Asset, error
 	}
 
 	digest := fmt.Sprintf("%x", sha256.Sum256(data))
+	focus := c.focus(data, digest)
 	asset := &Asset{
-		ID:          "aw_" + digest,
-		ContentHash: digest,
-		ContentType: contentType,
-		Extension:   extension,
-		StorageKey:  filepath.ToSlash(filepath.Join("original", digest+extension)),
-		SourceKind:  sourceKind,
-		SourcePath:  sourcePath,
-		Size:        int64(len(data)),
-		Width:       configuration.Width,
-		Height:      configuration.Height,
+		ID:           "aw_" + digest,
+		ContentHash:  digest,
+		ContentType:  contentType,
+		Extension:    extension,
+		StorageKey:   filepath.ToSlash(filepath.Join("original", digest+extension)),
+		SourceKind:   sourceKind,
+		SourcePath:   sourcePath,
+		Size:         int64(len(data)),
+		Width:        configuration.Width,
+		Height:       configuration.Height,
+		FocusX:       focus.X,
+		FocusY:       focus.Y,
+		FocusVersion: FocusAlgorithmVersion,
 	}
 	path, err := c.OriginalPath(*asset)
 	if err != nil {
@@ -141,6 +170,68 @@ func (c *Cache) store(data []byte, sourceKind, sourcePath string) (*Asset, error
 		return nil, fmt.Errorf("cache artwork: %w", err)
 	}
 	return asset, nil
+}
+
+func (c *Cache) PrimeFocus(contentHash string, focus Focus) {
+	c.focusMu.Lock()
+	defer c.focusMu.Unlock()
+	c.focuses[contentHash] = focus
+}
+
+func (c *Cache) AnalyzeStoredFocus(asset Asset) (Focus, error) {
+	path, err := c.OriginalPath(asset)
+	if err != nil {
+		return Focus{}, err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return Focus{}, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxSourceBytes+1))
+	if err != nil {
+		return Focus{}, err
+	}
+	if len(data) > maxSourceBytes {
+		return Focus{}, fmt.Errorf("artwork exceeds %d bytes", maxSourceBytes)
+	}
+	if digest := fmt.Sprintf("%x", sha256.Sum256(data)); digest != asset.ContentHash {
+		return Focus{}, fmt.Errorf("artwork content hash mismatch")
+	}
+	return c.focus(data, asset.ContentHash), nil
+}
+
+func (c *Cache) focus(data []byte, digest string) Focus {
+	c.focusMu.Lock()
+	defer c.focusMu.Unlock()
+	if focus, ok := c.focuses[digest]; ok {
+		return focus
+	}
+
+	focus := Focus{X: 0.5, Y: 0.5}
+	decoded, _, err := image.Decode(bytes.NewReader(data))
+	if err == nil {
+		if crop, cropErr := c.analyzer.FindBestCrop(decoded, focusCropWidth, focusCropHeight); cropErr == nil {
+			focus = focusFromCrop(decoded.Bounds(), crop)
+		}
+	}
+	c.focuses[digest] = focus
+	return focus
+}
+
+func focusFromCrop(bounds, crop image.Rectangle) Focus {
+	width, height := bounds.Dx(), bounds.Dy()
+	if width <= 0 || height <= 0 {
+		return Focus{X: 0.5, Y: 0.5}
+	}
+	return Focus{
+		X: clamp(float64(crop.Min.X+crop.Dx()/2-bounds.Min.X) / float64(width)),
+		Y: clamp(float64(crop.Min.Y+crop.Dy()/2-bounds.Min.Y) / float64(height)),
+	}
+}
+
+func clamp(value float64) float64 {
+	return min(1, max(0, value))
 }
 
 func (c *Cache) findSidecar(audioPath string) (string, error) {

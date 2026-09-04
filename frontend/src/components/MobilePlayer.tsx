@@ -1,7 +1,5 @@
 import {
   ArrowPathRoundedSquareIcon as RepeatOutlineIcon,
-  BackwardIcon as BackwardOutlineIcon,
-  ForwardIcon as ForwardOutlineIcon,
   HomeIcon as HomeOutlineIcon,
   ListBulletIcon as QueueOutlineIcon,
   MagnifyingGlassIcon as SearchOutlineIcon,
@@ -17,7 +15,7 @@ import {
   ArrowLeft, CalendarClock, ChevronDown, ChevronRight, Disc3, Heart, LibraryBig,
   LoaderCircle, Pause, Play, Settings, SkipBack, SkipForward, Sparkles, UserRound,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import {
   ApiError, artworkUrl, getAlbumDetail, getArtistDetail, getRecentAlbums, getScheduledTasks, getTrackLyrics, runScheduledTask, searchTracks,
   type Album, type AlbumDetail, type ArtistDetail, type ArtistRef, type LyricsDocument, type ScheduledTask, type Track,
@@ -41,14 +39,18 @@ import {
 import { Input } from '@/components/ui/input';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import {
-  Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle,
+  ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle,
 } from '@/components/ui/item';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Slider } from '@/components/ui/slider';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { getArtworkAccentColor } from '@/lib/artwork-color';
+import {
+  getArtworkAccentColor,
+  prefersLightArtworkForeground,
+  prefersLightArtworkForegroundForPixels,
+} from '@/lib/artwork-color';
 import { cn } from '@/lib/utils';
 import { HtmlAudioPlayer, type PlayerSnapshot } from '@/services/player/HtmlAudioPlayer';
 
@@ -67,13 +69,19 @@ const navigationItems = [
 ] as const;
 
 const miniPlayerControlClassName = [
-  'relative size-11 rounded-full border-transparent bg-transparent hover:bg-transparent active:!translate-y-0',
-  'focus-visible:border-transparent focus-visible:ring-0',
-  'before:pointer-events-none before:absolute before:inset-2 before:rounded-full before:bg-foreground/8',
+  'relative size-10 rounded-full border-transparent bg-transparent text-background hover:bg-transparent active:!translate-y-0 active:scale-96',
+  'focus-visible:border-transparent focus-visible:ring-0 focus-visible:before:ring-2 focus-visible:before:ring-background/50',
+  'before:pointer-events-none before:absolute before:inset-1 before:rounded-full before:bg-background/12',
   'before:scale-75 before:opacity-0 before:transition-[opacity,transform] before:duration-150 before:ease-out',
-  'hover:before:opacity-100 active:before:scale-95 active:before:opacity-100',
-  'focus-visible:before:scale-100 focus-visible:before:opacity-100 focus-visible:before:ring-2 focus-visible:before:ring-ring/50',
+  'hover:before:opacity-100 active:before:scale-100 active:before:opacity-100',
+  'focus-visible:before:scale-100 focus-visible:before:opacity-100',
   'motion-reduce:before:transition-none [&_svg]:relative [&_svg]:z-10',
+].join(' ');
+
+const miniPlayerPrimaryControlClassName = [
+  'size-12 rounded-2xl bg-background text-foreground hover:bg-background/90 active:!translate-y-0 active:scale-96',
+  'focus-visible:border-background focus-visible:ring-2 focus-visible:ring-background/50',
+  'motion-reduce:transition-none',
 ].join(' ');
 
 const libraryItems = [
@@ -82,9 +90,14 @@ const libraryItems = [
   { title: '我的歌单', detail: '尚未同步' },
 ];
 
+const miniPlayerTextToneCache = new Map<string, boolean>();
+
 export function MobilePlayer() {
   const player = useMemo(() => new HtmlAudioPlayer(), []);
   const playback = useSyncExternalStore(player.subscribe, player.getSnapshot);
+  const miniPlayerSurfaceRef = useRef<HTMLElement>(null);
+  const miniPlayerTitleRef = useRef<HTMLSpanElement>(null);
+  const miniPlayerArtistRef = useRef<HTMLSpanElement>(null);
   const [activeTab, setActiveTab] = useState<NavigationTab>('home');
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -115,8 +128,23 @@ export function MobilePlayer() {
     : activeTab;
   const isPlaying = playback.status === 'playing';
   const playbackLabel = isPlaying ? '暂停播放' : '开始播放';
-  const playbackModeLabel = playbackMode === 'sequence' ? '顺序播放' : '单曲循环';
-  const PlaybackModeIcon = playbackMode === 'sequence' ? QueueOutlineIcon : RepeatOutlineIcon;
+  const miniPlayerArtworkColor = useAlbumArtworkAccentColor(playback.track?.artworkId);
+  const miniPlayerArtworkFocus = artworkFocusForMiniPlayer(playback.track);
+  const useLightMiniPlayerText = useMiniPlayerTextTone(
+    playback.track?.artworkId,
+    miniPlayerArtworkColor,
+    miniPlayerSurfaceRef,
+    miniPlayerTitleRef,
+    miniPlayerArtistRef,
+  );
+  // 封面解码和 Canvas 采样是异步的。先用主题强调色起笔，避免采样尚未返回时退回纯色。
+  const miniPlayerStyle = {
+    '--mini-player-artwork-color': miniPlayerArtworkColor ?? 'var(--primary)',
+    '--mini-player-artwork-focus-x-offset': `${(0.5 - miniPlayerArtworkFocus.x) * 15}rem`,
+    '--mini-player-artwork-focus-y-offset': `${-miniPlayerArtworkFocus.y * 15}rem`,
+    '--mini-player-copy-color': useLightMiniPlayerText ? 'var(--background)' : 'var(--foreground)',
+    '--mini-player-copy-shadow': useLightMiniPlayerText ? 'var(--foreground)' : 'var(--background)',
+  } as CSSProperties;
   const playbackProgress = playback.durationMs > 0
     ? Math.min((playback.positionMs / playback.durationMs) * 100, 100)
     : 0;
@@ -254,7 +282,10 @@ export function MobilePlayer() {
               activeDetail?.kind === 'album' ? 'px-0 pt-0' : 'px-5',
             )}
           >
-            <div className="mx-auto w-full max-w-xl pb-8">
+            <div className={cn(
+              'w-full pb-8',
+              activeDetail?.kind !== 'album' && 'mx-auto max-w-xl',
+            )}>
               {activeDetail ? (
                 <TabsContent value={activeTab}>
                   {activeDetail.kind === 'album' && (
@@ -291,86 +322,99 @@ export function MobilePlayer() {
             </div>
           </AppScrollArea>
 
-          <footer className="relative z-10 shrink-0 border-t bg-background">
-            <section className="mx-auto grid w-full max-w-xl grid-rows-[2.75rem_2.75rem] px-4" aria-label="正在播放">
-              <div className="flex min-w-0 items-center gap-3">
-                <DrawerTrigger
+          <footer className="relative z-10 shrink-0 bg-background">
+            <section
+              ref={miniPlayerSurfaceRef}
+              className="mini-player-surface relative isolate flex min-h-22 min-w-0 items-center gap-3 overflow-hidden rounded-t-2xl px-4 pb-7 pt-3 text-background"
+              data-artwork-color={playback.track ? '' : undefined}
+              data-copy-tone={useLightMiniPlayerText ? 'light' : 'dark'}
+              style={miniPlayerStyle}
+              aria-label="正在播放"
+            >
+              <div className="pointer-events-none absolute inset-0 z-0" aria-hidden="true">
+                <AlbumArtwork
+                  artwork={playback.track}
+                  size="full"
+                  className="mini-player-artwork-ambient absolute h-[15rem] w-auto max-w-none rounded-none object-contain object-left opacity-70"
+                />
+                <AlbumArtwork
+                  artwork={playback.track}
+                  size="full"
+                  className="mini-player-artwork-base absolute h-[15rem] w-auto max-w-none rounded-none object-contain object-left opacity-100"
+                />
+                <span className="absolute inset-0 bg-linear-to-r from-foreground/10 via-foreground/4 to-transparent" />
+                <span className="mini-player-grain" />
+              </div>
+              <DrawerTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    className="relative z-10 min-w-0 flex-1 justify-start gap-3 rounded-none px-0 py-0 text-left text-foreground hover:bg-transparent hover:text-foreground active:!translate-y-0 focus-visible:border-transparent focus-visible:ring-0"
+                    disabled={!playback.track}
+                    aria-label={playback.track ? `展开《${playback.track.title}》播放器` : '暂无播放曲目'}
+                  />
+                }
+              >
+                <AlbumArtwork artwork={playback.track} size="sm" className="outline outline-1 outline-background/10" />
+                <span className="mini-player-copy min-w-0 flex-1 self-center">
+                  <span ref={miniPlayerTitleRef} className="block w-fit max-w-full truncate text-sm leading-5 font-semibold">
+                    {playback.track?.title ?? '未在播放'}
+                  </span>
+                  <span ref={miniPlayerArtistRef} className="block w-fit max-w-full truncate text-xs leading-4 opacity-82">
+                    {artistLine(playback.track)}
+                  </span>
+                </span>
+              </DrawerTrigger>
+              <Tooltip>
+                <TooltipTrigger
                   render={
                     <Button
                       variant="ghost"
-                      className="relative h-11 min-w-0 flex-1 items-center justify-start px-0 py-0 text-left hover:bg-transparent active:!translate-y-0 focus-visible:border-transparent focus-visible:ring-0 before:pointer-events-none before:absolute before:left-0 before:top-1.5 before:z-0 before:size-10 before:rounded-[clamp(0.5rem,10%,2rem)] before:bg-foreground/8 before:scale-90 before:opacity-0 before:transition-[opacity,transform] before:duration-150 before:ease-out active:before:scale-100 active:before:opacity-100 focus-visible:before:scale-100 focus-visible:before:ring-2 focus-visible:before:ring-ring/50 motion-reduce:before:transition-none"
+                      size="icon"
+                      className={cn(miniPlayerControlClassName, 'z-10')}
+                      aria-label={isLiked ? '取消喜欢' : '喜欢这首歌'}
+                      aria-pressed={isLiked}
                       disabled={!playback.track}
-                      aria-label={playback.track ? `展开《${playback.track.title}》播放器` : '暂无播放曲目'}
-                    />
+                      onClick={() => setIsLiked((liked) => !liked)}
+                    >
+                      <Heart fill={isLiked ? 'currentColor' : 'none'} aria-hidden="true" />
+                    </Button>
                   }
-                >
-                  <AlbumArtwork artwork={playback.track} size="sm" className="relative z-10 translate-y-1" />
-                  <span className="relative z-10 min-w-0 translate-y-1 flex-1 self-center">
-                    <span className="block truncate text-[0.8125rem] leading-4 font-medium">{playback.track?.title ?? '未在播放'}</span>
-                    <span className="block truncate text-[0.625rem] leading-3 text-muted-foreground">{artistLine(playback.track)}</span>
-                    <span className="block truncate text-[0.625rem] leading-3 text-muted-foreground">No lyrics</span>
-                  </span>
-                </DrawerTrigger>
-                <div className="flex shrink-0 items-center">
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          variant="ghost"
-                          size="icon-lg"
-                          className={miniPlayerControlClassName}
-                          aria-label={playbackModeLabel}
-                          aria-pressed={playbackMode === 'repeat'}
-                          onClick={() => setPlaybackMode((mode) => mode === 'sequence' ? 'repeat' : 'sequence')}
-                        >
-                          <PlaybackModeIcon aria-hidden="true" strokeWidth={2} />
-                        </Button>
-                      }
-                    />
-                    <TooltipContent>{playbackModeLabel}</TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          variant="ghost"
-                          size="icon-lg"
-                          className={miniPlayerControlClassName}
-                          aria-label={playbackLabel}
-                          aria-pressed={isPlaying}
-                          disabled={!playback.track || playback.status === 'loading'}
-                          onClick={() => void player.toggle()}
-                        >
-                          {playback.status === 'loading'
-                            ? <LoaderCircle className="animate-spin" aria-hidden="true" />
-                            : isPlaying
-                              ? <PauseSolidIcon aria-hidden="true" />
-                              : <PlaySolidIcon aria-hidden="true" />}
-                        </Button>
-                      }
-                    />
-                    <TooltipContent>{playbackLabel}</TooltipContent>
-                  </Tooltip>
-                </div>
-              </div>
-              <div className="grid grid-cols-[2.75rem_auto_minmax(0,1fr)_auto_2.75rem] items-center gap-2">
-                <PlayerButton className={cn(miniPlayerControlClassName, 'before:translate-y-2 [&_svg]:translate-y-2')} label="上一首" disabled={currentIndex <= 0} onClick={() => playRelative(-1)}><BackwardOutlineIcon aria-hidden="true" strokeWidth={2} /></PlayerButton>
-                <span className="translate-y-2 text-right text-[0.625rem] tabular-nums text-muted-foreground">{formatTime(playback.positionMs)}</span>
-                <span className="h-0.5 translate-y-2 rounded-full bg-border" aria-hidden="true">
-                  <span className="block h-full rounded-full bg-foreground" style={{ width: `${playbackProgress}%` }} />
-                </span>
-                <span className="translate-y-2 text-[0.625rem] tabular-nums text-muted-foreground">{formatTime(playback.durationMs)}</span>
-                <PlayerButton className={cn(miniPlayerControlClassName, 'before:translate-y-2 [&_svg]:translate-y-2')} label="下一首" disabled={currentIndex < 0 || currentIndex >= results.length - 1} onClick={() => playRelative(1)}><ForwardOutlineIcon aria-hidden="true" strokeWidth={2} /></PlayerButton>
-              </div>
+                />
+                <TooltipContent>{isLiked ? '取消喜欢' : '喜欢这首歌'}</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="icon-lg"
+                      className={cn(miniPlayerPrimaryControlClassName, 'z-10')}
+                      aria-label={playbackLabel}
+                      aria-pressed={isPlaying}
+                      disabled={!playback.track || playback.status === 'loading'}
+                      onClick={() => void player.toggle()}
+                    >
+                      {playback.status === 'loading'
+                        ? <LoaderCircle className="animate-spin" aria-hidden="true" />
+                        : isPlaying
+                          ? <PauseSolidIcon aria-hidden="true" />
+                          : <PlaySolidIcon aria-hidden="true" />}
+                    </Button>
+                  }
+                />
+                <TooltipContent>{playbackLabel}</TooltipContent>
+              </Tooltip>
+              <span className="pointer-events-none absolute right-4 bottom-5 left-4 h-0.5 overflow-hidden rounded-full bg-background/25" aria-hidden="true">
+                <span className="block h-full rounded-full bg-background" style={{ width: `${playbackProgress}%` }} />
+              </span>
             </section>
-            <Separator />
-            <nav className="mx-auto w-full max-w-xl pb-[max(env(safe-area-inset-bottom),0rem)]" aria-label="主导航">
-              <TabsList variant="line" size="mobile">
+            <nav className="relative z-10 -mt-3 w-full rounded-t-2xl bg-background px-2 pb-[max(env(safe-area-inset-bottom),0rem)] pt-2 shadow-[0_-1px_0_var(--border)]" aria-label="主导航">
+              <TabsList variant="line" size="mobile" className="h-16 bg-transparent group-data-horizontal/tabs:h-16">
                 {navigationItems.map((item) => {
                   const isActive = activeTab === item.id;
                   const Icon = isActive ? item.activeIcon : item.icon;
                   return (
-                    <TabsTrigger key={item.id} value={item.id} variant="mobile">
+                    <TabsTrigger key={item.id} value={item.id} variant="mobile" className="h-14 min-h-14">
                       <span data-slot="mobile-tab-icon"><Icon aria-hidden="true" strokeWidth={isActive ? item.activeStrokeWidth : 2} /></span>
                       <span data-slot="mobile-tab-label">{item.label}</span>
                     </TabsTrigger>
@@ -385,9 +429,11 @@ export function MobilePlayer() {
           playback={playback}
           queue={queue}
           isLiked={isLiked}
+          playbackMode={playbackMode}
           canPlayPrevious={currentIndex > 0}
           canPlayNext={currentIndex >= 0 && currentIndex < results.length - 1}
           onToggleLike={() => setIsLiked((liked) => !liked)}
+          onTogglePlaybackMode={() => setPlaybackMode((mode) => mode === 'sequence' ? 'repeat' : 'sequence')}
           onTogglePlayback={() => void player.toggle()}
           onSeek={player.seek.bind(player)}
           onPlayPrevious={() => playRelative(-1)}
@@ -627,8 +673,8 @@ function AlbumDetailView({
         </div>
       </div>
 
-      <h3 className="col-start-1 row-start-2 mt-[22.222cqw] px-4 text-sm font-semibold">曲目</h3>
-      <ItemGroup className="col-start-1 row-start-3 mt-2 gap-0 px-4">
+      <h3 className="col-start-1 row-start-2 mt-[22.222cqw] px-5 text-sm font-semibold">曲目</h3>
+      <ItemGroup className="col-start-1 row-start-3 mt-2 gap-0 px-5">
         {detail.tracks.map((track, index) => (
           <TrackListRow
             key={track.id}
@@ -679,6 +725,127 @@ function useAlbumArtworkAccentColor(artworkId?: string) {
   }, [artworkId]);
 
   return accentColor;
+}
+
+/**
+ * 根据迷你播放器中文字实际覆盖的封面区域选择浅色或深色文字。
+ *
+ * 先以莫奈主色作为异步采样前的兜底；封面完成渲染后，分别将标题和歌手的实际
+ * 文字矩形映射回原图并合并分析。结果包含裁切区域坐标并按专辑封面缓存。
+ */
+function useMiniPlayerTextTone(
+  artworkId: string | undefined,
+  accentColor: string | undefined,
+  surfaceRef: RefObject<HTMLElement | null>,
+  titleRef: RefObject<HTMLSpanElement | null>,
+  artistRef: RefObject<HTMLSpanElement | null>,
+): boolean {
+  const fallback = prefersLightArtworkForeground(accentColor);
+  const [useLightText, setUseLightText] = useState(fallback);
+
+  useEffect(() => {
+    const surface = surfaceRef.current;
+    const title = titleRef.current;
+    const artist = artistRef.current;
+    const artwork = surface?.querySelector<HTMLImageElement>('.mini-player-artwork-base');
+    let frame = 0;
+    let isCurrent = true;
+    setUseLightText(fallback);
+
+    if (!artworkId || !surface || !title || !artist || !artwork) {
+      return () => {
+        isCurrent = false;
+      };
+    }
+
+    const analyze = () => {
+      frame = 0;
+      if (!artwork.complete || artwork.naturalWidth <= 0 || artwork.naturalHeight <= 0) return;
+
+      const artworkRect = artwork.getBoundingClientRect();
+      if (artworkRect.width <= 0 || artworkRect.height <= 0) return;
+
+      const sourceRegions = [title, artist].flatMap((copy) => {
+        const copyRect = copy.getBoundingClientRect();
+        const padding = 2;
+        const left = Math.max(artworkRect.left, copyRect.left - padding);
+        const top = Math.max(artworkRect.top, copyRect.top - padding);
+        const right = Math.min(artworkRect.right, copyRect.right + padding);
+        const bottom = Math.min(artworkRect.bottom, copyRect.bottom + padding);
+        if (right <= left || bottom <= top) return [];
+        return [{
+          x: ((left - artworkRect.left) / artworkRect.width) * artwork.naturalWidth,
+          y: ((top - artworkRect.top) / artworkRect.height) * artwork.naturalHeight,
+          width: ((right - left) / artworkRect.width) * artwork.naturalWidth,
+          height: ((bottom - top) / artworkRect.height) * artwork.naturalHeight,
+        }];
+      });
+      if (sourceRegions.length === 0) return;
+
+      const cacheKey = [artworkId, ...sourceRegions.flatMap((region) => [
+        region.x / artwork.naturalWidth,
+        region.y / artwork.naturalHeight,
+        region.width / artwork.naturalWidth,
+        region.height / artwork.naturalHeight,
+      ])].map((value) => typeof value === 'number' ? value.toFixed(3) : value).join(':');
+      const cachedTone = miniPlayerTextToneCache.get(cacheKey);
+      if (cachedTone !== undefined) {
+        if (isCurrent) setUseLightText(cachedTone);
+        return;
+      }
+
+      try {
+        const sampledPixels: number[] = [];
+        for (const region of sourceRegions) {
+          const canvas = document.createElement('canvas');
+          canvas.width = 96;
+          canvas.height = Math.max(1, Math.min(64, Math.round(96 * region.height / region.width)));
+          const context = canvas.getContext('2d', { willReadFrequently: true });
+          if (!context) continue;
+          context.drawImage(
+            artwork,
+            region.x,
+            region.y,
+            region.width,
+            region.height,
+            0,
+            0,
+            canvas.width,
+            canvas.height,
+          );
+          sampledPixels.push(...context.getImageData(0, 0, canvas.width, canvas.height).data);
+        }
+        if (sampledPixels.length === 0) return;
+        const useLight = prefersLightArtworkForegroundForPixels(
+          new Uint8ClampedArray(sampledPixels),
+        );
+        miniPlayerTextToneCache.set(cacheKey, useLight);
+        if (isCurrent) setUseLightText(useLight);
+      } catch {
+        // 跨域或图像解码限制下保留莫奈主色的前景判断。
+      }
+    };
+
+    const scheduleAnalysis = () => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(analyze);
+    };
+    artwork.addEventListener('load', scheduleAnalysis);
+    const observer = new ResizeObserver(scheduleAnalysis);
+    observer.observe(surface);
+    observer.observe(title);
+    observer.observe(artist);
+    scheduleAnalysis();
+
+    return () => {
+      isCurrent = false;
+      if (frame) cancelAnimationFrame(frame);
+      artwork.removeEventListener('load', scheduleAnalysis);
+      observer.disconnect();
+    };
+  }, [accentColor, artistRef, artworkId, fallback, surfaceRef, titleRef]);
+
+  return useLightText;
 }
 
 /**
@@ -845,9 +1012,11 @@ function NowPlayingDrawer({
   playback,
   queue,
   isLiked,
+  playbackMode,
   canPlayPrevious,
   canPlayNext,
   onToggleLike,
+  onTogglePlaybackMode,
   onTogglePlayback,
   onSeek,
   onPlayPrevious,
@@ -857,9 +1026,11 @@ function NowPlayingDrawer({
   playback: PlayerSnapshot;
   queue: Track[];
   isLiked: boolean;
+  playbackMode: PlaybackMode;
   canPlayPrevious: boolean;
   canPlayNext: boolean;
   onToggleLike: () => void;
+  onTogglePlaybackMode: () => void;
   onTogglePlayback: () => void;
   onSeek: (positionMs: number) => void;
   onPlayPrevious: () => void;
@@ -871,6 +1042,8 @@ function NowPlayingDrawer({
   const position = Math.min(playback.positionMs, duration || playback.positionMs);
   const isPlaying = playback.status === 'playing';
   const playbackLabel = isPlaying ? '暂停播放' : '开始播放';
+  const playbackModeLabel = playbackMode === 'sequence' ? '顺序播放' : '单曲循环';
+  const PlaybackModeIcon = playbackMode === 'sequence' ? QueueOutlineIcon : RepeatOutlineIcon;
   return (
     <DrawerContent className="h-[calc(100dvh-0.5rem)] max-h-[calc(100dvh-0.5rem)]">
       <DrawerHeader className="mx-auto w-full max-w-xl flex-row items-center gap-2 px-4 pb-2 pt-[max(env(safe-area-inset-top),0.75rem)] text-left">
@@ -926,7 +1099,17 @@ function NowPlayingDrawer({
           </div>
           <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center">
             <span aria-hidden="true" />
-            <div className="flex items-center justify-center gap-6">
+            <div className="flex items-center justify-center gap-4">
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button variant="ghost" size="icon" aria-label={playbackModeLabel} aria-pressed={playbackMode === 'repeat'} onClick={onTogglePlaybackMode}>
+                      <PlaybackModeIcon aria-hidden="true" strokeWidth={2} />
+                    </Button>
+                  }
+                />
+                <TooltipContent>{playbackModeLabel}</TooltipContent>
+              </Tooltip>
               <PlayerButton label="上一首" disabled={!canPlayPrevious} onClick={onPlayPrevious}><SkipBack aria-hidden="true" /></PlayerButton>
               <Tooltip>
                 <TooltipTrigger
@@ -1252,14 +1435,15 @@ function SystemSettingsDrawer({ open, onOpenChange }: { open: boolean; onOpenCha
           <section className="mx-auto w-full max-w-xl" aria-label={view === 'root' ? '系统设置项目' : '计划任务列表'}>
             {view === 'root' ? (
               <ItemGroup className="gap-0">
-                <Item
+                <UnifiedListRow
                   render={<button type="button" onClick={() => setView('tasks')} />}
-                  className="cursor-pointer rounded-none px-0 py-4 hover:bg-muted/50"
+                  className="cursor-pointer px-5 py-3"
+                  separated
                 >
                   <ItemMedia variant="icon"><CalendarClock aria-hidden="true" /></ItemMedia>
                   <ItemContent><ItemTitle>计划任务</ItemTitle></ItemContent>
                   <ItemActions><ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" /></ItemActions>
-                </Item>
+                </UnifiedListRow>
               </ItemGroup>
             ) : (
               <ScheduledTaskList tasks={scheduledTasks} isLoading={isLoading} error={error} onRunTask={runTask} />
@@ -1286,7 +1470,7 @@ function ScheduledTaskList({ tasks, isLoading, error, onRunTask }: {
       {error && <p className="pb-3 text-sm text-destructive">{error}</p>}
       <ItemGroup className="gap-0">
         {tasks.map((task) => (
-          <Item key={task.id} className="rounded-none border-b px-0 py-4 last:border-b-0">
+          <UnifiedListRow key={task.id} className="px-5 py-3" separated>
             <ItemContent>
               <ItemTitle className="text-base font-semibold">{task.name}</ItemTitle>
               <ItemDescription className="text-xs">{scheduledTaskDetail(task)}</ItemDescription>
@@ -1309,7 +1493,7 @@ function ScheduledTaskList({ tasks, isLoading, error, onRunTask }: {
                 <TooltipContent>{task.status === 'running' ? '正在执行' : '立即执行'}</TooltipContent>
               </Tooltip>
             </ItemActions>
-          </Item>
+          </UnifiedListRow>
         ))}
       </ItemGroup>
       {!isLoading && !error && tasks.length === 0 && <p className="py-12 text-center text-sm text-muted-foreground">暂无计划任务</p>}
@@ -1372,6 +1556,19 @@ function PlayerButton({ label, disabled, onClick, children, className }: { label
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
   );
+}
+
+function artworkFocusForMiniPlayer(track?: Track): { x: number; y: number } {
+  return {
+    x: clampArtworkFocus(track?.artworkFocus?.x, 0.5),
+    y: clampArtworkFocus(track?.artworkFocus?.y, 0.35),
+  };
+}
+
+function clampArtworkFocus(value: number | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.min(1, Math.max(0, value))
+    : fallback;
 }
 
 function artistLine(track?: Track): string {
