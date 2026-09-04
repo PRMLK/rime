@@ -21,7 +21,7 @@ import {
   type Album, type AlbumDetail, type ArtistDetail, type ArtistRef, type LyricsDocument, type ScheduledTask, type Track,
 } from '@/api/rime';
 import { AlbumArtwork, AlbumArtworkFrame, AlbumArtworkSkeleton } from '@/components/AlbumArtwork';
-import { AlbumVinylArtwork } from '@/components/AlbumVinylArtwork';
+import { AlbumDetailHero, AlbumDetailHeroSkeleton } from '@/components/AlbumDetailHero';
 import { AppScrollArea } from '@/components/AppScrollArea';
 import { PageHeader } from '@/components/PageHeader';
 import { UnifiedListFooterLogo, UnifiedListRow } from '@/components/UnifiedListRow';
@@ -105,6 +105,7 @@ export function MobilePlayer() {
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>('sequence');
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Track[]>([]);
+  const [playbackQueue, setPlaybackQueue] = useState<Track[]>([]);
   const [isSearching, setIsSearching] = useState(true);
   const [searchError, setSearchError] = useState<string>();
   const [detailStack, setDetailStack] = useState<DetailView[]>([]);
@@ -148,8 +149,13 @@ export function MobilePlayer() {
   const playbackProgress = playback.durationMs > 0
     ? Math.min((playback.positionMs / playback.durationMs) * 100, 100)
     : 0;
-  const currentIndex = playback.track ? results.findIndex((track) => track.id === playback.track?.id) : -1;
-  const queue = currentIndex >= 0 ? results.slice(currentIndex + 1) : results.slice(0, 3);
+  /*
+   * 搜索结果仍是默认播放来源；从专辑头图选择“全部播放”后，专辑曲目会临时成为
+   * 当前队列。这样歌曲结束时可按专辑曲序继续，而不会错误地跳回搜索列表。
+   */
+  const activePlaybackQueue = playbackQueue.length > 0 ? playbackQueue : results;
+  const currentIndex = playback.track ? activePlaybackQueue.findIndex((track) => track.id === playback.track?.id) : -1;
+  const queue = currentIndex >= 0 ? activePlaybackQueue.slice(currentIndex + 1) : activePlaybackQueue.slice(0, 3);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -182,11 +188,37 @@ export function MobilePlayer() {
     }
   }, [player]);
 
+  /**
+   * 播放独立选择的曲目，并清除先前的专辑连续播放队列。
+   *
+   * @param track - 用户在搜索结果或单个曲目列表中选中的曲目。
+   * @returns 无返回值；播放器异步加载错误由播放器快照统一呈现。
+   */
+  const chooseStandaloneTrack = useCallback((track: Track) => {
+    setPlaybackQueue([]);
+    void chooseTrack(track);
+  }, [chooseTrack]);
+
+  /**
+   * 从专辑第一首开始播放，并将整张专辑设为连续播放队列。
+   *
+   * 空专辑不会触发播放器请求。队列先写入状态，再加载第一首；歌曲自然结束时，
+   * `playRelative（相对切歌）` 会基于此队列选择下一首。
+   *
+   * @param tracks - 已按专辑曲序排列的曲目集合。
+   * @returns 无返回值；播放器异步加载错误由播放器快照统一呈现。
+   */
+  const playAlbumTracks = useCallback((tracks: Track[]) => {
+    if (tracks.length === 0) return;
+    setPlaybackQueue(tracks);
+    void chooseTrack(tracks[0]);
+  }, [chooseTrack]);
+
   const playRelative = useCallback((offset: number) => {
     if (currentIndex < 0) return;
-    const track = results[currentIndex + offset];
+    const track = activePlaybackQueue[currentIndex + offset];
     if (track) void chooseTrack(track);
-  }, [chooseTrack, currentIndex, results]);
+  }, [activePlaybackQueue, chooseTrack, currentIndex]);
 
   useEffect(() => player.subscribeToEnded(() => {
     if (playbackMode === 'repeat' && playback.track) {
@@ -275,7 +307,7 @@ export function MobilePlayer() {
           <AppScrollArea
             key={contentScrollAreaKey}
             render={<main />}
-            className="relative z-10 min-h-0 flex-1"
+            className="mobile-content-scroll relative z-10 min-h-0 flex-1"
           >
             <div className="mobile-content-frame w-full pb-8">
               {activeDetail ? (
@@ -284,7 +316,8 @@ export function MobilePlayer() {
                     <AlbumDetailView
                       albumId={activeDetail.id}
                       activeTrackId={playback.track?.id}
-                      onChooseTrack={chooseTrack}
+                      onChooseTrack={chooseStandaloneTrack}
+                      onPlayAll={playAlbumTracks}
                       onOpenArtist={openArtist}
                       onBackgroundColorChange={setAlbumBackgroundColor}
                     />
@@ -303,7 +336,7 @@ export function MobilePlayer() {
                       error={searchError}
                       activeTrackId={playback.track?.id}
                       onQueryChange={setQuery}
-                      onChooseTrack={chooseTrack}
+                      onChooseTrack={chooseStandaloneTrack}
                     />
                   </TabsContent>
                   <TabsContent value="library">
@@ -423,7 +456,7 @@ export function MobilePlayer() {
           isLiked={isLiked}
           playbackMode={playbackMode}
           canPlayPrevious={currentIndex > 0}
-          canPlayNext={currentIndex >= 0 && currentIndex < results.length - 1}
+          canPlayNext={currentIndex >= 0 && currentIndex < activePlaybackQueue.length - 1}
           onToggleLike={() => setIsLiked((liked) => !liked)}
           onTogglePlaybackMode={() => setPlaybackMode((mode) => mode === 'sequence' ? 'repeat' : 'sequence')}
           onTogglePlayback={() => void player.toggle()}
@@ -601,6 +634,7 @@ function AlbumCard({ album, onOpenAlbum }: { album: Album; onOpenAlbum: (albumId
  * @param albumId 需要加载的专辑 ID。
  * @param activeTrackId 当前正在播放曲目的 ID，用于突出显示列表项。
  * @param onChooseTrack 选择一首曲目开始播放的回调。
+ * @param onPlayAll 从第一首开始播放整张专辑的回调。
  * @param onOpenArtist 打开歌手详情页的回调。
  * @param onBackgroundColorChange 将封面主色传给页面根背景层的回调。
  * @returns 专辑详情的 React 元素，包含加载、错误和正常状态。
@@ -609,12 +643,14 @@ function AlbumDetailView({
   albumId,
   activeTrackId,
   onChooseTrack,
+  onPlayAll,
   onOpenArtist,
   onBackgroundColorChange,
 }: {
   albumId: string;
   activeTrackId?: string;
   onChooseTrack: (track: Track) => void;
+  onPlayAll: (tracks: Track[]) => void;
   onOpenArtist: (artistId: string) => void;
   onBackgroundColorChange: (color: string | undefined) => void;
 }) {
@@ -654,31 +690,11 @@ function AlbumDetailView({
   }
 
   return (
-    <section className="@container/album-detail mt-8 grid" aria-labelledby="album-title">
-      {/* 与 ArtistDetailView（歌手详情视图）统一使用 mt-8：页头与详情内容之间保留稳定呼吸空间。 */}
-      {/*
-       * 头图区以统一内容框建立容器查询上下文。封面和信息列不再分别叠加固定
-       * 内边距，左、右视觉边界会随比例内容轨和安全区同步变化；信息列通过
-       * h-full + justify-center 在同一视觉重心内居中。
-       */}
-      <div className="relative col-start-1 row-start-1 h-[27.778cqw] w-full">
-        <div className="absolute inset-x-0 top-0">
-          {/* 页头已位于根布局；封面从内容区顶部开始，避免重复保留页头高度。 */}
-          <AlbumVinylArtwork artwork={detail} size="fluid" className="mr-auto" />
-        </div>
-        <div className="absolute top-0 right-0 left-[44.444cqw] flex h-full min-w-0 flex-col items-center justify-center gap-[1.389cqw] text-center">
-          <h2 id="album-title" className="line-clamp-2 text-[4.167cqw] leading-[5.556cqw] font-semibold">{detail.title}</h2>
-          <div className="flex justify-center">
-            <ArtistLinks artists={detail.artists} onOpenArtist={onOpenArtist} size="fluid" />
-          </div>
-          <Badge variant="secondary" className="h-[3.472cqw] px-[1.389cqw] py-[0.347cqw] text-[2.083cqw]">
-            {detail.tracks.length} 首
-          </Badge>
-        </div>
-      </div>
+    <section className="mt-8" aria-labelledby="album-title">
+      <AlbumDetailHero album={detail} onOpenArtist={onOpenArtist} onPlayAll={onPlayAll} />
 
-      <h3 className="col-start-1 row-start-2 mt-[8.333cqw] text-sm font-semibold">曲目</h3>
-      <ItemGroup className="col-start-1 row-start-3 mt-2 gap-0">
+      <h3 className="mt-8 text-sm font-semibold">曲目{detail.tracks.length}</h3>
+      <ItemGroup className="mt-2 gap-0">
         {detail.tracks.map((track, index) => (
           <TrackListRow
             key={track.id}
@@ -691,7 +707,7 @@ function AlbumDetailView({
           />
         ))}
       </ItemGroup>
-      <UnifiedListFooterLogo className="col-start-1 row-start-5" />
+      <UnifiedListFooterLogo />
     </section>
   );
 }
@@ -858,26 +874,13 @@ function useMiniPlayerTextTone(
  */
 function AlbumDetailLoading() {
   /*
-   * 加载态严格复用内容态的头图高度和列表间距，避免封面资料返回后把曲目骨架
-   * 突然向下推移。右侧骨架也垂直居中，以对应标题、歌手和曲目数量徽章的最终位置。
-  */
+   * 骨架由 AlbumDetailHeroSkeleton（专辑详情头图骨架）负责高度和分栏，确保
+   * 请求完成后曲目标题保持在相同的纵向位置。
+   */
   return (
-    <section className="@container/album-detail mt-8 grid" aria-label="正在加载专辑" role="status">
-      {/* 加载态与内容态共享页头下的间距，避免请求完成时头图整体上移。 */}
-      <div className="relative col-start-1 row-start-1 h-[27.778cqw] w-full">
-        <div className="absolute inset-x-0 top-0">
-          <div className="relative mr-auto h-[27.778cqw] w-[38.889cqw] max-w-full" aria-hidden="true">
-            <Skeleton className="absolute top-1/2 right-0 size-[22.222cqw] -translate-y-1/2 rounded-full" />
-            <AlbumArtworkSkeleton className="relative size-[27.778cqw]" />
-          </div>
-        </div>
-        <div className="absolute top-0 right-0 left-[44.444cqw] flex h-full min-w-0 flex-col items-center justify-center gap-[1.389cqw]">
-          <Skeleton className="h-[4.861cqw] w-4/5" />
-          <Skeleton className="h-[2.778cqw] w-2/5" />
-          <Skeleton className="h-[3.472cqw] w-[8.333cqw]" />
-        </div>
-      </div>
-      <div className="col-start-1 row-start-2 mt-[8.333cqw] flex flex-col gap-1">
+    <section className="mt-8">
+      <AlbumDetailHeroSkeleton />
+      <div className="mt-8 flex flex-col gap-1">
         {[0, 1, 2, 3].map((item) => <Skeleton key={item} className="h-14 w-full" />)}
       </div>
     </section>
@@ -975,43 +978,6 @@ function DetailEmpty({ title, description }: { title: string; description: strin
         <EmptyDescription>{description}</EmptyDescription>
       </EmptyHeader>
     </Empty>
-  );
-}
-
-/**
- * 将专辑歌手渲染为可打开的文本按钮，并在多位歌手之间提供分隔符。
- * @param artists 要显示的歌手引用列表。
- * @param onOpenArtist 收到歌手 ID 后打开详情页的回调。
- * @param size 控制文字与间距是否跟随专辑头图流式缩放；默认保持其他调用位置的固定规格。
- * @returns 可换行的歌手导航元素。
- */
-function ArtistLinks({
-  artists,
-  onOpenArtist,
-  size = 'fixed',
-}: {
-  artists: ArtistRef[];
-  onOpenArtist: (artistId: string) => void;
-  size?: 'fixed' | 'fluid';
-}) {
-  const isFluid = size === 'fluid';
-  const textClassName = isFluid ? 'text-[2.431cqw] leading-[3.472cqw]' : 'text-sm';
-  const layoutClassName = isFluid
-    ? 'mt-[1.389cqw] gap-x-[0.694cqw] gap-y-[0.694cqw]'
-    : 'mt-2 gap-x-1 gap-y-1';
-
-  if (artists.length === 0) return <p className={cn(layoutClassName, textClassName, 'text-muted-foreground')}>未知歌手</p>;
-  return (
-    <div className={cn('flex flex-wrap items-center', layoutClassName)}>
-      {artists.map((artist, index) => (
-        <span key={artist.id} className={cn('flex items-center', isFluid ? 'gap-[0.694cqw]' : 'gap-1')}>
-          {index > 0 && <span className={cn(textClassName, 'text-muted-foreground')}>/</span>}
-          <Button variant="link" className={cn('h-auto p-0', textClassName)} onClick={() => onOpenArtist(artist.id)}>
-            {artist.name}
-          </Button>
-        </span>
-      ))}
-    </div>
   );
 }
 

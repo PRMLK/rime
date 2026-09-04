@@ -19,7 +19,7 @@ type AlbumVinylArtworkSize = 'fixed' | 'fluid';
  *
  * @param artwork 提供封面、中心标签和替代文本的专辑资料。
  * @param size 控制视觉单元的尺寸策略；`fixed` 保持其他调用位置的既有固定规格，
- * `fluid` 使用最近容器的 `cqw`（容器宽度百分比）单位连续缩放。
+ * `fluid` 填满调用方分配的宽度，并让内部元素按画布宽度等比缩放。
  * @param className 用于指定整个组合组件的外部位置；不应覆盖其固定尺寸或内部定位。
  * @returns 不参与无障碍朗读的专辑封面与黑胶组合元素。
  *
@@ -36,21 +36,23 @@ export function AlbumVinylArtwork({
   className?: string;
 }) {
   /*
-   * 流式规格以 576px 容器为基准还原原有 160px 封面与 128px 黑胶：
-   * 160 / 576 = 27.778%，128 / 576 = 22.222%。父级建立容器查询上下文后，
-   * 这些值会随实际可用宽度连续变化，不会在某个视口宽度突然切换尺寸。
+   * 流式模式的画布填满左侧网格列，并固定为 7:5。画布自身建立容器查询上下文后，
+   * 封面、唱片与竖签都以该画布宽度为基准计算尺寸，因而在任何列宽下保持原先的
+   * 叠放比例，而不是按照整个头图宽度缩放后只占左列的一小部分。
    */
   const isFluid = size === 'fluid';
+  const visualStageClassName = cn(
+    'group/album-artwork relative max-w-full',
+    isFluid ? '@container/album-artwork aspect-[7/5] w-full' : 'h-40 w-56',
+  );
 
-  return (
-    <div
-      aria-hidden="true"
-      className={cn(
-        'group/album-artwork relative max-w-full',
-        isFluid ? 'h-[27.778cqw] w-[38.889cqw]' : 'h-40 w-56',
-        className,
-      )}
-    >
+  /*
+   * 流式值均为原始 224px 宽画布中的相对比例：封面为 160 / 224，唱片为
+   * 128 / 224。由同一个画布承担定位参考，既可以拉伸整组视觉内容，也不会把
+   * 唱片单独推向左侧列的边缘。
+   */
+  const visualContent = (
+    <>
       {/*
         竖签以画布左缘为锚点而非封面左缘：静止时前景封面会完整覆盖它，
         悬停位移后才恰好露出 16px 宽度，避免页面初始状态出现难读的竖排文字。
@@ -60,7 +62,7 @@ export function AlbumVinylArtwork({
         className={cn(
           'absolute top-[20%] left-0 z-0 -scale-x-100 -scale-y-100 rounded-l-none rounded-r-sm [writing-mode:vertical-rl]',
           isFluid
-            ? 'h-[8.333cqw] w-[2.778cqw] rounded-r-[1.042cqw] px-[0.347cqw] py-[1.042cqw] text-[1.563cqw] leading-none'
+            ? 'h-[21.429cqw] w-[7.143cqw] rounded-r-[2.679cqw] px-[0.893cqw] py-[2.679cqw] text-[4.018cqw] leading-none'
             : 'h-12 w-4 px-0.5 py-1.5 text-[0.5625rem] leading-none',
         )}
       >
@@ -86,10 +88,16 @@ export function AlbumVinylArtwork({
         className={cn(
           'relative z-10 shadow-sm motion-safe:transition-transform motion-safe:duration-200 motion-safe:ease-out',
           isFluid
-            ? 'size-[27.778cqw] rounded-[1.389cqw] group-hover/album-artwork:translate-x-[2.778cqw]'
+            ? 'size-[71.429cqw] rounded-[3.571cqw] group-hover/album-artwork:translate-x-[7.143cqw]'
             : 'group-hover/album-artwork:translate-x-4',
         )}
       />
+    </>
+  );
+
+  return (
+    <div aria-hidden="true" className={cn(visualStageClassName, className)}>
+      {visualContent}
     </div>
   );
 }

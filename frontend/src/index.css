@@ -197,6 +197,14 @@
     padding-inline-end: var(--mobile-content-gutter-end);
   }
 
+  /*
+   * 主滚动区的高度已经排除了固定页头与底部播放器。将它声明为 size（双轴尺寸）
+   * 容器后，专辑头图可用 cqh（容器查询高度）稳定取得这段“剩余内容”的比例。
+   */
+  .mobile-content-scroll {
+    container-type: size;
+  }
+
   /* 底部导航保留全宽背景，但按钮区域必须避开横屏设备的两侧安全区。 */
   .mobile-navigation {
     padding-inline-start: max(0.5rem, env(safe-area-inset-left, 0px));
