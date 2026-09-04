@@ -15,7 +15,7 @@ import {
 } from '@heroicons/react/24/solid';
 import {
   ArrowLeft, CalendarClock, ChevronDown, ChevronRight, Disc3, Heart, LibraryBig,
-  LoaderCircle, MoreHorizontal, Pause, Play, Settings, SkipBack, SkipForward, Sparkles, UserRound,
+  LoaderCircle, Pause, Play, Settings, SkipBack, SkipForward, Sparkles, UserRound,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
 import {
@@ -25,7 +25,7 @@ import {
 import { AlbumArtwork, AlbumArtworkFrame, AlbumArtworkSkeleton } from '@/components/AlbumArtwork';
 import { AlbumVinylArtwork } from '@/components/AlbumVinylArtwork';
 import { AppScrollArea } from '@/components/AppScrollArea';
-import { RimeLogo } from '@/components/RimeLogo';
+import { PageHeader } from '@/components/PageHeader';
 import { UnifiedListFooterLogo, UnifiedListRow } from '@/components/UnifiedListRow';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -38,15 +38,6 @@ import {
   DrawerTitle,
   DrawerTrigger,
 } from '@/components/ui/drawer';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import {
@@ -104,6 +95,7 @@ export function MobilePlayer() {
   const [isSearching, setIsSearching] = useState(true);
   const [searchError, setSearchError] = useState<string>();
   const [detailStack, setDetailStack] = useState<DetailView[]>([]);
+  const [albumBackgroundColor, setAlbumBackgroundColor] = useState<string>();
   const activeLabel = navigationItems.find((item) => item.id === activeTab)?.label ?? '首页';
   const activeDetail = detailStack[detailStack.length - 1];
   const pageLabel = activeDetail?.kind === 'album'
@@ -182,6 +174,8 @@ export function MobilePlayer() {
    * @returns 无返回值；状态更新后界面显示对应的专辑详情。
    */
   const openAlbum = useCallback((albumId: string) => {
+    // 在新封面取色完成前先显示默认色，避免上一张专辑的主色短暂残留。
+    setAlbumBackgroundColor(undefined);
     setDetailStack((stack) => [...stack, { kind: 'album', id: albumId }]);
   }, []);
 
@@ -218,28 +212,49 @@ export function MobilePlayer() {
           onValueChange={(value) => {
             setActiveTab(value as NavigationTab);
             setDetailStack([]);
+            setAlbumBackgroundColor(undefined);
           }}
-          className="h-[100dvh] min-h-0 min-w-0 gap-0 overflow-hidden bg-background text-foreground"
+          className="relative isolate h-[100dvh] min-h-0 min-w-0 gap-0 overflow-hidden bg-background text-foreground"
         >
-          <AppScrollArea key={contentScrollAreaKey} render={<main />} className={cn(
-            'min-h-0 flex-1',
-            activeDetail?.kind === 'album' ? 'px-0 pt-0' : 'px-5 pt-6',
-          )}>
-            <div className="mx-auto w-full max-w-xl pb-8">
-              {activeDetail?.kind !== 'album' && (
-                <header className="flex items-center gap-2">
-                  {activeDetail && (
-                    <Button variant="ghost" size="icon" aria-label="返回上一页" onClick={closeDetail}>
-                      <ArrowLeft aria-hidden="true" />
-                    </Button>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <h1 className="text-xl font-semibold">{pageLabel}</h1>
-                  </div>
-                  <RimeLogo className="shrink-0" />
-                </header>
-              )}
+          {/*
+           * 根布局固定为“页头 / 内容 / 底部”三段：页头与底部均不参与压缩，
+           * 中间滚动区独占剩余高度。这样详情页的绝对定位元素只能在内容段内排布，
+           * 不会覆盖顶部栏或底部播放器与导航。
+           */}
+          {activeDetail?.kind === 'album' && (
+            /*
+             * 专辑颜色只作为页面根层的背景，覆盖页头与内容区的共同底色；
+             * 前景组件不依赖这个节点参与尺寸计算，因此不会被背景层顶开或裁切。
+             */
+            <div
+              aria-hidden="true"
+              className="album-page-background pointer-events-none absolute inset-0 z-0"
+              data-artwork-color={albumBackgroundColor ? '' : undefined}
+              style={albumBackgroundColor
+                ? { '--album-page-artwork-color': albumBackgroundColor } as CSSProperties
+                : undefined}
+            />
+          )}
 
+          <div className="relative z-10 shrink-0 px-5 pt-6">
+            <div className="mx-auto w-full max-w-xl">
+              <PageHeader
+                title={pageLabel}
+                showBackButton={Boolean(activeDetail)}
+                onBack={closeDetail}
+              />
+            </div>
+          </div>
+
+          <AppScrollArea
+            key={contentScrollAreaKey}
+            render={<main />}
+            className={cn(
+              'relative z-10 min-h-0 flex-1',
+              activeDetail?.kind === 'album' ? 'px-0 pt-0' : 'px-5',
+            )}
+          >
+            <div className="mx-auto w-full max-w-xl pb-8">
               {activeDetail ? (
                 <TabsContent value={activeTab}>
                   {activeDetail.kind === 'album' && (
@@ -248,7 +263,7 @@ export function MobilePlayer() {
                       activeTrackId={playback.track?.id}
                       onChooseTrack={chooseTrack}
                       onOpenArtist={openArtist}
-                      onClose={closeDetail}
+                      onBackgroundColorChange={setAlbumBackgroundColor}
                     />
                   )}
                   {activeDetail.kind === 'artist' && <ArtistDetailView artistId={activeDetail.id} onOpenAlbum={openAlbum} />}
@@ -276,7 +291,7 @@ export function MobilePlayer() {
             </div>
           </AppScrollArea>
 
-          <footer className="shrink-0 border-t bg-background">
+          <footer className="relative z-10 shrink-0 border-t bg-background">
             <section className="mx-auto grid w-full max-w-xl grid-rows-[2.75rem_2.75rem] px-4" aria-label="正在播放">
               <div className="flex min-w-0 items-center gap-3">
                 <DrawerTrigger
@@ -543,7 +558,7 @@ function AlbumCard({ album, onOpenAlbum }: { album: Album; onOpenAlbum: (albumId
  * @param activeTrackId 当前正在播放曲目的 ID，用于突出显示列表项。
  * @param onChooseTrack 选择一首曲目开始播放的回调。
  * @param onOpenArtist 打开歌手详情页的回调。
- * @param onClose 关闭当前专辑详情并返回浏览栈上一页的回调。
+ * @param onBackgroundColorChange 将封面主色传给页面根背景层的回调。
  * @returns 专辑详情的 React 元素，包含加载、错误和正常状态。
  */
 function AlbumDetailView({
@@ -551,21 +566,22 @@ function AlbumDetailView({
   activeTrackId,
   onChooseTrack,
   onOpenArtist,
-  onClose,
+  onBackgroundColorChange,
 }: {
   albumId: string;
   activeTrackId?: string;
   onChooseTrack: (track: Track) => void;
   onOpenArtist: (artistId: string) => void;
-  onClose: () => void;
+  onBackgroundColorChange: (color: string | undefined) => void;
 }) {
   const [detail, setDetail] = useState<AlbumDetail>();
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string>();
   const artworkAccentColor = useAlbumArtworkAccentColor(detail?.artworkId);
-  const albumHeroStyle = artworkAccentColor
-    ? { '--album-detail-artwork-color': artworkAccentColor } as CSSProperties
-    : undefined;
+
+  useEffect(() => {
+    onBackgroundColorChange(artworkAccentColor);
+  }, [artworkAccentColor, onBackgroundColorChange]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -584,43 +600,23 @@ function AlbumDetailView({
     return () => controller.abort();
   }, [albumId]);
 
-  if (isLoading) return <AlbumDetailLoading onClose={onClose} />;
+  if (isLoading) return <AlbumDetailLoading />;
   if (error || !detail) {
     return (
       <section className="mt-0">
-        <AlbumDetailToolbar onClose={onClose} />
         <DetailEmpty title="专辑加载失败" description={error ?? '未找到可播放的专辑'} />
       </section>
     );
   }
 
-  /*
-   * 渐变作为专辑页的独立背景层，不再承载或裁切页面内容。背景可延伸至半屏，
-   * 但资料区继续使用原有的流式高度与位置，保证曲目列表不会因背景变高而下移。
-   */
   return (
-    <section className="@container/album-detail relative isolate mt-0 grid" aria-labelledby="album-title">
-      <div
-        aria-hidden="true"
-        className="album-detail-hero pointer-events-none absolute inset-x-0 top-0 -z-10 h-[50svh]"
-        data-artwork-color={artworkAccentColor ? '' : undefined}
-        style={albumHeroStyle}
-      />
+    <section className="@container/album-detail mt-0 grid" aria-labelledby="album-title">
       <div className="relative col-start-1 row-start-1 h-[33.333cqw] w-full">
-        <div className="px-4">
-          <AlbumDetailToolbar
-            detail={detail}
-            onClose={onClose}
-            onChooseTrack={onChooseTrack}
-            onOpenArtist={onOpenArtist}
-            size="fluid"
-          />
-        </div>
-        <div className="absolute inset-x-0 bottom-0 translate-y-[9.722cqw] px-[2.778cqw]">
-          {/* 视觉区保持原有的下沿锚点，背景扩展不会改变封面与曲目区之间的距离。 */}
+        <div className="absolute inset-x-0 top-0 px-[2.778cqw]">
+          {/* 页头已位于根布局；封面从内容区顶部开始，避免重复保留页头高度。 */}
           <AlbumVinylArtwork artwork={detail} size="fluid" className="ml-[2.083cqw] mr-auto" />
         </div>
-        <div className="absolute top-[15.278cqw] right-[2.778cqw] left-[44.444cqw] flex min-w-0 flex-col items-center gap-[1.389cqw] text-center">
+        <div className="absolute top-0 right-[2.778cqw] left-[44.444cqw] flex min-w-0 flex-col items-center gap-[1.389cqw] text-center">
           <h2 id="album-title" className="line-clamp-2 text-[4.167cqw] leading-[5.556cqw] font-semibold">{detail.title}</h2>
           <div className="flex justify-center">
             <ArtistLinks artists={detail.artists} onOpenArtist={onOpenArtist} size="fluid" />
@@ -651,13 +647,13 @@ function AlbumDetailView({
 }
 
 /**
- * 根据当前专辑封面异步取得头图渐变需要的强调色。
+ * 根据当前专辑封面异步取得页面背景需要的主色。
  *
- * 专辑切换时会先清空旧颜色，避免前一张封面的色彩短暂显示在新专辑上；异步请求返回后
- * 会再次确认组件仍处于当前请求范围内，防止较慢的旧请求覆盖新专辑的颜色。
+ * 专辑切换时会先清空旧颜色；异步请求返回后再次确认组件仍处于当前请求范围内，
+ * 防止较慢的旧请求覆盖新专辑的背景颜色。
  *
  * @param artworkId 当前专辑封面的唯一标识；没有封面时返回 `undefined`。
- * @returns 可作为 CSS 自定义属性值的 `rgb()` 颜色字符串；提取失败时返回 `undefined`。
+ * @returns 可用于 CSS 自定义属性的 `rgb()` 颜色字符串；提取失败时返回 `undefined`。
  */
 function useAlbumArtworkAccentColor(artworkId?: string) {
   const [accentColor, setAccentColor] = useState<string>();
@@ -686,107 +682,23 @@ function useAlbumArtworkAccentColor(artworkId?: string) {
 }
 
 /**
- * 渲染专辑头图顶部的导航与可执行操作。
- * @param detail 已加载的专辑资料；缺省时仅显示返回与不可用的更多按钮。
- * @param onClose 关闭当前专辑详情并返回浏览栈上一页的回调。
- * @param onChooseTrack 选择菜单中“播放第一首”时调用的播放回调。
- * @param onOpenArtist 选择菜单中某位歌手时调用的详情跳转回调。
- * @param size 控制工具栏是否跟随专辑头图流式缩放；详情头图传入 `fluid`，其他场景保持 `fixed`。
- * @returns 与专辑头图、加载态和失败态共用的工具栏元素。
- */
-function AlbumDetailToolbar({
-  detail,
-  onClose,
-  onChooseTrack,
-  onOpenArtist,
-  size = 'fixed',
-}: {
-  detail?: AlbumDetail;
-  onClose: () => void;
-  onChooseTrack?: (track: Track) => void;
-  onOpenArtist?: (artistId: string) => void;
-  size?: 'fixed' | 'fluid';
-}) {
-  const firstTrack = detail?.tracks[0];
-  const isFluid = size === 'fluid';
-  const toolbarClassName = isFluid ? 'pt-[2.083cqw]' : 'pt-3';
-  const toolbarButtonClassName = isFluid
-    ? 'size-[5.556cqw] rounded-[1.389cqw] [&_svg]:size-[2.778cqw]!'
-    : undefined;
-
-  return (
-    <div className={cn('flex items-center justify-between', toolbarClassName)}>
-      <Button variant="ghost" size="icon" className={toolbarButtonClassName} aria-label="返回上一页" onClick={onClose}>
-        <ArrowLeft aria-hidden="true" />
-      </Button>
-      {detail && onChooseTrack && onOpenArtist ? (
-        <DropdownMenu>
-          <Tooltip>
-            <TooltipTrigger render={<DropdownMenuTrigger render={<Button variant="ghost" size="icon" className={toolbarButtonClassName} aria-label="专辑更多操作" />} />}>
-              <MoreHorizontal aria-hidden="true" />
-            </TooltipTrigger>
-            <TooltipContent>更多操作</TooltipContent>
-          </Tooltip>
-          <DropdownMenuContent align="end">
-            <DropdownMenuGroup>
-              <DropdownMenuItem
-                disabled={!firstTrack}
-                onClick={() => {
-                  if (firstTrack) onChooseTrack(firstTrack);
-                }}
-              >
-                <Play aria-hidden="true" />
-                播放第一首
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-            {detail.artists.length > 0 && (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuGroup>
-                  <DropdownMenuLabel>歌手</DropdownMenuLabel>
-                  {detail.artists.map((artist) => (
-                    <DropdownMenuItem key={artist.id} onClick={() => onOpenArtist(artist.id)}>
-                      <UserRound aria-hidden="true" />
-                      {artist.name}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuGroup>
-              </>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ) : (
-        <Button variant="ghost" size="icon" className={toolbarButtonClassName} aria-label="专辑更多操作" disabled>
-          <MoreHorizontal aria-hidden="true" />
-        </Button>
-      )}
-    </div>
-  );
-}
-
-/**
- * 渲染专辑详情加载时的头图骨架，保留返回入口以便用户随时离开页面。
- * @param onClose 关闭当前专辑详情并返回浏览栈上一页的回调。
+ * 渲染专辑详情加载时的头图骨架；返回入口由页面根层的统一顶部栏提供。
  * @returns 与加载完成后尺寸一致的专辑头图和曲目骨架元素。
  */
-function AlbumDetailLoading({ onClose }: { onClose: () => void }) {
+function AlbumDetailLoading() {
   /*
    * 加载态保留与内容态一致的流式高度与元素锚点，背景高度变化不会顶开曲目骨架。
-   */
+  */
   return (
-    <section className="@container/album-detail relative isolate mt-0 grid" aria-label="正在加载专辑" role="status">
-      <div aria-hidden="true" className="album-detail-hero pointer-events-none absolute inset-x-0 top-0 -z-10 h-[50svh]" />
+    <section className="@container/album-detail mt-0 grid" aria-label="正在加载专辑" role="status">
       <div className="relative col-start-1 row-start-1 h-[33.333cqw] w-full">
-        <div className="px-4">
-          <AlbumDetailToolbar onClose={onClose} size="fluid" />
-        </div>
-        <div className="absolute inset-x-0 bottom-0 translate-y-[9.722cqw] px-[2.778cqw]">
+        <div className="absolute inset-x-0 top-0 px-[2.778cqw]">
           <div className="relative ml-[4.514cqw] mr-auto h-[27.778cqw] w-[38.889cqw] max-w-full" aria-hidden="true">
             <Skeleton className="absolute top-1/2 right-0 size-[22.222cqw] -translate-y-1/2 rounded-full" />
             <AlbumArtworkSkeleton className="relative size-[27.778cqw]" />
           </div>
         </div>
-        <div className="absolute top-[15.278cqw] right-[2.778cqw] left-[44.444cqw] flex min-w-0 flex-col items-center gap-[1.389cqw]">
+        <div className="absolute top-0 right-[2.778cqw] left-[44.444cqw] flex min-w-0 flex-col items-center gap-[1.389cqw]">
           <Skeleton className="h-[4.861cqw] w-4/5" />
           <Skeleton className="h-[2.778cqw] w-2/5" />
         </div>
