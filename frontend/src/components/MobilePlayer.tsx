@@ -24,6 +24,7 @@ import {
 } from '@/api/rime';
 import { AlbumArtwork, AlbumArtworkFrame, AlbumArtworkSkeleton } from '@/components/AlbumArtwork';
 import { AlbumVinylArtwork } from '@/components/AlbumVinylArtwork';
+import { AppScrollArea } from '@/components/AppScrollArea';
 import { RimeLogo } from '@/components/RimeLogo';
 import { UnifiedListFooterLogo, UnifiedListRow } from '@/components/UnifiedListRow';
 import { Badge } from '@/components/ui/badge';
@@ -49,9 +50,8 @@ import {
 import { Input } from '@/components/ui/input';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import {
-  ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle,
+  Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle,
 } from '@/components/ui/item';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Slider } from '@/components/ui/slider';
@@ -113,6 +113,14 @@ export function MobilePlayer() {
       : activeDetail?.kind === 'recent-albums'
         ? '最近入库'
         : activeLabel;
+  /*
+   * Base UI 的滚动区域仅在视口尺寸变化时重新测量溢出。主内容切页只会替换子节点，
+   * 不一定改变视口尺寸，因此使用当前页面身份作为 key（重建标识）强制重新挂载，
+   * 防止长列表的滑块状态残留到首页等短内容页面。
+   */
+  const contentScrollAreaKey = activeDetail
+    ? `${activeTab}:${activeDetail.kind}:${'id' in activeDetail ? activeDetail.id : ''}`
+    : activeTab;
   const isPlaying = playback.status === 'playing';
   const playbackLabel = isPlaying ? '暂停播放' : '开始播放';
   const playbackModeLabel = playbackMode === 'sequence' ? '顺序播放' : '单曲循环';
@@ -211,16 +219,13 @@ export function MobilePlayer() {
             setActiveTab(value as NavigationTab);
             setDetailStack([]);
           }}
-          className="h-[100dvh] gap-0 overflow-hidden bg-background text-foreground"
+          className="h-[100dvh] min-h-0 min-w-0 gap-0 overflow-hidden bg-background text-foreground"
         >
-          <main className={cn(
-            'min-h-0 flex-1 overflow-y-auto',
+          <AppScrollArea key={contentScrollAreaKey} render={<main />} className={cn(
+            'min-h-0 flex-1',
             activeDetail?.kind === 'album' ? 'px-0 pt-0' : 'px-5 pt-6',
           )}>
-            <div className={cn(
-              'w-full pb-8',
-              activeDetail?.kind !== 'album' && 'mx-auto max-w-xl',
-            )}>
+            <div className="mx-auto w-full max-w-xl pb-8">
               {activeDetail?.kind !== 'album' && (
                 <header className="flex items-center gap-2">
                   {activeDetail && (
@@ -269,10 +274,10 @@ export function MobilePlayer() {
                 </>
               )}
             </div>
-          </main>
+          </AppScrollArea>
 
           <footer className="shrink-0 border-t bg-background">
-            <section className="grid w-full grid-rows-[2.75rem_2.75rem] px-4" aria-label="正在播放">
+            <section className="mx-auto grid w-full max-w-xl grid-rows-[2.75rem_2.75rem] px-4" aria-label="正在播放">
               <div className="flex min-w-0 items-center gap-3">
                 <DrawerTrigger
                   render={
@@ -344,7 +349,7 @@ export function MobilePlayer() {
               </div>
             </section>
             <Separator />
-            <nav className="w-full pb-[max(env(safe-area-inset-bottom),0rem)]" aria-label="主导航">
+            <nav className="mx-auto w-full max-w-xl pb-[max(env(safe-area-inset-bottom),0rem)]" aria-label="主导航">
               <TabsList variant="line" size="mobile">
                 {navigationItems.map((item) => {
                   const isActive = activeTab === item.id;
@@ -626,8 +631,8 @@ function AlbumDetailView({
         </div>
       </div>
 
-      <h3 className="col-start-1 row-start-2 mt-[22.222cqw] px-5 text-sm font-semibold">曲目</h3>
-      <ItemGroup className="col-start-1 row-start-3 mt-2 px-5">
+      <h3 className="col-start-1 row-start-2 mt-[22.222cqw] px-4 text-sm font-semibold">曲目</h3>
+      <ItemGroup className="col-start-1 row-start-3 mt-2 gap-0 px-4">
         {detail.tracks.map((track, index) => (
           <TrackListRow
             key={track.id}
@@ -704,9 +709,9 @@ function AlbumDetailToolbar({
 }) {
   const firstTrack = detail?.tracks[0];
   const isFluid = size === 'fluid';
-  const toolbarClassName = isFluid ? 'pt-[max(env(safe-area-inset-top),0.75rem)]' : 'pt-3';
+  const toolbarClassName = isFluid ? 'pt-[2.083cqw]' : 'pt-3';
   const toolbarButtonClassName = isFluid
-    ? 'size-[clamp(2rem,5.556cqw,2.75rem)] rounded-[clamp(0.5rem,1.389cqw,0.75rem)] [&_svg]:size-[clamp(1rem,2.778cqw,1.375rem)]!'
+    ? 'size-[5.556cqw] rounded-[1.389cqw] [&_svg]:size-[2.778cqw]!'
     : undefined;
 
   return (
@@ -968,7 +973,7 @@ function NowPlayingDrawer({
         <span className="size-8 shrink-0" aria-hidden="true" />
       </DrawerHeader>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-[max(env(safe-area-inset-bottom),1.5rem)]">
+      <AppScrollArea className="min-h-0 flex-1 px-5 pb-[max(env(safe-area-inset-bottom),1.5rem)]">
         <section className="mx-auto w-full max-w-xl" aria-labelledby="now-playing-heading">
           <AlbumArtworkFrame className="mx-auto mt-2 aspect-square w-full max-w-md bg-muted">
             {showLyrics ? (
@@ -1060,7 +1065,7 @@ function NowPlayingDrawer({
             {queue.length === 0 && <p className="py-6 text-sm text-muted-foreground">暂无曲目</p>}
           </div>
         </section>
-      </div>
+      </AppScrollArea>
     </DrawerContent>
   );
 }
@@ -1162,7 +1167,7 @@ function LyricsPanel({ track, positionMs }: { track?: Track; positionMs: number 
   }
 
   return (
-    <ScrollArea
+    <AppScrollArea
       ref={scrollAreaRef}
       className="size-full"
       aria-label={`${track?.title ?? ''}歌词`}
@@ -1188,7 +1193,7 @@ function LyricsPanel({ track, positionMs }: { track?: Track; positionMs: number 
           </p>
         ))}
       </div>
-    </ScrollArea>
+    </AppScrollArea>
   );
 }
 
@@ -1230,9 +1235,9 @@ function LibraryView({ onOpenSystemSettings }: { onOpenSystemSettings: () => voi
   return (
     <section className="mt-8" aria-labelledby="library-heading">
       <h2 id="library-heading" className="text-sm font-semibold">我的音乐</h2>
-      <ItemGroup className="mt-3">
+      <ItemGroup className="mt-3 gap-0">
         {libraryItems.map((item) => (
-          <UnifiedListRow key={item.title} render={<button type="button" disabled />} className="cursor-not-allowed px-5 py-3" separated>
+          <UnifiedListRow key={item.title} render={<button type="button" disabled />} className="h-auto cursor-not-allowed justify-start px-5 py-3 text-left" separated>
             <ItemMedia variant="icon"><LibraryBig aria-hidden="true" /></ItemMedia>
             <ItemContent>
               <ItemTitle>{item.title}</ItemTitle>
@@ -1243,7 +1248,7 @@ function LibraryView({ onOpenSystemSettings }: { onOpenSystemSettings: () => voi
       </ItemGroup>
       <Separator className="my-8" />
       <h2 className="text-sm font-semibold">设置</h2>
-      <ItemGroup className="mt-3">
+      <ItemGroup className="mt-3 gap-0">
         <UnifiedListRow
           render={<button type="button" onClick={onOpenSystemSettings} />}
           className="cursor-pointer px-5 py-3"
@@ -1331,25 +1336,24 @@ function SystemSettingsDrawer({ open, onOpenChange }: { open: boolean; onOpenCha
           <span className="size-8 shrink-0" aria-hidden="true" />
         </DrawerHeader>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-[max(env(safe-area-inset-bottom),1.5rem)]">
+        <AppScrollArea className="min-h-0 flex-1 px-5 pb-[max(env(safe-area-inset-bottom),1.5rem)]">
           <section className="mx-auto w-full max-w-xl" aria-label={view === 'root' ? '系统设置项目' : '计划任务列表'}>
             {view === 'root' ? (
-              <ItemGroup>
-                <UnifiedListRow
+              <ItemGroup className="gap-0">
+                <Item
                   render={<button type="button" onClick={() => setView('tasks')} />}
-                  className="cursor-pointer px-5 py-3"
-                  separated
+                  className="cursor-pointer rounded-none px-0 py-4 hover:bg-muted/50"
                 >
                   <ItemMedia variant="icon"><CalendarClock aria-hidden="true" /></ItemMedia>
                   <ItemContent><ItemTitle>计划任务</ItemTitle></ItemContent>
                   <ItemActions><ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" /></ItemActions>
-                </UnifiedListRow>
+                </Item>
               </ItemGroup>
             ) : (
               <ScheduledTaskList tasks={scheduledTasks} isLoading={isLoading} error={error} onRunTask={runTask} />
             )}
           </section>
-        </div>
+        </AppScrollArea>
       </DrawerContent>
     </Drawer>
   );
@@ -1368,9 +1372,9 @@ function ScheduledTaskList({ tasks, isLoading, error, onRunTask }: {
   return (
     <>
       {error && <p className="pb-3 text-sm text-destructive">{error}</p>}
-      <ItemGroup>
+      <ItemGroup className="gap-0">
         {tasks.map((task) => (
-          <UnifiedListRow key={task.id} className="px-5 py-3" separated>
+          <Item key={task.id} className="rounded-none border-b px-0 py-4 last:border-b-0">
             <ItemContent>
               <ItemTitle className="text-base font-semibold">{task.name}</ItemTitle>
               <ItemDescription className="text-xs">{scheduledTaskDetail(task)}</ItemDescription>
@@ -1393,7 +1397,7 @@ function ScheduledTaskList({ tasks, isLoading, error, onRunTask }: {
                 <TooltipContent>{task.status === 'running' ? '正在执行' : '立即执行'}</TooltipContent>
               </Tooltip>
             </ItemActions>
-          </UnifiedListRow>
+          </Item>
         ))}
       </ItemGroup>
       {!isLoading && !error && tasks.length === 0 && <p className="py-12 text-center text-sm text-muted-foreground">暂无计划任务</p>}

@@ -132,6 +132,21 @@
 }
 
 @layer base {
+  /*
+   * 页面内的滚动由 AppScrollArea（应用滚动区域）统一接管；应用壳本身必须裁剪
+   * 两个方向的溢出，避免浏览器原生滚动条抢占内容宽度或覆盖自定义滑块。
+   */
+  html,
+  body,
+  #root,
+  #mobile-root {
+    /*
+     * 必须形成明确的视口大小：仅隐藏溢出不足以阻止内容把 body 撑高。
+     * 这样长列表只能由内部 AppScrollArea（应用滚动区域）承接，而不会回退到浏览器滚动条。
+     */
+    @apply size-full overflow-hidden;
+  }
+
   * {
     @apply border-border outline-ring/50;
     }
