@@ -3,12 +3,14 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
+const apiProxyTarget = process.env.VITE_API_PROXY_TARGET ?? 'http://127.0.0.1:8080';
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {
-      '/api': 'http://127.0.0.1:8080',
-      '/healthz': 'http://127.0.0.1:8080',
+      '/api': { target: apiProxyTarget, changeOrigin: false },
+      '/healthz': { target: apiProxyTarget, changeOrigin: false },
     },
   },
   build: {

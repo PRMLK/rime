@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -16,25 +17,49 @@ import (
 
 	"rime/backend/internal/artwork"
 	"rime/backend/internal/browse"
+	"rime/backend/internal/identity"
 	"rime/backend/internal/lyrics"
 	"rime/backend/internal/playback"
+	"rime/backend/internal/playlists"
 	"rime/backend/internal/search"
 	"rime/backend/internal/tasks"
 )
 
 type Handler struct {
-	search   *search.Service
-	browse   *browse.Service
-	lyrics   *lyrics.Service
-	playback *playback.Service
-	artwork  *artwork.Service
-	tasks    *tasks.Service
-	logger   *slog.Logger
+	search    *search.Service
+	browse    *browse.Service
+	lyrics    *lyrics.Service
+	playback  *playback.Service
+	artwork   *artwork.Service
+	tasks     *tasks.Service
+	identity  *identity.Service
+	playlists *playlists.Service
+	logger    *slog.Logger
 }
 
-func New(searchService *search.Service, browseService *browse.Service, lyricsService *lyrics.Service, playbackService *playback.Service, artworkService *artwork.Service, taskService *tasks.Service, logger *slog.Logger) http.Handler {
-	handler := &Handler{search: searchService, browse: browseService, lyrics: lyricsService, playback: playbackService, artwork: artworkService, tasks: taskService, logger: logger}
+func New(searchService *search.Service, browseService *browse.Service, lyricsService *lyrics.Service, playbackService *playback.Service, artworkService *artwork.Service, taskService *tasks.Service, identityService *identity.Service, playlistService *playlists.Service, logger *slog.Logger) http.Handler {
+	handler := &Handler{search: searchService, browse: browseService, lyrics: lyricsService, playback: playbackService, artwork: artworkService, tasks: taskService, identity: identityService, playlists: playlistService, logger: logger}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/auth/status", handler.authStatus)
+	mux.HandleFunc("POST /api/v1/auth/setup", handler.setupAdmin)
+	mux.HandleFunc("POST /api/v1/auth/login", handler.login)
+	mux.HandleFunc("DELETE /api/v1/auth/session", handler.logout)
+	mux.HandleFunc("GET /api/v1/me", handler.me)
+	mux.HandleFunc("PATCH /api/v1/me/password", handler.changePassword)
+	mux.HandleFunc("GET /api/v1/me/playlists", handler.listPlaylists)
+	mux.HandleFunc("POST /api/v1/me/playlists", handler.createPlaylist)
+	mux.HandleFunc("GET /api/v1/me/playlists/{playlistID}", handler.getPlaylist)
+	mux.HandleFunc("PATCH /api/v1/me/playlists/{playlistID}", handler.renamePlaylist)
+	mux.HandleFunc("DELETE /api/v1/me/playlists/{playlistID}", handler.deletePlaylist)
+	mux.HandleFunc("POST /api/v1/me/playlists/{playlistID}/tracks", handler.addPlaylistTrack)
+	mux.HandleFunc("DELETE /api/v1/me/playlists/{playlistID}/tracks/{trackID}", handler.removePlaylistTrack)
+	mux.HandleFunc("GET /api/v1/me/favorites/tracks/{trackID}", handler.favoriteStatus)
+	mux.HandleFunc("PUT /api/v1/me/favorites/tracks/{trackID}", handler.addFavorite)
+	mux.HandleFunc("DELETE /api/v1/me/favorites/tracks/{trackID}", handler.removeFavorite)
+	mux.HandleFunc("GET /api/v1/admin/users", handler.listUsers)
+	mux.HandleFunc("POST /api/v1/admin/users", handler.createUser)
+	mux.HandleFunc("PATCH /api/v1/admin/users/{userID}", handler.updateUser)
+	mux.HandleFunc("POST /api/v1/admin/users/{userID}/password-reset", handler.resetPassword)
 	mux.HandleFunc("GET /api/v1/system/info", handler.systemInfo)
 	mux.HandleFunc("GET /api/v1/system/tasks", handler.listTasks)
 	mux.HandleFunc("POST /api/v1/system/tasks/{taskID}/runs", handler.runTask)
@@ -51,7 +76,7 @@ func New(searchService *search.Service, browseService *browse.Service, lyricsSer
 	mux.HandleFunc("GET /api/v1/artworks/{artworkID}", handler.serveArtwork)
 	mux.HandleFunc("HEAD /api/v1/artworks/{artworkID}", handler.serveArtwork)
 	mux.HandleFunc("GET /healthz", handler.health)
-	return requestMiddleware(logger, mux)
+	return requestMiddleware(logger, authenticationMiddleware(handler, mux))
 }
 
 func (h *Handler) serveArtwork(w http.ResponseWriter, r *http.Request) {
@@ -74,7 +99,7 @@ func (h *Handler) serveArtwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resource.File.Close()
-	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
 	w.Header().Set("Content-Type", resource.ContentType)
 	w.Header().Set("ETag", fmt.Sprintf("\"%s-%d\"", r.PathValue("artworkID"), size))
 	http.ServeContent(w, r, resource.Name, resource.ModifiedAt, resource.File)
@@ -163,6 +188,9 @@ func (h *Handler) artistDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listTasks(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdmin(w, r) {
+		return
+	}
 	items, err := h.tasks.List(r.Context())
 	if err != nil {
 		h.logger.Error("list scheduled tasks", "error", err)
@@ -173,6 +201,9 @@ func (h *Handler) listTasks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) runTask(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdmin(w, r) {
+		return
+	}
 	task, err := h.tasks.RunNow(r.Context(), r.PathValue("taskID"))
 	if err != nil {
 		switch {
@@ -213,7 +244,7 @@ func (h *Handler) createPlaybackSession(w http.ResponseWriter, r *http.Request) 
 		writeProblem(w, r, http.StatusBadRequest, "invalid_request", "Invalid request", err.Error())
 		return
 	}
-	session, err := h.playback.Create(r.Context(), request)
+	session, err := h.playback.Create(r.Context(), currentUser(r).ID, request)
 	if err != nil {
 		switch {
 		case errors.Is(err, playback.ErrTrackNotFound):
@@ -231,7 +262,7 @@ func (h *Handler) createPlaybackSession(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
-	track, mediaFile, err := h.playback.Stream(r.Context(), r.PathValue("sessionID"))
+	track, mediaFile, err := h.playback.Stream(r.Context(), currentUser(r).ID, r.PathValue("sessionID"))
 	if err != nil {
 		if errors.Is(err, playback.ErrSessionNotFound) {
 			writeProblem(w, r, http.StatusNotFound, "session_not_found", "Playback session not found", "The playback session is missing or expired.")
@@ -268,7 +299,7 @@ func (h *Handler) recordPlaybackEvent(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, http.StatusBadRequest, "invalid_request", "Invalid request", err.Error())
 		return
 	}
-	if err := h.playback.Record(r.Context(), r.PathValue("sessionID"), event); err != nil {
+	if err := h.playback.Record(r.Context(), currentUser(r).ID, r.PathValue("sessionID"), event); err != nil {
 		writeProblem(w, r, http.StatusBadRequest, "invalid_playback_event", "Invalid playback event", err.Error())
 		return
 	}
@@ -276,7 +307,7 @@ func (h *Handler) recordPlaybackEvent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deletePlaybackSession(w http.ResponseWriter, r *http.Request) {
-	if err := h.playback.Delete(r.Context(), r.PathValue("sessionID")); err != nil {
+	if err := h.playback.Delete(r.Context(), currentUser(r).ID, r.PathValue("sessionID")); err != nil {
 		h.logger.Error("delete playback session", "error", err)
 		writeProblem(w, r, http.StatusInternalServerError, "internal_error", "Internal error", "The playback session could not be deleted.")
 		return
@@ -348,7 +379,34 @@ func requestMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 		w.Header().Set("X-Request-ID", requestID)
 		w.Header().Set("Rime-API-Version", "v1")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if isUnsafeMethod(r.Method) && !isSameOriginRequest(r) {
+			writeProblem(w, r, http.StatusForbidden, "cross_origin_request", "Request blocked", "State-changing requests must originate from this Rime server.")
+			return
+		}
 		next.ServeHTTP(w, r)
 		logger.Debug("http request", "method", r.Method, "path", r.URL.Path, "duration", time.Since(started), "request_id", requestID)
 	})
+}
+
+func isUnsafeMethod(method string) bool {
+	return method == http.MethodPost || method == http.MethodPut || method == http.MethodPatch || method == http.MethodDelete
+}
+
+func isSameOriginRequest(r *http.Request) bool {
+	if strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") {
+		return false
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	scheme := "http"
+	if requestIsHTTPS(r) {
+		scheme = "https"
+	}
+	return strings.EqualFold(parsed.Scheme, scheme) && strings.EqualFold(parsed.Host, r.Host)
 }

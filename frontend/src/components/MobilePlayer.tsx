@@ -12,18 +12,19 @@ import {
   UserIcon as UserSolidIcon,
 } from '@heroicons/react/24/solid';
 import {
-  ArrowLeft, CalendarClock, ChevronDown, ChevronRight, Disc3, Heart, LibraryBig,
-  LoaderCircle, Pause, Play, Settings, SkipBack, SkipForward, Sparkles, UserRound,
+  ArrowLeft, CalendarClock, ChevronDown, ChevronRight, Disc3, Heart,
+  ListPlus, LoaderCircle, MoreHorizontal, Pause, Play, SkipBack, SkipForward, Sparkles, UserRound, Users,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import {
-  ApiError, artworkUrl, getAlbumDetail, getArtistDetail, getRecentAlbums, getScheduledTasks, getTrackLyrics, runScheduledTask, searchTracks,
-  type Album, type AlbumDetail, type ArtistDetail, type ArtistRef, type LyricsDocument, type ScheduledTask, type Track,
+  ApiError, addTrackToPlaylist, artworkUrl, createUser as createUserApi, getAlbumDetail, getArtistDetail, getFavoriteStatus, getPlaylists, getRecentAlbums, getScheduledTasks, getTrackLyrics, getUsers, resetUserPassword, runScheduledTask, searchTracks, setFavorite, updateUser as updateUserApi,
+  type Album, type AlbumDetail, type ArtistDetail, type ArtistRef, type LyricsDocument, type ScheduledTask, type Track, type User,
 } from '@/api/rime';
 import { AlbumArtwork, AlbumArtworkFrame, AlbumArtworkSkeleton } from '@/components/AlbumArtwork';
 import { AlbumDetailHero, AlbumDetailHeroSkeleton } from '@/components/AlbumDetailHero';
 import { AppScrollArea } from '@/components/AppScrollArea';
 import { PageHeader } from '@/components/PageHeader';
+import { LibraryView } from '@/components/LibraryView';
 import { UnifiedListFooterLogo, UnifiedListRow } from '@/components/UnifiedListRow';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -36,12 +37,22 @@ import {
   DrawerTitle,
   DrawerTrigger,
 } from '@/components/ui/drawer';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
+import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
 import {
-  ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle,
+  Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle,
 } from '@/components/ui/item';
 import { Separator } from '@/components/ui/separator';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Slider } from '@/components/ui/slider';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -84,15 +95,9 @@ const miniPlayerPrimaryControlClassName = [
   'motion-reduce:transition-none',
 ].join(' ');
 
-const libraryItems = [
-  { title: '我喜欢的音乐', detail: '尚未同步' },
-  { title: '最近播放', detail: '尚未同步' },
-  { title: '我的歌单', detail: '尚未同步' },
-];
-
 const miniPlayerTextToneCache = new Map<string, boolean>();
 
-export function MobilePlayer() {
+export function MobilePlayer({ user, onAuthChanged }: { user: User; onAuthChanged: () => void }) {
   const player = useMemo(() => new HtmlAudioPlayer(), []);
   const playback = useSyncExternalStore(player.subscribe, player.getSnapshot);
   const miniPlayerSurfaceRef = useRef<HTMLElement>(null);
@@ -102,6 +107,7 @@ export function MobilePlayer() {
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isLiked, setIsLiked] = useState(false);
+  const [isUpdatingLike, setIsUpdatingLike] = useState(false);
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>('sequence');
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Track[]>([]);
@@ -179,6 +185,34 @@ export function MobilePlayer() {
   }, [query]);
 
   useEffect(() => () => player.dispose(), [player]);
+
+  useEffect(() => {
+    if (!playback.track) {
+      setIsLiked(false);
+      return;
+    }
+    const controller = new AbortController();
+    getFavoriteStatus(playback.track.id, controller.signal)
+      .then((status) => setIsLiked(status.favorite))
+      .catch((error: unknown) => {
+        if (!(error instanceof DOMException && error.name === 'AbortError')) setIsLiked(false);
+      });
+    return () => controller.abort();
+  }, [playback.track?.id]);
+
+  const toggleLike = useCallback(async () => {
+    if (!playback.track || isUpdatingLike) return;
+    const next = !isLiked;
+    setIsLiked(next);
+    setIsUpdatingLike(true);
+    try {
+      await setFavorite(playback.track.id, next);
+    } catch {
+      setIsLiked(!next);
+    } finally {
+      setIsUpdatingLike(false);
+    }
+  }, [isLiked, isUpdatingLike, playback.track]);
 
   const chooseTrack = useCallback(async (track: Track) => {
     try {
@@ -341,7 +375,7 @@ export function MobilePlayer() {
                     />
                   </TabsContent>
                   <TabsContent value="library">
-                    <LibraryView onOpenSystemSettings={() => setIsSettingsOpen(true)} />
+                    <LibraryView user={user} onChooseTrack={chooseTrack} onOpenSystemSettings={() => setIsSettingsOpen(true)} onSignedOut={onAuthChanged} />
                   </TabsContent>
                 </>
               )}
@@ -458,7 +492,8 @@ export function MobilePlayer() {
           playbackMode={playbackMode}
           canPlayPrevious={currentIndex > 0}
           canPlayNext={currentIndex >= 0 && currentIndex < activePlaybackQueue.length - 1}
-          onToggleLike={() => setIsLiked((liked) => !liked)}
+          isUpdatingLike={isUpdatingLike}
+          onToggleLike={() => void toggleLike()}
           onTogglePlaybackMode={() => setPlaybackMode((mode) => mode === 'sequence' ? 'repeat' : 'sequence')}
           onTogglePlayback={() => void player.toggle()}
           onSeek={player.seek.bind(player)}
@@ -467,7 +502,7 @@ export function MobilePlayer() {
           onChooseTrack={chooseTrack}
         />
       </Drawer>
-      <SystemSettingsDrawer open={isSettingsOpen} onOpenChange={setIsSettingsOpen} />
+      {user.role === 'admin' && <SystemSettingsDrawer open={isSettingsOpen} onOpenChange={setIsSettingsOpen} />}
     </TooltipProvider>
   );
 }
@@ -990,6 +1025,7 @@ function NowPlayingDrawer({
   queue,
   isLiked,
   playbackMode,
+  isUpdatingLike,
   canPlayPrevious,
   canPlayNext,
   onToggleLike,
@@ -1004,6 +1040,7 @@ function NowPlayingDrawer({
   queue: Track[];
   isLiked: boolean;
   playbackMode: PlaybackMode;
+  isUpdatingLike: boolean;
   canPlayPrevious: boolean;
   canPlayNext: boolean;
   onToggleLike: () => void;
@@ -1054,9 +1091,10 @@ function NowPlayingDrawer({
             </div>
             <div className="flex shrink-0 flex-col items-end gap-1">
               <Tooltip>
-                <TooltipTrigger render={<Button variant="ghost" size="icon" aria-label={isLiked ? '取消喜欢' : '喜欢这首歌'} aria-pressed={isLiked} disabled={!playback.track} onClick={onToggleLike}><Heart fill={isLiked ? 'currentColor' : 'none'} aria-hidden="true" /></Button>} />
+                <TooltipTrigger render={<Button variant="ghost" size="icon" aria-label={isLiked ? '取消喜欢' : '喜欢这首歌'} aria-pressed={isLiked} disabled={!playback.track || isUpdatingLike} onClick={onToggleLike}><Heart fill={isLiked ? 'currentColor' : 'none'} aria-hidden="true" /></Button>} />
                 <TooltipContent>{isLiked ? '取消喜欢' : '喜欢这首歌'}</TooltipContent>
               </Tooltip>
+              <AddToPlaylistMenu track={playback.track} />
               <div className="h-5">
                 {playback.source && <Badge variant="secondary">{playbackSourceLabel(playback.source)}</Badge>}
               </div>
@@ -1141,6 +1179,42 @@ function NowPlayingDrawer({
         </section>
       </AppScrollArea>
     </DrawerContent>
+  );
+}
+
+function AddToPlaylistMenu({ track }: { track?: Track }) {
+  const [playlists, setPlaylists] = useState<Array<{ id: string; name: string }>>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const load = (open: boolean) => {
+    if (!open || !track) return;
+    setIsLoading(true);
+    getPlaylists()
+      .then((page) => setPlaylists(page.items.filter((playlist) => playlist.kind === 'custom')))
+      .finally(() => setIsLoading(false));
+  };
+
+  return (
+    <DropdownMenu onOpenChange={load}>
+      <Tooltip>
+        <TooltipTrigger render={<DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label="添加到歌单" disabled={!track} />} />}>
+          <ListPlus aria-hidden="true" />
+        </TooltipTrigger>
+        <TooltipContent>添加到歌单</TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="end">
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>添加到歌单</DropdownMenuLabel>
+          {isLoading && <DropdownMenuItem disabled><LoaderCircle className="animate-spin" aria-hidden="true" />正在加载</DropdownMenuItem>}
+          {!isLoading && playlists.length === 0 && <DropdownMenuItem disabled>暂无自建歌单</DropdownMenuItem>}
+          {!isLoading && playlists.map((playlist) => (
+            <DropdownMenuItem key={playlist.id} onClick={() => { if (track) void addTrackToPlaylist(playlist.id, track.id).catch(() => undefined); }}>
+              {playlist.name}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -1305,41 +1379,8 @@ function SearchView({ query, results, isSearching, error, activeTrackId, onQuery
   );
 }
 
-function LibraryView({ onOpenSystemSettings }: { onOpenSystemSettings: () => void }) {
-  return (
-    <section className="mt-8" aria-labelledby="library-heading">
-      <h2 id="library-heading" className="text-sm font-semibold">我的音乐</h2>
-      <ItemGroup className="mt-3 gap-0">
-        {libraryItems.map((item) => (
-          <UnifiedListRow key={item.title} render={<button type="button" disabled />} className="h-auto cursor-not-allowed justify-start py-3 text-left" separated>
-            <ItemMedia variant="icon"><LibraryBig aria-hidden="true" /></ItemMedia>
-            <ItemContent>
-              <ItemTitle>{item.title}</ItemTitle>
-              <ItemDescription>{item.detail}</ItemDescription>
-            </ItemContent>
-          </UnifiedListRow>
-        ))}
-      </ItemGroup>
-      <Separator className="my-8" />
-      <h2 className="text-sm font-semibold">设置</h2>
-      <ItemGroup className="mt-3 gap-0">
-        <UnifiedListRow
-          render={<button type="button" onClick={onOpenSystemSettings} />}
-          className="cursor-pointer py-3"
-          separated
-        >
-          <ItemMedia variant="icon"><Settings aria-hidden="true" /></ItemMedia>
-          <ItemContent><ItemTitle>系统设置</ItemTitle></ItemContent>
-          <ItemActions><ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" /></ItemActions>
-        </UnifiedListRow>
-      </ItemGroup>
-      <UnifiedListFooterLogo />
-    </section>
-  );
-}
-
 function SystemSettingsDrawer({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
-  const [view, setView] = useState<'root' | 'tasks'>('root');
+  const [view, setView] = useState<'root' | 'tasks' | 'users'>('root');
   const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string>();
@@ -1407,15 +1448,24 @@ function SystemSettingsDrawer({ open, onOpenChange }: { open: boolean; onOpenCha
                 <ArrowLeft aria-hidden="true" />
               </Button>
             )}
-            <DrawerTitle className="min-w-0 flex-1 text-center text-sm">{view === 'root' ? '系统设置' : '计划任务'}</DrawerTitle>
+            <DrawerTitle className="min-w-0 flex-1 text-center text-sm">{view === 'root' ? '系统设置' : view === 'tasks' ? '计划任务' : '用户管理'}</DrawerTitle>
             <span className="size-8 shrink-0" aria-hidden="true" />
           </DrawerHeader>
         </div>
 
         <AppScrollArea className="min-h-0 flex-1">
-          <section className="mobile-content-frame pb-[max(env(safe-area-inset-bottom),1.5rem)]" aria-label={view === 'root' ? '系统设置项目' : '计划任务列表'}>
+          <section className="mobile-content-frame pb-[max(env(safe-area-inset-bottom),1.5rem)]" aria-label={view === 'root' ? '系统设置项目' : view === 'tasks' ? '计划任务列表' : '用户列表'}>
             {view === 'root' ? (
               <ItemGroup className="gap-0">
+                <UnifiedListRow
+                  render={<button type="button" onClick={() => setView('users')} />}
+                  className="cursor-pointer py-3"
+                  separated
+                >
+                  <ItemMedia variant="icon"><Users aria-hidden="true" /></ItemMedia>
+                  <ItemContent><ItemTitle>用户管理</ItemTitle></ItemContent>
+                  <ItemActions><ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" /></ItemActions>
+                </UnifiedListRow>
                 <UnifiedListRow
                   render={<button type="button" onClick={() => setView('tasks')} />}
                   className="cursor-pointer py-3"
@@ -1426,11 +1476,153 @@ function SystemSettingsDrawer({ open, onOpenChange }: { open: boolean; onOpenCha
                   <ItemActions><ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" /></ItemActions>
                 </UnifiedListRow>
               </ItemGroup>
-            ) : (
+            ) : view === 'tasks' ? (
               <ScheduledTaskList tasks={scheduledTasks} isLoading={isLoading} error={error} onRunTask={runTask} />
+            ) : (
+              <AdminUserList />
             )}
           </section>
         </AppScrollArea>
+      </DrawerContent>
+    </Drawer>
+  );
+}
+
+function AdminUserList() {
+  const [users, setUsers] = useState<User[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string>();
+  const [creating, setCreating] = useState(false);
+  const [resetTarget, setResetTarget] = useState<User>();
+  const [refresh, setRefresh] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setIsLoading(true);
+    setError(undefined);
+    getUsers(controller.signal)
+      .then((page) => setUsers(page.items))
+      .catch((loadError: unknown) => {
+        if (loadError instanceof DOMException && loadError.name === 'AbortError') return;
+        setError(loadError instanceof Error ? loadError.message : '用户加载失败');
+      })
+      .finally(() => setIsLoading(false));
+    return () => controller.abort();
+  }, [refresh]);
+
+  const update = async (user: User, input: { role?: User['role']; disabled?: boolean }) => {
+    setError(undefined);
+    try {
+      await updateUserApi(user.id, input);
+      setRefresh((value) => value + 1);
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : '用户更新失败');
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground">{users.length} 个账户</p>
+        <Button size="sm" onClick={() => setCreating(true)}><Users data-icon="inline-start" />新建用户</Button>
+      </div>
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      {isLoading && users.length === 0 ? (
+        <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />正在加载</div>
+      ) : (
+        <ItemGroup className="gap-0">
+          {users.map((user) => (
+            <Item key={user.id} className="rounded-none border-b px-0 py-4 last:border-b-0">
+              <ItemContent>
+                <ItemTitle className="flex items-center gap-2">{user.displayName}<Badge variant="secondary">{user.role === 'admin' ? '管理员' : '用户'}</Badge></ItemTitle>
+                <ItemDescription>@{user.username}{user.disabled ? ' · 已停用' : user.mustChangePassword ? ' · 等待修改密码' : ''}</ItemDescription>
+              </ItemContent>
+              <ItemActions>
+                <DropdownMenu>
+                  <DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label={`管理${user.displayName}`} />}><MoreHorizontal aria-hidden="true" /></DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuGroup>
+                      <DropdownMenuItem onClick={() => void update(user, { role: user.role === 'admin' ? 'user' : 'admin' })}>{user.role === 'admin' ? '设为普通用户' : '设为管理员'}</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => void update(user, { disabled: !user.disabled })}>{user.disabled ? '重新启用' : '停用账户'}</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => setResetTarget(user)}>重置密码</DropdownMenuItem>
+                    </DropdownMenuGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </ItemActions>
+            </Item>
+          ))}
+        </ItemGroup>
+      )}
+      <CreateUserDrawer open={creating} onOpenChange={setCreating} onCreated={() => setRefresh((value) => value + 1)} />
+      <ResetPasswordDrawer user={resetTarget} onOpenChange={(open) => { if (!open) setResetTarget(undefined); }} onReset={() => setRefresh((value) => value + 1)} />
+    </div>
+  );
+}
+
+function CreateUserDrawer({ open, onOpenChange, onCreated }: { open: boolean; onOpenChange: (open: boolean) => void; onCreated: () => void }) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string>();
+  const [role, setRole] = useState<User['role']>('user');
+  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setPending(true); setError(undefined);
+    try {
+      await createUserApi({
+        username: String(form.get('username') ?? ''), displayName: String(form.get('displayName') ?? ''),
+        password: String(form.get('password') ?? ''), role,
+      });
+      onOpenChange(false); onCreated();
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : '用户创建失败');
+    } finally { setPending(false); }
+  };
+  return (
+    <Drawer open={open} onOpenChange={onOpenChange} swipeDirection="down">
+      <DrawerContent>
+        <DrawerHeader><DrawerTitle>新建用户</DrawerTitle></DrawerHeader>
+        <form className="px-5 pb-[max(env(safe-area-inset-bottom),1.5rem)]" onSubmit={submit}>
+          <FieldGroup>
+            <Field><FieldLabel htmlFor="new-user-username">用户名</FieldLabel><Input id="new-user-username" name="username" minLength={3} maxLength={32} required /></Field>
+            <Field><FieldLabel htmlFor="new-user-name">显示名称</FieldLabel><Input id="new-user-name" name="displayName" maxLength={40} /></Field>
+            <Field><FieldLabel htmlFor="new-user-password">临时密码</FieldLabel><Input id="new-user-password" name="password" type="password" minLength={8} required /></Field>
+            <Field>
+              <FieldLabel>角色</FieldLabel>
+              <Select value={role} onValueChange={(value) => setRole(value as User['role'])}><SelectTrigger className="w-full"><SelectValue>{role === 'admin' ? '管理员' : '普通用户'}</SelectValue></SelectTrigger><SelectContent><SelectGroup><SelectItem value="user">普通用户</SelectItem><SelectItem value="admin">管理员</SelectItem></SelectGroup></SelectContent></Select>
+            </Field>
+            {error && <FieldError>{error}</FieldError>}
+            <Button type="submit" size="lg" disabled={pending}>{pending && <LoaderCircle data-icon="inline-start" className="animate-spin" />}创建用户</Button>
+          </FieldGroup>
+        </form>
+      </DrawerContent>
+    </Drawer>
+  );
+}
+
+function ResetPasswordDrawer({ user, onOpenChange, onReset }: { user?: User; onOpenChange: (open: boolean) => void; onReset: () => void }) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string>();
+  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!user) return;
+    setPending(true); setError(undefined);
+    try {
+      await resetUserPassword(user.id, String(new FormData(event.currentTarget).get('password') ?? ''));
+      onOpenChange(false); onReset();
+    } catch (submitError) { setError(submitError instanceof Error ? submitError.message : '密码重置失败'); }
+    finally { setPending(false); }
+  };
+  return (
+    <Drawer open={Boolean(user)} onOpenChange={onOpenChange} swipeDirection="down">
+      <DrawerContent>
+        <DrawerHeader><DrawerTitle>重置{user ? `“${user.displayName}”` : ''}的密码</DrawerTitle></DrawerHeader>
+        <form className="px-5 pb-[max(env(safe-area-inset-bottom),1.5rem)]" onSubmit={submit}>
+          <FieldGroup>
+            <Field><FieldLabel htmlFor="reset-user-password">新临时密码</FieldLabel><Input id="reset-user-password" name="password" type="password" minLength={8} required /></Field>
+            {error && <FieldError>{error}</FieldError>}
+            <Button type="submit" size="lg" disabled={pending}>{pending && <LoaderCircle data-icon="inline-start" className="animate-spin" />}重置密码</Button>
+          </FieldGroup>
+        </form>
       </DrawerContent>
     </Drawer>
   );

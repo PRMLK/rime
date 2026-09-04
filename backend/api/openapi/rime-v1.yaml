@@ -5,7 +5,266 @@ info:
   description: Native API for catalog search and playback resolution.
 servers:
   - url: /api/v1
+security:
+  - cookieAuth: []
 paths:
+  /auth/status:
+    get:
+      operationId: getAuthStatus
+      security: []
+      responses:
+        '200':
+          description: Initial setup and current session state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthStatus' }
+  /auth/setup:
+    post:
+      operationId: setupInitialAdmin
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetupRequest' }
+      responses:
+        '201':
+          description: Initial administrator created and signed in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /auth/login:
+    post:
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Signed in user
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
+  /auth/session:
+    delete:
+      operationId: logout
+      responses:
+        '204': { description: Session ended }
+  /me:
+    get:
+      operationId: getCurrentUser
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+  /me/password:
+    patch:
+      operationId: changeOwnPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string, format: password }
+                newPassword: { type: string, format: password, minLength: 8, maxLength: 128 }
+      responses:
+        '204': { description: Password changed; all sessions revoked }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+  /me/playlists:
+    get:
+      operationId: listOwnPlaylists
+      responses:
+        '200':
+          description: Current user's playlists
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/Playlist' } }
+    post:
+      operationId: createOwnPlaylist
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 80 }
+      responses:
+        '201':
+          description: Playlist created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Playlist' }
+  /me/playlists/{playlistId}:
+    parameters:
+      - $ref: '#/components/parameters/PlaylistId'
+    get:
+      operationId: getOwnPlaylist
+      responses:
+        '200':
+          description: Playlist and ordered tracks
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlaylistDetail' }
+        '404': { $ref: '#/components/responses/Problem' }
+    patch:
+      operationId: renameOwnPlaylist
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 80 }
+      responses:
+        '200':
+          description: Playlist renamed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Playlist' }
+        '409': { $ref: '#/components/responses/Problem' }
+    delete:
+      operationId: deleteOwnPlaylist
+      responses:
+        '204': { description: Playlist deleted }
+        '409': { $ref: '#/components/responses/Problem' }
+  /me/playlists/{playlistId}/tracks:
+    post:
+      operationId: addTrackToOwnPlaylist
+      parameters:
+        - $ref: '#/components/parameters/PlaylistId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [trackId]
+              properties:
+                trackId: { type: string }
+      responses:
+        '204': { description: Track added }
+        '409': { $ref: '#/components/responses/Problem' }
+  /me/playlists/{playlistId}/tracks/{trackId}:
+    delete:
+      operationId: removeTrackFromOwnPlaylist
+      parameters:
+        - $ref: '#/components/parameters/PlaylistId'
+        - $ref: '#/components/parameters/TrackId'
+      responses:
+        '204': { description: Track removed }
+  /me/favorites/tracks/{trackId}:
+    parameters:
+      - $ref: '#/components/parameters/TrackId'
+    get:
+      operationId: getFavoriteStatus
+      responses:
+        '200':
+          description: Favorite state for a track
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [favorite]
+                properties:
+                  favorite: { type: boolean }
+    put:
+      operationId: addFavorite
+      responses:
+        '204': { description: Track is a favorite }
+    delete:
+      operationId: removeFavorite
+      responses:
+        '204': { description: Track is not a favorite }
+  /admin/users:
+    get:
+      operationId: listUsers
+      responses:
+        '200':
+          description: All users; administrator only
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/User' } }
+        '403': { $ref: '#/components/responses/Problem' }
+    post:
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateUserRequest' }
+      responses:
+        '201':
+          description: User created with a favorites playlist
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /admin/users/{userId}:
+    patch:
+      operationId: updateUser
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                displayName: { type: string, minLength: 1, maxLength: 40 }
+                role: { type: string, enum: [admin, user] }
+                disabled: { type: boolean }
+      responses:
+        '200':
+          description: User updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /admin/users/{userId}/password-reset:
+    post:
+      operationId: resetUserPassword
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string, format: password, minLength: 8, maxLength: 128 }
+      responses:
+        '204': { description: Temporary password set and sessions revoked }
+        '403': { $ref: '#/components/responses/Problem' }
   /system/info:
     get:
       operationId: getSystemInfo
@@ -214,9 +473,29 @@ paths:
         '400':
           $ref: '#/components/responses/Problem'
 components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: rime_session
   parameters:
     SessionId:
       name: sessionId
+      in: path
+      required: true
+      schema: { type: string }
+    PlaylistId:
+      name: playlistId
+      in: path
+      required: true
+      schema: { type: string }
+    TrackId:
+      name: trackId
+      in: path
+      required: true
+      schema: { type: string }
+    UserId:
+      name: userId
       in: path
       required: true
       schema: { type: string }
@@ -228,6 +507,65 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
   schemas:
+    User:
+      type: object
+      required: [id, username, displayName, role, disabled, mustChangePassword, createdAt]
+      properties:
+        id: { type: string }
+        username: { type: string }
+        displayName: { type: string }
+        role: { type: string, enum: [admin, user] }
+        disabled: { type: boolean }
+        mustChangePassword: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        lastLoginAt: { type: string, format: date-time }
+    AuthStatus:
+      type: object
+      required: [setupRequired, authenticated]
+      properties:
+        setupRequired: { type: boolean }
+        authenticated: { type: boolean }
+        user: { $ref: '#/components/schemas/User' }
+    SetupRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, minLength: 3, maxLength: 32 }
+        displayName: { type: string, maxLength: 40 }
+        password: { type: string, format: password, minLength: 8, maxLength: 128 }
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string }
+        password: { type: string, format: password }
+    CreateUserRequest:
+      type: object
+      required: [username, password, role]
+      properties:
+        username: { type: string, minLength: 3, maxLength: 32 }
+        displayName: { type: string, maxLength: 40 }
+        password: { type: string, format: password, minLength: 8, maxLength: 128 }
+        role: { type: string, enum: [admin, user] }
+    Playlist:
+      type: object
+      required: [id, name, kind, trackCount, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        kind: { type: string, enum: [favorites, custom] }
+        trackCount: { type: integer, minimum: 0 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    PlaylistDetail:
+      allOf:
+        - $ref: '#/components/schemas/Playlist'
+        - type: object
+          required: [tracks]
+          properties:
+            tracks:
+              type: array
+              items: { $ref: '#/components/schemas/Track' }
     SystemInfo:
       type: object
       required: [name, apiVersion, capabilities]
@@ -288,7 +626,7 @@ components:
           items: { $ref: '#/components/schemas/Album' }
     Track:
       type: object
-      required: [id, title, album, artists, durationMs]
+      required: [id, title, album, artists, durationMs, available]
       properties:
         id: { type: string }
         title: { type: string }
@@ -300,6 +638,13 @@ components:
         discNumber: { type: integer }
         trackNumber: { type: integer }
         artworkId: { type: string }
+        artworkFocus:
+          type: object
+          required: [x, y]
+          properties:
+            x: { type: number, minimum: 0, maximum: 1 }
+            y: { type: number, minimum: 0, maximum: 1 }
+        available: { type: boolean }
     LyricsLine:
       type: object
       required: [text]

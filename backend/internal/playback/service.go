@@ -61,10 +61,10 @@ type Event struct {
 type Repository interface {
 	GetTrack(context.Context, string) (catalog.Track, error)
 	AvailableMedia(context.Context, string) ([]catalog.MediaFile, error)
-	CreatePlaybackSession(context.Context, string, string, string, string, time.Time, time.Time) error
-	PlaybackSessionMedia(context.Context, string, time.Time) (catalog.Track, catalog.MediaFile, error)
-	RecordPlaybackEvent(context.Context, string, Event) error
-	DeletePlaybackSession(context.Context, string) error
+	CreatePlaybackSession(context.Context, string, string, string, string, string, time.Time, time.Time) error
+	PlaybackSessionMedia(context.Context, string, string, time.Time) (catalog.Track, catalog.MediaFile, error)
+	RecordPlaybackEvent(context.Context, string, string, Event) error
+	DeletePlaybackSession(context.Context, string, string) error
 }
 
 type Service struct {
@@ -76,7 +76,7 @@ func New(repo Repository) *Service {
 	return &Service{repo: repo, now: time.Now}
 }
 
-func (s *Service) Create(ctx context.Context, request CreateRequest) (Session, error) {
+func (s *Service) Create(ctx context.Context, userID string, request CreateRequest) (Session, error) {
 	if request.TrackID == "" {
 		return Session{}, fmt.Errorf("trackId is required")
 	}
@@ -101,7 +101,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Session, e
 	}
 	createdAt := s.now().UTC()
 	expiresAt := createdAt.Add(6 * time.Hour)
-	if err := s.repo.CreatePlaybackSession(ctx, sessionID, track.ID, selected.ID, request.PlayerID, createdAt, expiresAt); err != nil {
+	if err := s.repo.CreatePlaybackSession(ctx, sessionID, userID, track.ID, selected.ID, request.PlayerID, createdAt, expiresAt); err != nil {
 		return Session{}, err
 	}
 
@@ -121,11 +121,11 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Session, e
 	}, nil
 }
 
-func (s *Service) Stream(ctx context.Context, sessionID string) (catalog.Track, catalog.MediaFile, error) {
-	return s.repo.PlaybackSessionMedia(ctx, sessionID, s.now().UTC())
+func (s *Service) Stream(ctx context.Context, userID, sessionID string) (catalog.Track, catalog.MediaFile, error) {
+	return s.repo.PlaybackSessionMedia(ctx, userID, sessionID, s.now().UTC())
 }
 
-func (s *Service) Record(ctx context.Context, sessionID string, event Event) error {
+func (s *Service) Record(ctx context.Context, userID, sessionID string, event Event) error {
 	switch event.Type {
 	case "started", "progress", "paused", "ended":
 	default:
@@ -137,11 +137,11 @@ func (s *Service) Record(ctx context.Context, sessionID string, event Event) err
 	if event.OccurredAt.IsZero() {
 		event.OccurredAt = s.now().UTC()
 	}
-	return s.repo.RecordPlaybackEvent(ctx, sessionID, event)
+	return s.repo.RecordPlaybackEvent(ctx, userID, sessionID, event)
 }
 
-func (s *Service) Delete(ctx context.Context, sessionID string) error {
-	return s.repo.DeletePlaybackSession(ctx, sessionID)
+func (s *Service) Delete(ctx context.Context, userID, sessionID string) error {
+	return s.repo.DeletePlaybackSession(ctx, userID, sessionID)
 }
 
 func chooseMedia(media []catalog.MediaFile, formats []Format) (catalog.MediaFile, bool) {

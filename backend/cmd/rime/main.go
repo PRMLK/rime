@@ -1,23 +1,28 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"rime/backend/internal/artwork"
 	"rime/backend/internal/browse"
 	"rime/backend/internal/config"
+	"rime/backend/internal/identity"
 	"rime/backend/internal/library/scanner"
 	"rime/backend/internal/lyrics"
 	"rime/backend/internal/playback"
+	"rime/backend/internal/playlists"
 	"rime/backend/internal/search"
 	"rime/backend/internal/store/sqlite"
 	"rime/backend/internal/tasks"
@@ -26,10 +31,53 @@ import (
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	if err := run(logger); err != nil {
+	var err error
+	if len(os.Args) > 1 {
+		err = runCommand(logger, os.Args[1:])
+	} else {
+		err = run(logger)
+	}
+	if err != nil {
 		logger.Error("server stopped", "error", err)
 		os.Exit(1)
 	}
+}
+
+func runCommand(logger *slog.Logger, args []string) error {
+	if len(args) == 0 || args[0] != "admin" || len(args) < 2 || args[1] != "reset-password" {
+		return errors.New("usage: rime admin reset-password --username <username>")
+	}
+	flags := flag.NewFlagSet("admin reset-password", flag.ContinueOnError)
+	username := flags.String("username", "", "account username")
+	if err := flags.Parse(args[2:]); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*username) == "" || flags.NArg() != 0 {
+		return errors.New("usage: rime admin reset-password --username <username>")
+	}
+	fmt.Fprint(os.Stderr, "New temporary password: ")
+	password, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil && strings.TrimSpace(password) == "" {
+		return fmt.Errorf("read password: %w", err)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	store, err := sqlite.Open(cfg.DatabasePath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	service, err := identity.New(context.Background(), store)
+	if err != nil {
+		return err
+	}
+	if err := service.ResetPasswordByUsername(context.Background(), *username, strings.TrimSpace(password)); err != nil {
+		return err
+	}
+	logger.Info("administrator password reset", "username", *username)
+	return nil
 }
 
 func run(logger *slog.Logger) error {
@@ -58,6 +106,10 @@ func run(logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := prepareArtworkFocus(ctx, store, artworkCache, logger); err != nil {
+		return err
+	}
+	identityService, err := identity.New(ctx, store)
+	if err != nil {
 		return err
 	}
 	libraryScanner := scanner.New(cfg.MusicDir, artworkCache, store, logger)
@@ -102,7 +154,7 @@ func run(logger *slog.Logger) error {
 	}
 	defer taskService.Close()
 
-	handler := v1.New(search.New(store), browse.New(store), lyrics.NewService(store), playback.New(store), artwork.NewService(store, artworkCache), taskService, logger)
+	handler := v1.New(search.New(store), browse.New(store), lyrics.NewService(store), playback.New(store), artwork.NewService(store, artworkCache), taskService, identityService, playlists.New(store), logger)
 	server := &http.Server{
 		Addr:              cfg.Address,
 		Handler:           handler,

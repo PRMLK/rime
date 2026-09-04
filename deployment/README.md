@@ -15,6 +15,17 @@ The public container port binds to `127.0.0.1:18081` by default so it can only b
 
 Set `RIME_HTTP_PORT` to change the loopback port. Place the music library below `runtime/music` or replace that bind mount with an absolute read-only host path in `compose.yml`.
 
+On the first deployment, open Rime and register the first account. It becomes
+the administrator automatically, and public registration closes immediately.
+Rime does not ship with a default username or password.
+
+To recover an existing administrator password, stop the backend and run the
+recovery command with the data volume mounted:
+
+```sh
+docker compose run --rm -T backend admin reset-password --username admin
+```
+
 ## GitHub Actions deployment
 
 The `CI and deploy` workflow validates backend tests, Go vet, and the frontend production build. Pushes to `main` deploy only after both validation jobs succeed.

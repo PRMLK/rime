@@ -50,6 +50,7 @@ type Track struct {
 	TrackNumber  int           `json:"trackNumber,omitempty"`
 	ArtworkID    *string       `json:"artworkId,omitempty"`
 	ArtworkFocus *ArtworkFocus `json:"artworkFocus,omitempty"`
+	Available    bool          `json:"available"`
 }
 
 type MediaFile struct {

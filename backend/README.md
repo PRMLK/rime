@@ -28,6 +28,24 @@ through environment variables:
 
 The native API contract is documented in `api/openapi/rime-v1.yaml`.
 
+## First administrator
+
+On an empty database, open the web app and register the first account. It becomes
+the first administrator automatically. Public registration is permanently
+disabled as soon as that account is created. Every account receives an
+undeletable `我喜欢的音乐` playlist.
+
+Administrators create subsequent accounts from **系统设置 → 用户管理**. New
+accounts must replace their temporary password on first sign-in. If every web
+session is lost, reset an existing administrator from standard input:
+
+```sh
+rime admin reset-password --username admin
+```
+
+The command revokes that user's sessions and requires the temporary password to
+be changed at the next sign-in.
+
 For frontend development, start this service first and then run `npm run dev`
 from `frontend`. Vite proxies `/api` to the backend automatically.
 

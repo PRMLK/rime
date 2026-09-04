@@ -51,6 +51,37 @@ export type Track = {
   trackNumber?: number;
   artworkId?: string;
   artworkFocus?: ArtworkFocus;
+  available: boolean;
+};
+
+export type User = {
+  id: string;
+  username: string;
+  displayName: string;
+  role: 'admin' | 'user';
+  disabled: boolean;
+  mustChangePassword: boolean;
+  createdAt: string;
+  lastLoginAt?: string;
+};
+
+export type AuthStatus = {
+  setupRequired: boolean;
+  authenticated: boolean;
+  user?: User;
+};
+
+export type Playlist = {
+  id: string;
+  name: string;
+  kind: 'favorites' | 'custom';
+  trackCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PlaylistDetail = Playlist & {
+  tracks: Track[];
 };
 
 export type SearchPage = {
@@ -105,6 +136,9 @@ type Problem = {
   code?: string;
 };
 
+export const authChangedEvent = 'rime:auth-changed';
+export const playlistsChangedEvent = 'rime:playlists-changed';
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -126,12 +160,95 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!response.ok) {
     const problem = (await response.json().catch(() => ({}))) as Problem;
+    if (response.status === 401) {
+      window.dispatchEvent(new Event(authChangedEvent));
+    }
     throw new ApiError(problem.detail || problem.title || `请求失败 (${response.status})`, response.status, problem.code);
   }
   if (response.status === 204) {
     return undefined as T;
   }
   return response.json() as Promise<T>;
+}
+
+export function getAuthStatus(signal?: AbortSignal): Promise<AuthStatus> {
+  return request<AuthStatus>('/api/v1/auth/status', { signal });
+}
+
+export function setupAdmin(input: { username: string; displayName: string; password: string }): Promise<User> {
+  return request<User>('/api/v1/auth/setup', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function login(username: string, password: string): Promise<User> {
+  return request<User>('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+}
+
+export function logout(): Promise<void> {
+  return request<void>('/api/v1/auth/session', { method: 'DELETE' });
+}
+
+export function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  return request<void>('/api/v1/me/password', { method: 'PATCH', body: JSON.stringify({ currentPassword, newPassword }) });
+}
+
+export function getPlaylists(signal?: AbortSignal): Promise<{ items: Playlist[] }> {
+  return request<{ items: Playlist[] }>('/api/v1/me/playlists', { signal });
+}
+
+export function getPlaylist(playlistId: string, signal?: AbortSignal): Promise<PlaylistDetail> {
+  return request<PlaylistDetail>(`/api/v1/me/playlists/${encodeURIComponent(playlistId)}`, { signal });
+}
+
+export async function createPlaylist(name: string): Promise<Playlist> {
+  const playlist = await request<Playlist>('/api/v1/me/playlists', { method: 'POST', body: JSON.stringify({ name }) });
+  window.dispatchEvent(new Event(playlistsChangedEvent));
+  return playlist;
+}
+
+export async function renamePlaylist(playlistId: string, name: string): Promise<Playlist> {
+  const playlist = await request<Playlist>(`/api/v1/me/playlists/${encodeURIComponent(playlistId)}`, { method: 'PATCH', body: JSON.stringify({ name }) });
+  window.dispatchEvent(new Event(playlistsChangedEvent));
+  return playlist;
+}
+
+export async function deletePlaylist(playlistId: string): Promise<void> {
+  await request<void>(`/api/v1/me/playlists/${encodeURIComponent(playlistId)}`, { method: 'DELETE' });
+  window.dispatchEvent(new Event(playlistsChangedEvent));
+}
+
+export async function addTrackToPlaylist(playlistId: string, trackId: string): Promise<void> {
+  await request<void>(`/api/v1/me/playlists/${encodeURIComponent(playlistId)}/tracks`, { method: 'POST', body: JSON.stringify({ trackId }) });
+  window.dispatchEvent(new Event(playlistsChangedEvent));
+}
+
+export async function removeTrackFromPlaylist(playlistId: string, trackId: string): Promise<void> {
+  await request<void>(`/api/v1/me/playlists/${encodeURIComponent(playlistId)}/tracks/${encodeURIComponent(trackId)}`, { method: 'DELETE' });
+  window.dispatchEvent(new Event(playlistsChangedEvent));
+}
+
+export function getFavoriteStatus(trackId: string, signal?: AbortSignal): Promise<{ favorite: boolean }> {
+  return request<{ favorite: boolean }>(`/api/v1/me/favorites/tracks/${encodeURIComponent(trackId)}`, { signal });
+}
+
+export async function setFavorite(trackId: string, favorite: boolean): Promise<void> {
+  await request<void>(`/api/v1/me/favorites/tracks/${encodeURIComponent(trackId)}`, { method: favorite ? 'PUT' : 'DELETE' });
+  window.dispatchEvent(new Event(playlistsChangedEvent));
+}
+
+export function getUsers(signal?: AbortSignal): Promise<{ items: User[] }> {
+  return request<{ items: User[] }>('/api/v1/admin/users', { signal });
+}
+
+export function createUser(input: { username: string; displayName: string; password: string; role: User['role'] }): Promise<User> {
+  return request<User>('/api/v1/admin/users', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function updateUser(userId: string, input: { displayName?: string; role?: User['role']; disabled?: boolean }): Promise<User> {
+  return request<User>(`/api/v1/admin/users/${encodeURIComponent(userId)}`, { method: 'PATCH', body: JSON.stringify(input) });
+}
+
+export function resetUserPassword(userId: string, password: string): Promise<void> {
+  return request<void>(`/api/v1/admin/users/${encodeURIComponent(userId)}/password-reset`, { method: 'POST', body: JSON.stringify({ password }) });
 }
 
 export function searchTracks(query: string, signal?: AbortSignal): Promise<SearchPage> {

@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -20,9 +21,11 @@ import (
 	"rime/backend/internal/artwork"
 	"rime/backend/internal/browse"
 	"rime/backend/internal/catalog"
+	"rime/backend/internal/identity"
 	"rime/backend/internal/library/scanner"
 	"rime/backend/internal/lyrics"
 	"rime/backend/internal/playback"
+	"rime/backend/internal/playlists"
 	"rime/backend/internal/search"
 	"rime/backend/internal/store/sqlite"
 	"rime/backend/internal/tasks"
@@ -99,13 +102,47 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(taskService.Close)
-	server := httptest.NewServer(v1.New(search.New(store), browse.New(store), lyrics.NewService(store), playback.New(store), artwork.NewService(store, artworkCache), taskService, logger))
+	identityService, err := identity.New(context.Background(), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(v1.New(search.New(store), browse.New(store), lyrics.NewService(store), playback.New(store), artwork.NewService(store, artworkCache), taskService, identityService, playlists.New(store), logger))
 	t.Cleanup(server.Close)
+	unauthorized, err := http.Get(server.URL + "/api/v1/search")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unauthorized.Body.Close()
+	if unauthorized.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anonymous search status: %s", unauthorized.Status)
+	}
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Jar: jar}
+	setupBody, _ := json.Marshal(identity.SetupRequest{Username: "admin", DisplayName: "Administrator", Password: "correct-horse-battery"})
+	response, err := client.Post(server.URL+"/api/v1/auth/setup", "application/json", bytes.NewReader(setupBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("setup status: %s", response.Status)
+	}
+	response, err = client.Post(server.URL+"/api/v1/auth/setup", "application/json", bytes.NewReader(setupBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("second setup status: %s", response.Status)
+	}
 
-	assertRecentAlbums(t, server.URL)
-	assertScheduledTaskRun(t, server.URL)
+	assertRecentAlbums(t, client, server.URL)
+	assertScheduledTaskRun(t, client, server.URL)
 
-	response, err := http.Get(server.URL + "/api/v1/search?query=Morning")
+	response, err = client.Get(server.URL + "/api/v1/search?query=Morning")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,14 +159,15 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 	if len(page.Items) != 1 || page.Items[0].Title != "Morning Bell" {
 		t.Fatalf("unexpected search page: %+v", page)
 	}
-	assertAlbumAndArtistDetails(t, server.URL, page.Items[0])
+	assertIdentityAndPlaylists(t, client, server.URL, page.Items[0].ID)
+	assertAlbumAndArtistDetails(t, client, server.URL, page.Items[0])
 	if page.Items[0].ArtworkID == nil {
 		t.Fatal("search result has no artwork ID")
 	}
 	if page.Items[0].ArtworkFocus == nil || page.Items[0].ArtworkFocus.X < 0 || page.Items[0].ArtworkFocus.X > 1 || page.Items[0].ArtworkFocus.Y < 0 || page.Items[0].ArtworkFocus.Y > 1 {
 		t.Fatalf("search result has invalid artwork focus: %+v", page.Items[0].ArtworkFocus)
 	}
-	assertLyrics(t, server.URL, page.Items[0].ID, lyrics.SourceSidecar)
+	assertLyrics(t, client, server.URL, page.Items[0].ID, lyrics.SourceSidecar)
 	manualDir := filepath.Join(lyricsDir, page.Items[0].ID)
 	if err := os.MkdirAll(manualDir, 0o750); err != nil {
 		t.Fatal(err)
@@ -137,10 +175,10 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(manualDir, "manual.lrc"), []byte("[00:00.00]Manual line\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	assertScheduledTaskRunByID(t, server.URL, "lyrics.scan")
-	assertLyrics(t, server.URL, page.Items[0].ID, lyrics.SourceManual)
+	assertScheduledTaskRunByID(t, client, server.URL, "lyrics.scan")
+	assertLyrics(t, client, server.URL, page.Items[0].ID, lyrics.SourceManual)
 
-	response, err = http.Get(server.URL + "/api/v1/artworks/" + *page.Items[0].ArtworkID + "?size=128")
+	response, err = client.Get(server.URL + "/api/v1/artworks/" + *page.Items[0].ArtworkID + "?size=128")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,12 +195,12 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 	if configuration.Width != 128 || configuration.Height != 72 {
 		t.Fatalf("thumbnail dimensions = %dx%d, want 128x72", configuration.Width, configuration.Height)
 	}
-	if response.Header.Get("Cache-Control") != "public, max-age=31536000, immutable" {
+	if response.Header.Get("Cache-Control") != "private, max-age=31536000, immutable" {
 		t.Fatalf("unexpected artwork cache control: %q", response.Header.Get("Cache-Control"))
 	}
 
 	requestBody := []byte(`{"trackId":"` + page.Items[0].ID + `","playerId":"integration-test","capabilities":{"supportsByteRange":true,"formats":[{"container":"wav","codec":"pcm"}]}}`)
-	response, err = http.Post(server.URL+"/api/v1/playback/sessions", "application/json", bytes.NewReader(requestBody))
+	response, err = client.Post(server.URL+"/api/v1/playback/sessions", "application/json", bytes.NewReader(requestBody))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +222,7 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	request.Header.Set("Range", "bytes=8-15")
-	response, err = http.DefaultClient.Do(request)
+	response, err = client.Do(request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,13 +239,189 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 	}
 }
 
+func assertIdentityAndPlaylists(t *testing.T, adminClient *http.Client, serverURL, trackID string) {
+	t.Helper()
+
+	response, err := adminClient.Get(serverURL + "/api/v1/me/playlists")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var initial struct {
+		Items []playlists.Playlist `json:"items"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&initial); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || len(initial.Items) != 1 || initial.Items[0].Kind != playlists.KindFavorites {
+		t.Fatalf("initial playlists = %+v, status = %s", initial.Items, response.Status)
+	}
+	favoriteID := initial.Items[0].ID
+
+	request, _ := http.NewRequest(http.MethodPut, serverURL+"/api/v1/me/favorites/tracks/"+trackID, nil)
+	response, err = adminClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("favorite track status: %s", response.Status)
+	}
+	response, err = adminClient.Get(serverURL + "/api/v1/me/playlists/" + favoriteID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var favorite playlists.Detail
+	if err := json.NewDecoder(response.Body).Decode(&favorite); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if len(favorite.Tracks) != 1 || favorite.Tracks[0].ID != trackID {
+		t.Fatalf("favorites detail = %+v", favorite)
+	}
+
+	response, err = adminClient.Post(serverURL+"/api/v1/me/playlists", "application/json", bytes.NewBufferString(`{"name":"夜间播放"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var custom playlists.Playlist
+	if err := json.NewDecoder(response.Body).Decode(&custom); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusCreated || custom.Kind != playlists.KindCustom {
+		t.Fatalf("custom playlist = %+v, status = %s", custom, response.Status)
+	}
+	for range 2 {
+		response, err = adminClient.Post(serverURL+"/api/v1/me/playlists/"+custom.ID+"/tracks", "application/json", bytes.NewBufferString(`{"trackId":"`+trackID+`"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusNoContent {
+			t.Fatalf("add playlist track status: %s", response.Status)
+		}
+	}
+	response, err = adminClient.Get(serverURL + "/api/v1/me/playlists/" + custom.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var customDetail playlists.Detail
+	if err := json.NewDecoder(response.Body).Decode(&customDetail); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if len(customDetail.Tracks) != 1 {
+		t.Fatalf("custom playlist allows duplicates: %+v", customDetail.Tracks)
+	}
+
+	createUserBody := bytes.NewBufferString(`{"username":"listener","displayName":"Listener","password":"temporary-password","role":"user"}`)
+	response, err = adminClient.Post(serverURL+"/api/v1/admin/users", "application/json", createUserBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listener identity.User
+	if err := json.NewDecoder(response.Body).Decode(&listener); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusCreated || !listener.MustChangePassword {
+		t.Fatalf("created listener = %+v, status = %s", listener, response.Status)
+	}
+
+	listenerJar, _ := cookiejar.New(nil)
+	listenerClient := &http.Client{Jar: listenerJar}
+	response, err = listenerClient.Post(serverURL+"/api/v1/auth/login", "application/json", bytes.NewBufferString(`{"username":"listener","password":"temporary-password"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("listener login status: %s", response.Status)
+	}
+	changeRequest, _ := http.NewRequest(http.MethodPatch, serverURL+"/api/v1/me/password", bytes.NewBufferString(`{"currentPassword":"temporary-password","newPassword":"listener-new-password"}`))
+	changeRequest.Header.Set("Content-Type", "application/json")
+	response, err = listenerClient.Do(changeRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("listener password change status: %s", response.Status)
+	}
+	response, err = listenerClient.Post(serverURL+"/api/v1/auth/login", "application/json", bytes.NewBufferString(`{"username":"listener","password":"listener-new-password"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+
+	response, err = listenerClient.Get(serverURL + "/api/v1/system/tasks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("listener system tasks status: %s", response.Status)
+	}
+	response, err = listenerClient.Get(serverURL + "/api/v1/me/playlists/" + favoriteID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("cross-user playlist status: %s", response.Status)
+	}
+
+	demoteRequest, _ := http.NewRequest(http.MethodPatch, serverURL+"/api/v1/admin/users/"+initialAdminID(t, adminClient, serverURL), bytes.NewBufferString(`{"role":"user"}`))
+	demoteRequest.Header.Set("Content-Type", "application/json")
+	response, err = adminClient.Do(demoteRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("last admin demotion status: %s", response.Status)
+	}
+
+	crossOrigin, _ := http.NewRequest(http.MethodPost, serverURL+"/api/v1/me/playlists", bytes.NewBufferString(`{"name":"blocked"}`))
+	crossOrigin.Header.Set("Content-Type", "application/json")
+	crossOrigin.Header.Set("Origin", "https://attacker.invalid")
+	response, err = adminClient.Do(crossOrigin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin mutation status: %s", response.Status)
+	}
+}
+
+func initialAdminID(t *testing.T, client *http.Client, serverURL string) string {
+	t.Helper()
+	response, err := client.Get(serverURL + "/api/v1/me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var user identity.User
+	if err := json.NewDecoder(response.Body).Decode(&user); err != nil {
+		t.Fatal(err)
+	}
+	return user.ID
+}
+
 // assertAlbumAndArtistDetails 验证专辑与歌手详情接口返回的关联资料。
 // 参数 t 提供测试断言上下文，serverURL 是测试服务地址，track 提供已知有效的关联 ID。
 // 函数不返回值；任一响应结构或内容不符合预期时立即终止测试。
-func assertAlbumAndArtistDetails(t *testing.T, serverURL string, track catalog.Track) {
+func assertAlbumAndArtistDetails(t *testing.T, client *http.Client, serverURL string, track catalog.Track) {
 	t.Helper()
 
-	response, err := http.Get(serverURL + "/api/v1/albums/" + track.Album.ID)
+	response, err := client.Get(serverURL + "/api/v1/albums/" + track.Album.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +440,7 @@ func assertAlbumAndArtistDetails(t *testing.T, serverURL string, track catalog.T
 		t.Fatalf("album detail has unexpected artists: %+v", albumDetail.Artists)
 	}
 
-	response, err = http.Get(serverURL + "/api/v1/artists/" + albumDetail.Artists[0].ID)
+	response, err = client.Get(serverURL + "/api/v1/artists/" + albumDetail.Artists[0].ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,9 +460,9 @@ func assertAlbumAndArtistDetails(t *testing.T, serverURL string, track catalog.T
 	}
 }
 
-func assertRecentAlbums(t *testing.T, serverURL string) {
+func assertRecentAlbums(t *testing.T, client *http.Client, serverURL string) {
 	t.Helper()
-	response, err := http.Get(serverURL + "/api/v1/albums/recent?limit=10")
+	response, err := client.Get(serverURL + "/api/v1/albums/recent?limit=10")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,16 +482,16 @@ func assertRecentAlbums(t *testing.T, serverURL string) {
 	}
 }
 
-func assertScheduledTaskRun(t *testing.T, serverURL string) {
+func assertScheduledTaskRun(t *testing.T, client *http.Client, serverURL string) {
 	t.Helper()
 	for _, taskID := range []string{"library.scan", "lyrics.scan"} {
-		assertScheduledTaskRunByID(t, serverURL, taskID)
+		assertScheduledTaskRunByID(t, client, serverURL, taskID)
 	}
 }
 
-func assertScheduledTaskRunByID(t *testing.T, serverURL, taskID string) {
+func assertScheduledTaskRunByID(t *testing.T, client *http.Client, serverURL, taskID string) {
 	t.Helper()
-	response, err := http.Post(serverURL+"/api/v1/system/tasks/"+taskID+"/runs", "application/json", nil)
+	response, err := client.Post(serverURL+"/api/v1/system/tasks/"+taskID+"/runs", "application/json", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +502,7 @@ func assertScheduledTaskRunByID(t *testing.T, serverURL, taskID string) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		response, err = http.Get(serverURL + "/api/v1/system/tasks")
+		response, err = client.Get(serverURL + "/api/v1/system/tasks")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -316,9 +530,9 @@ func assertScheduledTaskRunByID(t *testing.T, serverURL, taskID string) {
 	t.Fatalf("scheduled task %s did not complete", taskID)
 }
 
-func assertLyrics(t *testing.T, serverURL, trackID, expectedSource string) {
+func assertLyrics(t *testing.T, client *http.Client, serverURL, trackID, expectedSource string) {
 	t.Helper()
-	response, err := http.Get(serverURL + "/api/v1/tracks/" + trackID + "/lyrics")
+	response, err := client.Get(serverURL + "/api/v1/tracks/" + trackID + "/lyrics")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -727,15 +727,24 @@ func (s *Store) SearchTracks(ctx context.Context, query string, limit int, curso
 }
 
 func (s *Store) GetTrack(ctx context.Context, trackID string) (catalog.Track, error) {
+	return s.getTrack(ctx, trackID, true)
+}
+
+func (s *Store) getTrack(ctx context.Context, trackID string, availableOnly bool) (catalog.Track, error) {
 	var track catalog.Track
 	var artworkID sql.NullString
 	var artworkFocusX, artworkFocusY sql.NullFloat64
+	availabilityClause := ""
+	if availableOnly {
+		availabilityClause = " AND EXISTS (SELECT 1 FROM media_files mf WHERE mf.track_id = t.id AND mf.available = 1)"
+	}
 	err := s.db.QueryRowContext(ctx, `
-		SELECT t.id, t.title, t.duration_ms, t.disc_number, t.track_number, al.id, al.title, al.artwork_id, aw.focus_x, aw.focus_y
+		SELECT t.id, t.title, t.duration_ms, t.disc_number, t.track_number, al.id, al.title, COALESCE(t.artwork_id, al.artwork_id),
+		       aw.focus_x, aw.focus_y, EXISTS (SELECT 1 FROM media_files mf WHERE mf.track_id = t.id AND mf.available = 1)
 		FROM tracks t JOIN albums al ON al.id = t.album_id
-		LEFT JOIN artworks aw ON aw.id = al.artwork_id
-		WHERE t.id = ? AND EXISTS (SELECT 1 FROM media_files mf WHERE mf.track_id = t.id AND mf.available = 1)`, trackID).
-		Scan(&track.ID, &track.Title, &track.DurationMs, &track.DiscNumber, &track.TrackNumber, &track.Album.ID, &track.Album.Title, &artworkID, &artworkFocusX, &artworkFocusY)
+		LEFT JOIN artworks aw ON aw.id = COALESCE(t.artwork_id, al.artwork_id)
+		WHERE t.id = ?`+availabilityClause, trackID).
+		Scan(&track.ID, &track.Title, &track.DurationMs, &track.DiscNumber, &track.TrackNumber, &track.Album.ID, &track.Album.Title, &artworkID, &artworkFocusX, &artworkFocusY, &track.Available)
 	if artworkID.Valid {
 		track.ArtworkID = &artworkID.String
 		if artworkFocusX.Valid && artworkFocusY.Valid {
@@ -797,19 +806,19 @@ func (s *Store) AvailableMedia(ctx context.Context, trackID string) ([]catalog.M
 	return result, rows.Err()
 }
 
-func (s *Store) CreatePlaybackSession(ctx context.Context, sessionID, trackID, mediaID, playerID string, createdAt, expiresAt time.Time) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO playback_sessions(id, track_id, media_file_id, player_id, created_at, expires_at) VALUES(?, ?, ?, ?, ?, ?)`,
-		sessionID, trackID, mediaID, playerID, createdAt.Format(time.RFC3339Nano), expiresAt.Format(time.RFC3339Nano))
+func (s *Store) CreatePlaybackSession(ctx context.Context, sessionID, userID, trackID, mediaID, playerID string, createdAt, expiresAt time.Time) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO playback_sessions(id, user_id, track_id, media_file_id, player_id, created_at, expires_at) VALUES(?, ?, ?, ?, ?, ?, ?)`,
+		sessionID, userID, trackID, mediaID, playerID, createdAt.Format(time.RFC3339Nano), expiresAt.Format(time.RFC3339Nano))
 	return err
 }
 
-func (s *Store) PlaybackSessionMedia(ctx context.Context, sessionID string, now time.Time) (catalog.Track, catalog.MediaFile, error) {
+func (s *Store) PlaybackSessionMedia(ctx context.Context, userID, sessionID string, now time.Time) (catalog.Track, catalog.MediaFile, error) {
 	var trackID string
 	var media catalog.MediaFile
 	err := s.db.QueryRowContext(ctx, `
 		SELECT ps.track_id, mf.id, mf.track_id, mf.path, mf.container, mf.codec, mf.content_type, mf.bitrate_kbps, mf.size, mf.modified_unix_ms, mf.content_version
 		FROM playback_sessions ps JOIN media_files mf ON mf.id = ps.media_file_id
-		WHERE ps.id = ? AND ps.expires_at > ? AND mf.available = 1`, sessionID, now.Format(time.RFC3339Nano)).
+		WHERE ps.id = ? AND ps.user_id = ? AND ps.expires_at > ? AND mf.available = 1`, sessionID, userID, now.Format(time.RFC3339Nano)).
 		Scan(&trackID, &media.ID, &media.TrackID, &media.Path, &media.Container, &media.Codec, &media.ContentType, &media.BitrateKbps, &media.Size, &media.ModifiedUnixMs, &media.ContentVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return catalog.Track{}, catalog.MediaFile{}, playback.ErrSessionNotFound
@@ -821,14 +830,20 @@ func (s *Store) PlaybackSessionMedia(ctx context.Context, sessionID string, now 
 	return track, media, err
 }
 
-func (s *Store) RecordPlaybackEvent(ctx context.Context, sessionID string, event playback.Event) error {
+func (s *Store) RecordPlaybackEvent(ctx context.Context, userID, sessionID string, event playback.Event) error {
+	var exists int
+	if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM playback_sessions WHERE id = ? AND user_id = ?`, sessionID, userID).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
+		return playback.ErrSessionNotFound
+	} else if err != nil {
+		return err
+	}
 	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO playback_events(event_id, session_id, event_type, position_ms, occurred_at) VALUES(?, ?, ?, ?, ?)`,
 		event.EventID, sessionID, event.Type, event.PositionMs, event.OccurredAt.UTC().Format(time.RFC3339Nano))
 	return err
 }
 
-func (s *Store) DeletePlaybackSession(ctx context.Context, sessionID string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM playback_sessions WHERE id = ?`, sessionID)
+func (s *Store) DeletePlaybackSession(ctx context.Context, userID, sessionID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM playback_sessions WHERE id = ? AND user_id = ?`, sessionID, userID)
 	return err
 }
 
