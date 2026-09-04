@@ -139,24 +139,27 @@
   /*
    * 专辑详情顶部使用独立的柔和渐变，而非复用列表的纯色弱化背景。
    * 色彩令牌在浅色与深色主题中分别定义，保证封面、黑胶和工具栏在两种主题下
-   * 都保持足够对比度；渐变向右下角逐步收束，形成与参考图一致的轻盈层次。
+   * 都保持足够对比度。渐变在头图区底部显式收束为页面背景色，使下方白色内容区
+   * 自然承接，而非以卡片边界或颜色突变结束。
    */
   .album-detail-hero {
     background-image: linear-gradient(
-      135deg,
+      180deg,
       var(--album-detail-hero-start) 0%,
-      var(--album-detail-hero-middle) 48%,
-      var(--album-detail-hero-end) 100%
+      var(--album-detail-hero-middle) 42%,
+      var(--album-detail-hero-end) 72%,
+      var(--background) 100%
     );
   }
 
-  /* 封面主色仅作为低比例混色，保留浅色背景与文字、控件的可读性。 */
+  /* 封面主色仅作为低比例混色，并在底部回归主题背景，保留文字与控件的可读性。 */
   .album-detail-hero[data-artwork-color] {
     background-image: linear-gradient(
-      135deg,
+      180deg,
       color-mix(in oklch, var(--album-detail-artwork-color) 18%, var(--background)) 0%,
-      color-mix(in oklch, var(--album-detail-artwork-color) 10%, var(--background)) 52%,
-      color-mix(in oklch, var(--album-detail-artwork-color) 4%, var(--background)) 100%
+      color-mix(in oklch, var(--album-detail-artwork-color) 10%, var(--background)) 42%,
+      color-mix(in oklch, var(--album-detail-artwork-color) 4%, var(--background)) 72%,
+      var(--background) 100%
     );
   }
 }

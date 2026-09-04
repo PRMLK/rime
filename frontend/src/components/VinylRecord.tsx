@@ -63,7 +63,12 @@ export function VinylRecord({
         shape="circle"
         className={cn(
           'absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 border border-primary-foreground/20',
-          isFluid && 'size-[9.722cqw] border-[0.174cqw]',
+          /*
+           * 中心封标从原先的 56px 放大至 84px（1.5 倍）。流式模式以 576px
+           * 容器为基准使用相同的 84 / 576 比例，确保封标、唱片纹路与唱片直径
+           * 始终等比变化，而不会在不同容器宽度下显得过大或过小。
+           */
+          isFluid ? 'size-[14.583cqw] border-[0.174cqw]' : 'size-[84px]',
         )}
       />
     </div>

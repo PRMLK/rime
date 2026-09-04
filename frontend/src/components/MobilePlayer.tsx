@@ -23,11 +23,9 @@ import {
   type Album, type AlbumDetail, type ArtistDetail, type ArtistRef, type LyricsDocument, type ScheduledTask, type Track,
 } from '@/api/rime';
 import { AlbumArtwork, AlbumArtworkFrame, AlbumArtworkSkeleton } from '@/components/AlbumArtwork';
-import { AlbumArtworkCard } from '@/components/AlbumArtworkCard';
 import { AlbumVinylArtwork } from '@/components/AlbumVinylArtwork';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { CardContent, CardHeader } from '@/components/ui/card';
 import { Carousel, CarouselContent, CarouselItem } from '@/components/ui/carousel';
 import {
   Drawer,
@@ -213,7 +211,10 @@ export function MobilePlayer() {
           }}
           className="h-[100dvh] gap-0 overflow-hidden bg-background text-foreground"
         >
-          <main className="min-h-0 flex-1 overflow-y-auto px-5 pt-6">
+          <main className={cn(
+            'min-h-0 flex-1 overflow-y-auto px-5',
+            activeDetail?.kind === 'album' ? 'pt-0' : 'pt-6',
+          )}>
             <div className="mx-auto w-full max-w-xl pb-8">
               {activeDetail?.kind !== 'album' && (
                 <header className="flex items-center gap-2">
@@ -584,19 +585,19 @@ function AlbumDetailView({
   }
 
   /*
-   * 容器查询单位让头图的高度、封面、信息区起点及后续间距都以实际内容宽度为基准。
-   * 576px 宽时与图二的横向比例一致；缩窄时所有关键位置连续等比收缩，
-   * 不再通过 sm（小屏断点）切换到另一套纵向布局。
+   * 渐变作为专辑页的独立背景层，不再承载或裁切页面内容。背景可延伸至半屏，
+   * 但资料区继续使用原有的流式高度与位置，保证曲目列表不会因背景变高而下移。
    */
   return (
-    <section className="@container/album-detail mt-0 grid" aria-labelledby="album-title">
-      <AlbumArtworkCard
-        artworkOverflow="visible"
-        className="album-detail-hero relative col-start-1 row-start-1 h-[33.333cqw] w-full gap-0 rounded-[1.736cqw] border py-0 ring-0"
+    <section className="@container/album-detail relative isolate mt-0 grid" aria-labelledby="album-title">
+      <div
+        aria-hidden="true"
+        className="album-detail-hero pointer-events-none absolute inset-x-0 top-0 -z-10 h-[50svh]"
         data-artwork-color={artworkAccentColor ? '' : undefined}
         style={albumHeroStyle}
-      >
-        <CardHeader className="gap-0 px-4 pt-0 pb-0">
+      />
+      <div className="relative col-start-1 row-start-1 h-[33.333cqw] w-full">
+        <div className="px-4">
           <AlbumDetailToolbar
             detail={detail}
             onClose={onClose}
@@ -604,26 +605,24 @@ function AlbumDetailView({
             onOpenArtist={onOpenArtist}
             size="fluid"
           />
-        </CardHeader>
-        <CardContent className="absolute inset-x-0 bottom-0 translate-y-[9.722cqw] px-[2.778cqw] py-0">
-          {/* 视觉区锚定在头图底部并下移；外层定位左对齐，组件内部保持封面与黑胶的相对布局。 */}
-          <AlbumVinylArtwork artwork={detail} size="fluid" className="ml-[2.083cqw] mr-auto" />
-        </CardContent>
-      </AlbumArtworkCard>
-
-      <div className="relative z-10 col-start-1 row-start-1 mt-[15.278cqw] mr-[2.778cqw] ml-[44.444cqw] flex min-w-0 self-start flex-col items-center gap-[1.389cqw] px-0 pt-0 text-center">
-        <h2 id="album-title" className="line-clamp-2 text-[4.167cqw] leading-[5.556cqw] font-semibold">{detail.title}</h2>
-        <div className="flex justify-center">
-          <ArtistLinks artists={detail.artists} onOpenArtist={onOpenArtist} size="fluid" />
         </div>
-        <Badge variant="secondary" className="h-[3.472cqw] px-[1.389cqw] py-[0.347cqw] text-[2.083cqw]">
-          {detail.tracks.length} 首
-        </Badge>
+        <div className="absolute inset-x-0 bottom-0 translate-y-[9.722cqw] px-[2.778cqw]">
+          {/* 视觉区保持原有的下沿锚点，背景扩展不会改变封面与曲目区之间的距离。 */}
+          <AlbumVinylArtwork artwork={detail} size="fluid" className="ml-[2.083cqw] mr-auto" />
+        </div>
+        <div className="absolute top-[15.278cqw] right-[2.778cqw] left-[44.444cqw] flex min-w-0 flex-col items-center gap-[1.389cqw] text-center">
+          <h2 id="album-title" className="line-clamp-2 text-[4.167cqw] leading-[5.556cqw] font-semibold">{detail.title}</h2>
+          <div className="flex justify-center">
+            <ArtistLinks artists={detail.artists} onOpenArtist={onOpenArtist} size="fluid" />
+          </div>
+          <Badge variant="secondary" className="h-[3.472cqw] px-[1.389cqw] py-[0.347cqw] text-[2.083cqw]">
+            {detail.tracks.length} 首
+          </Badge>
+        </div>
       </div>
 
-      <Separator className="col-start-1 row-start-2 mt-[16.667cqw] mb-[5.556cqw]" />
-      <h3 className="col-start-1 row-start-3 text-sm font-semibold">曲目</h3>
-      <ItemGroup className="col-start-1 row-start-4 mt-2 gap-0">
+      <h3 className="col-start-1 row-start-2 mt-[22.222cqw] px-4 text-sm font-semibold">曲目</h3>
+      <ItemGroup className="col-start-1 row-start-3 mt-2 gap-0 px-4">
         {detail.tracks.map((track) => (
           <Item
             key={track.id}
@@ -631,12 +630,19 @@ function AlbumDetailView({
             variant={activeTrackId === track.id ? 'muted' : 'default'}
             className="cursor-pointer rounded-none border-b px-0 py-3 last:border-b-0"
           >
-            <ItemMedia variant="icon"><Disc3 aria-hidden="true" /></ItemMedia>
-            <ItemContent>
-              <ItemTitle>{track.title}</ItemTitle>
-              <ItemDescription>{artistNames(track.artists)}</ItemDescription>
-            </ItemContent>
-            <ItemActions>
+            {/*
+              曲名区与操作区使用相同的响应式宽度：窄屏保留 120px 防止中文曲名过早截断，
+              宽屏上最多 128px。左侧图标与文字共用一列，右侧时长与播放图标分居另一列两端，
+              从而避免两端内容宽度随曲名或时长变化而产生不对称的视觉边界。
+            */}
+            <div className="flex w-[clamp(7.5rem,22.222cqw,8rem)] shrink-0 items-center gap-2.5">
+              <ItemMedia variant="icon"><Disc3 aria-hidden="true" /></ItemMedia>
+              <ItemContent className="min-w-0">
+                <ItemTitle>{track.title}</ItemTitle>
+                <ItemDescription>{artistNames(track.artists)}</ItemDescription>
+              </ItemContent>
+            </div>
+            <ItemActions className="ml-auto w-[clamp(7.5rem,22.222cqw,8rem)] shrink-0 justify-between">
               <span className="text-xs text-muted-foreground">{formatTime(track.durationMs)}</span>
               <Play aria-hidden="true" />
             </ItemActions>
@@ -768,29 +774,27 @@ function AlbumDetailToolbar({
  */
 function AlbumDetailLoading({ onClose }: { onClose: () => void }) {
   /*
-   * 加载态与内容态复用同一组容器比例，避免数据到达前后发生布局跳变。
+   * 加载态保留与内容态一致的流式高度与元素锚点，背景高度变化不会顶开曲目骨架。
    */
   return (
-    <section className="@container/album-detail mt-0 grid" aria-label="正在加载专辑" role="status">
-      <AlbumArtworkCard
-        artworkOverflow="visible"
-        className="album-detail-hero relative col-start-1 row-start-1 h-[33.333cqw] w-full gap-0 rounded-[1.736cqw] border py-0 ring-0"
-      >
-        <CardHeader className="gap-0 px-4 pt-0 pb-0">
+    <section className="@container/album-detail relative isolate mt-0 grid" aria-label="正在加载专辑" role="status">
+      <div aria-hidden="true" className="album-detail-hero pointer-events-none absolute inset-x-0 top-0 -z-10 h-[50svh]" />
+      <div className="relative col-start-1 row-start-1 h-[33.333cqw] w-full">
+        <div className="px-4">
           <AlbumDetailToolbar onClose={onClose} size="fluid" />
-        </CardHeader>
-        <CardContent className="absolute inset-x-0 bottom-0 translate-y-[9.722cqw] px-[2.778cqw] py-0">
+        </div>
+        <div className="absolute inset-x-0 bottom-0 translate-y-[9.722cqw] px-[2.778cqw]">
           <div className="relative ml-[4.514cqw] mr-auto h-[27.778cqw] w-[38.889cqw] max-w-full" aria-hidden="true">
             <Skeleton className="absolute top-1/2 right-0 size-[22.222cqw] -translate-y-1/2 rounded-full" />
             <AlbumArtworkSkeleton className="relative size-[27.778cqw]" />
           </div>
-        </CardContent>
-      </AlbumArtworkCard>
-      <div className="relative z-10 col-start-1 row-start-1 mt-[15.278cqw] mr-[2.778cqw] ml-[44.444cqw] flex min-w-0 self-start flex-col items-center gap-[1.389cqw] px-0 pt-0">
-        <Skeleton className="h-[4.861cqw] w-4/5" />
-        <Skeleton className="h-[2.778cqw] w-2/5" />
+        </div>
+        <div className="absolute top-[15.278cqw] right-[2.778cqw] left-[44.444cqw] flex min-w-0 flex-col items-center gap-[1.389cqw]">
+          <Skeleton className="h-[4.861cqw] w-4/5" />
+          <Skeleton className="h-[2.778cqw] w-2/5" />
+        </div>
       </div>
-      <div className="col-start-1 row-start-2 mt-[16.667cqw] flex flex-col gap-1">
+      <div className="col-start-1 row-start-2 mt-[16.667cqw] flex flex-col gap-1 px-4">
         {[0, 1, 2, 3].map((item) => <Skeleton key={item} className="h-14 w-full" />)}
       </div>
     </section>
