@@ -180,10 +180,10 @@ export function Viewbox({ previewSource = import.meta.env.VITE_VIEWBOX_SRC ?? '/
 
   /**
    * 将缩放滑块的单值同步到手动缩放状态。
-   * @param value - shadcn Slider（滑块）返回的缩放数组，范围为 40 至 125。
+   * @param value - shadcn Slider（滑块）返回的只读缩放数组，范围为 40 至 125。
    * @returns 无返回值；切换为手动模式并更新实际缩放。
    */
-  const handleZoomChange = (value: number | number[]) => {
+  const handleZoomChange = (value: number | readonly number[]) => {
     const nextZoom = Array.isArray(value) ? value[0] : value;
     if (typeof nextZoom !== 'number') return;
     setManualZoom(nextZoom);
@@ -557,7 +557,7 @@ type ViewboxRangeControlProps = {
   min: number;
   max: number;
   step: number;
-  onValueChange: (value: number | number[]) => void;
+  onValueChange: (value: number | readonly number[]) => void;
   valueLabel?: string;
 };
 
