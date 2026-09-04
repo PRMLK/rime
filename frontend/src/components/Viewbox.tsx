@@ -71,13 +71,13 @@ const VIEWBOX_DEVICE_PRESETS: ViewboxDevicePreset[] = [
 ];
 
 const VIEWBOX_MIN_ZOOM = 40;
-const VIEWBOX_MAX_ZOOM = 125;
+const VIEWBOX_MAX_ZOOM = 300;
 const VIEWBOX_ZOOM_STEP = 5;
 const VIEWBOX_RULER_TOP_SIZE = 18;
 const VIEWBOX_RULER_LEFT_SIZE = 24;
 const VIEWBOX_DEFAULT_ZOOM = 70;
 const VIEWBOX_INSET_MIN = 0;
-const VIEWBOX_INSET_MAX = 240;
+const VIEWBOX_INSET_MAX = 1200;
 const VIEWBOX_INSET_STEP = 1;
 const VIEWBOX_DEFAULT_INSETS: ViewboxInsets = { top: 70, right: 110, bottom: 70, left: 110 };
 const VIEWBOX_PREFERENCES_STORAGE_KEY = 'rime.viewbox.preferences.v1';
@@ -180,7 +180,7 @@ export function Viewbox({ previewSource = import.meta.env.VITE_VIEWBOX_SRC ?? '/
 
   /**
    * 将缩放滑块的单值同步到手动缩放状态。
-   * @param value - shadcn Slider（滑块）返回的只读缩放数组，范围为 40 至 125。
+   * @param value - shadcn Slider（滑块）返回的只读缩放数组，范围为 40 至 300。
    * @returns 无返回值；切换为手动模式并更新实际缩放。
    */
   const handleZoomChange = (value: number | readonly number[]) => {
@@ -223,7 +223,7 @@ export function Viewbox({ previewSource = import.meta.env.VITE_VIEWBOX_SRC ?? '/
    * 按摇杆传入的连续位移平移画布，同时保持同一轴上的总留白不变。
    *
    * 例如向上拖动会减少上边距并等量增加下边距，因此画布不会改变可用空间大小，
-   * 只会在预览区域内平移。靠近边界时使用可用的最小值，避免任意一侧超出 0 至 240px。
+   * 只会在预览区域内平移。靠近边界时使用可用的最小值，避免任意一侧超出 0 至 1200px。
    *
    * @param deltaX - 水平拖动距离；正数向右移动画布，负数向左移动画布。
    * @param deltaY - 垂直拖动距离；正数向下移动画布，负数向上移动画布。
@@ -899,7 +899,7 @@ function readBoundedNumber(value: unknown, minimum: number, maximum: number, ste
  * @param device - 当前选中的设备预设及其逻辑尺寸。
  * @param includeRulers - 是否为外置标尺预留顶部与左侧空间。
  * @param insets - 当前画布四边的留白，用于从可用预览面积中扣除。
- * @returns 介于 40% 和 125% 的整数缩放比例；舞台尚未完成测量时返回 100%。
+ * @returns 介于 40% 和 300% 的整数缩放比例；舞台尚未完成测量时返回 100%。
  */
 function getFittedZoom(
   stageSize: StageSize,
