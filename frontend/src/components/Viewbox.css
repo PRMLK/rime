@@ -46,26 +46,34 @@ body {
   display: grid;
   min-width: 0;
   min-height: 0;
-  padding: 48px 28px;
+  padding: 48px 132px 92px 88px;
   place-items: center;
 }
 
-.viewbox-viewport {
+.viewbox-viewport-shell {
   position: relative;
-  width: min(40vw, calc(76dvh * 0.45), 356px);
-  aspect-ratio: 9 / 20;
-  overflow: clip;
-  outline: 1px solid oklch(1 0 0 / 0.7);
-  outline-offset: 0;
-  transition: width 360ms cubic-bezier(0.22, 1, 0.36, 1), aspect-ratio 360ms cubic-bezier(0.22, 1, 0.36, 1);
+  min-width: 0;
+  min-height: 0;
+  transition: width 220ms ease, height 220ms ease;
 }
 
-.viewbox-viewport.is-tablet {
-  width: min(78vw, calc(72dvh * 1.333), 900px);
-  aspect-ratio: 4 / 3;
+.viewbox-viewport {
+  isolation: isolate;
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: clip;
+  outline: 1px solid oklch(1 0 0 / 0.72);
+  outline-offset: 0;
+  background: var(--background);
+  box-shadow: 0 20px 48px oklch(0.35 0.03 240 / 0.16);
+  transform-origin: top left;
+  transition: width 220ms ease, height 220ms ease, transform 220ms ease;
 }
 
 .viewbox-frame {
+  position: relative;
+  z-index: 0;
   display: block;
   width: 100%;
   height: 100%;
@@ -73,48 +81,275 @@ body {
   background: transparent;
 }
 
-.viewbox-control-position {
+.viewbox-toolbar {
   position: absolute;
-  right: clamp(30px, 5vw, 62px);
+  top: clamp(24px, 4vw, 48px);
+  right: clamp(24px, 4vw, 48px);
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.viewbox-visibility-toggle {
-  top: clamp(30px, 5vw, 62px);
+.viewbox-toolbar-separator {
+  display: block;
+  height: 1px;
+  margin: 2px 4px;
+  background: color-mix(in oklch, var(--foreground) 14%, transparent);
 }
 
-.viewbox-mode-toggle {
-  top: calc(clamp(30px, 5vw, 62px) + 54px);
+.viewbox-zoom-control {
+  position: fixed;
+  bottom: clamp(24px, 4vw, 48px);
+  left: clamp(24px, 4vw, 48px);
+  z-index: 3;
+  width: min(17rem, calc(100vw - 12rem));
+}
+
+.viewbox-device-picker {
+  position: fixed;
+  top: clamp(24px, 4vw, 48px);
+  right: calc(clamp(24px, 4vw, 48px) + 3.25rem);
+  z-index: 3;
+  width: min(17rem, calc(100vw - 8rem));
+}
+
+.viewbox-device-toggle-group {
+  width: 100%;
+}
+
+.viewbox-device-toggle-item {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.viewbox-control-list {
+  display: grid;
+  gap: 12px;
+}
+
+.viewbox-device-summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.viewbox-control-section-label {
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.viewbox-canvas-position-control {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.viewbox-joystick {
+  position: relative;
+  display: grid;
+  width: 4.75rem;
+  aspect-ratio: 1;
+  cursor: grab;
+  place-items: center;
+  touch-action: none;
+  user-select: none;
+}
+
+.viewbox-joystick:active {
+  cursor: grabbing;
+}
+
+.viewbox-joystick::before {
+  position: absolute;
+  inset: 0;
+  content: "";
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background:
+    linear-gradient(var(--border), var(--border)) center / 1px 100% no-repeat,
+    linear-gradient(var(--border), var(--border)) center / 100% 1px no-repeat,
+    var(--muted);
+}
+
+.viewbox-joystick-knob {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 2rem;
+  aspect-ratio: 1;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--background);
+  box-shadow: 0 1px 3px color-mix(in oklch, var(--foreground) 18%, transparent);
+  pointer-events: none;
+  transform: translate(var(--viewbox-joystick-x), var(--viewbox-joystick-y));
+  transition: transform 80ms ease-out;
+}
+
+.viewbox-joystick:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+
+.viewbox-inset-readout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 12px;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+
+.viewbox-inset-readout span {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.viewbox-inset-readout output {
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.viewbox-range-control {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.75rem;
+}
+
+.viewbox-range-control output {
+  min-width: 3.5rem;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.viewbox-overlays {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: clip;
+  pointer-events: none;
+}
+
+.viewbox-grid-overlay {
+  position: absolute;
+  inset: 0;
+  opacity: 0.54;
+  background-image:
+    linear-gradient(to right, color-mix(in oklch, var(--foreground) 16%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in oklch, var(--foreground) 16%, transparent) 1px, transparent 1px);
+  background-size: 8px 8px;
+}
+
+.viewbox-external-rulers {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.viewbox-external-ruler {
+  position: absolute;
+  color: color-mix(in oklch, var(--foreground) 68%, transparent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 8px;
+  line-height: 1;
+  text-shadow: 0 1px 1px color-mix(in oklch, var(--background) 90%, transparent);
+}
+
+.viewbox-external-ruler-top {
+  top: 0;
+  height: 16px;
+  border-bottom: 1px solid color-mix(in oklch, var(--foreground) 40%, transparent);
+}
+
+.viewbox-external-ruler-left {
+  left: 0;
+  width: 22px;
+  border-right: 1px solid color-mix(in oklch, var(--foreground) 40%, transparent);
+}
+
+.viewbox-external-ruler-mark {
+  position: absolute;
+  display: block;
+}
+
+.viewbox-external-ruler-top .viewbox-external-ruler-mark {
+  bottom: 0;
+  height: 6px;
+  border-left: 1px solid currentcolor;
+}
+
+.viewbox-external-ruler-top .viewbox-external-ruler-mark span {
+  position: absolute;
+  bottom: 8px;
+  left: 2px;
+}
+
+.viewbox-external-ruler-left .viewbox-external-ruler-mark {
+  right: 0;
+  width: 6px;
+  border-top: 1px solid currentcolor;
+}
+
+.viewbox-external-ruler-left .viewbox-external-ruler-mark span {
+  position: absolute;
+  top: 2px;
+  right: 8px;
+  writing-mode: vertical-rl;
 }
 
 @media (max-width: 680px) {
   .viewbox-stage {
-    padding: 32px 18px 86px;
+    padding: 84px 72px 104px 18px;
   }
 
-  .viewbox-viewport {
-    width: min(64vw, calc(70dvh * 0.45), 310px);
+  .viewbox-toolbar {
+    top: 18px;
+    right: 18px;
+    gap: 6px;
   }
 
-  .viewbox-viewport.is-tablet {
-    width: min(88vw, calc(58dvh * 1.333), 560px);
+  .viewbox-zoom-control {
+    bottom: 18px;
+    left: 18px;
+    width: min(16rem, calc(100vw - 10rem));
   }
+
+  .viewbox-device-picker {
+    top: 18px;
+    right: 72px;
+    width: min(17rem, calc(100vw - 6.5rem));
+  }
+
 }
 
 @media (max-height: 640px) and (orientation: landscape) {
   .viewbox-stage {
-    padding: 22px 78px 22px 22px;
+    padding: 22px 88px 22px 78px;
   }
 
-  .viewbox-viewport {
-    width: min(30vw, calc(78dvh * 0.45));
+  .viewbox-toolbar {
+    top: 18px;
+    right: 18px;
   }
 
-  .viewbox-viewport.is-tablet {
-    width: min(68vw, calc(79dvh * 1.333));
+  .viewbox-zoom-control {
+    bottom: 18px;
+    left: 18px;
   }
+
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .viewbox-viewport-shell,
   .viewbox-viewport {
     transition: none;
   }
