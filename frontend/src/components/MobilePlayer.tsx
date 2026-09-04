@@ -264,28 +264,20 @@ export function MobilePlayer() {
             />
           )}
 
-          <div className="relative z-10 shrink-0 px-5 pt-6">
-            <div className="mx-auto w-full max-w-xl">
-              <PageHeader
-                title={pageLabel}
-                showBackButton={Boolean(activeDetail)}
-                onBack={closeDetail}
-              />
-            </div>
+          <div className="mobile-content-frame relative z-10 shrink-0 pt-6">
+            <PageHeader
+              title={pageLabel}
+              showBackButton={Boolean(activeDetail)}
+              onBack={closeDetail}
+            />
           </div>
 
           <AppScrollArea
             key={contentScrollAreaKey}
             render={<main />}
-            className={cn(
-              'relative z-10 min-h-0 flex-1',
-              activeDetail?.kind === 'album' ? 'px-0 pt-0' : 'px-5',
-            )}
+            className="relative z-10 min-h-0 flex-1"
           >
-            <div className={cn(
-              'w-full pb-8',
-              activeDetail?.kind !== 'album' && 'mx-auto max-w-xl',
-            )}>
+            <div className="mobile-content-frame w-full pb-8">
               {activeDetail ? (
                 <TabsContent value={activeTab}>
                   {activeDetail.kind === 'album' && (
@@ -325,7 +317,7 @@ export function MobilePlayer() {
           <footer className="relative z-10 shrink-0 bg-background">
             <section
               ref={miniPlayerSurfaceRef}
-              className="mini-player-surface relative isolate flex min-h-22 min-w-0 items-center gap-3 overflow-hidden rounded-t-2xl px-4 pb-7 pt-3 text-background"
+              className="mini-player-surface relative isolate flex min-h-22 min-w-0 items-center gap-3 overflow-hidden rounded-t-2xl ps-[var(--mobile-content-gutter-start)] pe-[var(--mobile-content-gutter-end)] pb-7 pt-3 text-background"
               data-artwork-color={playback.track ? '' : undefined}
               data-copy-tone={useLightMiniPlayerText ? 'light' : 'dark'}
               style={miniPlayerStyle}
@@ -404,11 +396,11 @@ export function MobilePlayer() {
                 />
                 <TooltipContent>{playbackLabel}</TooltipContent>
               </Tooltip>
-              <span className="pointer-events-none absolute right-4 bottom-5 left-4 h-0.5 overflow-hidden rounded-full bg-background/25" aria-hidden="true">
+              <span className="pointer-events-none absolute bottom-5 start-[var(--mobile-content-gutter-start)] end-[var(--mobile-content-gutter-end)] h-0.5 overflow-hidden rounded-full bg-background/25" aria-hidden="true">
                 <span className="block h-full rounded-full bg-background" style={{ width: `${playbackProgress}%` }} />
               </span>
             </section>
-            <nav className="relative z-10 -mt-3 w-full rounded-t-2xl bg-background px-2 pb-[max(env(safe-area-inset-bottom),0rem)] pt-2 shadow-[0_-1px_0_var(--border)]" aria-label="主导航">
+            <nav className="mobile-navigation relative z-10 -mt-3 w-full rounded-t-2xl bg-background pb-[max(env(safe-area-inset-bottom),0rem)] pt-2 shadow-[0_-1px_0_var(--border)]" aria-label="主导航">
               <TabsList variant="line" size="mobile" className="h-16 bg-transparent group-data-horizontal/tabs:h-16">
                 {navigationItems.map((item) => {
                   const isActive = activeTab === item.id;
@@ -583,10 +575,15 @@ function RecentAlbumsView({ onOpenAlbum }: { onOpenAlbum: (albumId: string) => v
  * @returns 使用 shadcn Card（卡片）组合的专辑入口。
  */
 function AlbumCard({ album, onOpenAlbum }: { album: Album; onOpenAlbum: (albumId: string) => void }) {
+  /*
+   * 轮播使用 -ml-3 / pl-3 抵消项目间距，使首项刚好落在页面内容轨上。
+   * 卡片不能再额外添加 p-1，否则首页首张封面、专辑网格首列和加载骨架
+   * 会分别拥有不同的左边界。
+   */
   return (
     <Button
       variant="ghost"
-      className="h-auto w-full flex-col items-start justify-start gap-2 rounded-[calc(clamp(0.5rem,10%,2rem)+4px)] border-0 p-1 text-left"
+      className="h-auto w-full flex-col items-start justify-start gap-2 rounded-[calc(clamp(0.5rem,10%,2rem)+4px)] border-0 p-0 text-left"
       aria-label={`打开专辑《${album.title}》`}
       onClick={() => onOpenAlbum(album.id)}
     >
@@ -660,16 +657,16 @@ function AlbumDetailView({
     <section className="@container/album-detail mt-8 grid" aria-labelledby="album-title">
       {/* 与 ArtistDetailView（歌手详情视图）统一使用 mt-8：页头与详情内容之间保留稳定呼吸空间。 */}
       {/*
-       * 头图区的高度与流式封面边长保持一致。此前容器额外预留了一段高度，
-       * 又在“曲目”标题上重复追加上边距，窄屏下会在专辑信息与列表之间留下
-       * 不必要的大块空白。信息列通过 h-full + justify-center 在同一视觉重心内居中。
+       * 头图区以统一内容框建立容器查询上下文。封面和信息列不再分别叠加固定
+       * 内边距，左、右视觉边界会随比例内容轨和安全区同步变化；信息列通过
+       * h-full + justify-center 在同一视觉重心内居中。
        */}
       <div className="relative col-start-1 row-start-1 h-[27.778cqw] w-full">
-        <div className="absolute inset-x-0 top-0 px-[2.778cqw]">
+        <div className="absolute inset-x-0 top-0">
           {/* 页头已位于根布局；封面从内容区顶部开始，避免重复保留页头高度。 */}
-          <AlbumVinylArtwork artwork={detail} size="fluid" className="ml-[2.083cqw] mr-auto" />
+          <AlbumVinylArtwork artwork={detail} size="fluid" className="mr-auto" />
         </div>
-        <div className="absolute top-0 right-[2.778cqw] left-[44.444cqw] flex h-full min-w-0 flex-col items-center justify-center gap-[1.389cqw] text-center">
+        <div className="absolute top-0 right-0 left-[44.444cqw] flex h-full min-w-0 flex-col items-center justify-center gap-[1.389cqw] text-center">
           <h2 id="album-title" className="line-clamp-2 text-[4.167cqw] leading-[5.556cqw] font-semibold">{detail.title}</h2>
           <div className="flex justify-center">
             <ArtistLinks artists={detail.artists} onOpenArtist={onOpenArtist} size="fluid" />
@@ -680,8 +677,8 @@ function AlbumDetailView({
         </div>
       </div>
 
-      <h3 className="col-start-1 row-start-2 mt-[8.333cqw] px-4 text-sm font-semibold">曲目</h3>
-      <ItemGroup className="col-start-1 row-start-3 mt-2 gap-0 px-4">
+      <h3 className="col-start-1 row-start-2 mt-[8.333cqw] text-sm font-semibold">曲目</h3>
+      <ItemGroup className="col-start-1 row-start-3 mt-2 gap-0">
         {detail.tracks.map((track, index) => (
           <TrackListRow
             key={track.id}
@@ -868,19 +865,19 @@ function AlbumDetailLoading() {
     <section className="@container/album-detail mt-8 grid" aria-label="正在加载专辑" role="status">
       {/* 加载态与内容态共享页头下的间距，避免请求完成时头图整体上移。 */}
       <div className="relative col-start-1 row-start-1 h-[27.778cqw] w-full">
-        <div className="absolute inset-x-0 top-0 px-[2.778cqw]">
-          <div className="relative ml-[4.514cqw] mr-auto h-[27.778cqw] w-[38.889cqw] max-w-full" aria-hidden="true">
+        <div className="absolute inset-x-0 top-0">
+          <div className="relative mr-auto h-[27.778cqw] w-[38.889cqw] max-w-full" aria-hidden="true">
             <Skeleton className="absolute top-1/2 right-0 size-[22.222cqw] -translate-y-1/2 rounded-full" />
             <AlbumArtworkSkeleton className="relative size-[27.778cqw]" />
           </div>
         </div>
-        <div className="absolute top-0 right-[2.778cqw] left-[44.444cqw] flex h-full min-w-0 flex-col items-center justify-center gap-[1.389cqw]">
+        <div className="absolute top-0 right-0 left-[44.444cqw] flex h-full min-w-0 flex-col items-center justify-center gap-[1.389cqw]">
           <Skeleton className="h-[4.861cqw] w-4/5" />
           <Skeleton className="h-[2.778cqw] w-2/5" />
           <Skeleton className="h-[3.472cqw] w-[8.333cqw]" />
         </div>
       </div>
-      <div className="col-start-1 row-start-2 mt-[8.333cqw] flex flex-col gap-1 px-4">
+      <div className="col-start-1 row-start-2 mt-[8.333cqw] flex flex-col gap-1">
         {[0, 1, 2, 3].map((item) => <Skeleton key={item} className="h-14 w-full" />)}
       </div>
     </section>
@@ -1056,20 +1053,22 @@ function NowPlayingDrawer({
   const PlaybackModeIcon = playbackMode === 'sequence' ? QueueOutlineIcon : RepeatOutlineIcon;
   return (
     <DrawerContent className="h-[calc(100dvh-0.5rem)] max-h-[calc(100dvh-0.5rem)]">
-      <DrawerHeader className="mx-auto w-full max-w-xl flex-row items-center gap-2 px-4 pb-2 pt-[max(env(safe-area-inset-top),0.75rem)] text-left">
-        <DrawerClose
-          render={
-            <Button variant="ghost" size="icon" aria-label="收起播放器">
-              <ChevronDown aria-hidden="true" />
-            </Button>
-          }
-        />
-        <DrawerTitle className="min-w-0 flex-1 text-center text-sm">正在播放</DrawerTitle>
-        <span className="size-8 shrink-0" aria-hidden="true" />
-      </DrawerHeader>
+      <div className="mobile-content-frame">
+        <DrawerHeader className="flex-row items-center gap-2 p-0 pb-2 pt-[max(env(safe-area-inset-top),0.75rem)] text-left">
+          <DrawerClose
+            render={
+              <Button variant="ghost" size="icon" aria-label="收起播放器">
+                <ChevronDown aria-hidden="true" />
+              </Button>
+            }
+          />
+          <DrawerTitle className="min-w-0 flex-1 text-center text-sm">正在播放</DrawerTitle>
+          <span className="size-8 shrink-0" aria-hidden="true" />
+        </DrawerHeader>
+      </div>
 
-      <AppScrollArea className="min-h-0 flex-1 px-5 pb-[max(env(safe-area-inset-bottom),1.5rem)]">
-        <section className="mx-auto w-full max-w-xl" aria-labelledby="now-playing-heading">
+      <AppScrollArea className="min-h-0 flex-1">
+        <section className="mobile-content-frame pb-[max(env(safe-area-inset-bottom),1.5rem)]" aria-labelledby="now-playing-heading">
           <AlbumArtworkFrame className="mx-auto mt-2 aspect-square w-full max-w-md bg-muted">
             {showLyrics ? (
               <LyricsPanel track={playback.track} positionMs={position} />
@@ -1342,7 +1341,7 @@ function LibraryView({ onOpenSystemSettings }: { onOpenSystemSettings: () => voi
       <h2 id="library-heading" className="text-sm font-semibold">我的音乐</h2>
       <ItemGroup className="mt-3 gap-0">
         {libraryItems.map((item) => (
-          <UnifiedListRow key={item.title} render={<button type="button" disabled />} className="h-auto cursor-not-allowed justify-start px-5 py-3 text-left" separated>
+          <UnifiedListRow key={item.title} render={<button type="button" disabled />} className="h-auto cursor-not-allowed justify-start py-3 text-left" separated>
             <ItemMedia variant="icon"><LibraryBig aria-hidden="true" /></ItemMedia>
             <ItemContent>
               <ItemTitle>{item.title}</ItemTitle>
@@ -1356,7 +1355,7 @@ function LibraryView({ onOpenSystemSettings }: { onOpenSystemSettings: () => voi
       <ItemGroup className="mt-3 gap-0">
         <UnifiedListRow
           render={<button type="button" onClick={onOpenSystemSettings} />}
-          className="cursor-pointer px-5 py-3"
+          className="cursor-pointer py-3"
           separated
         >
           <ItemMedia variant="icon"><Settings aria-hidden="true" /></ItemMedia>
@@ -1427,27 +1426,29 @@ function SystemSettingsDrawer({ open, onOpenChange }: { open: boolean; onOpenCha
   return (
     <Drawer open={open} onOpenChange={changeOpen} swipeDirection="down">
       <DrawerContent className="h-[calc(100dvh-0.5rem)] max-h-[calc(100dvh-0.5rem)]">
-        <DrawerHeader className="mx-auto w-full max-w-xl flex-row items-center gap-2 px-4 pb-2 pt-3 text-left">
-          {view === 'root' ? (
-            <DrawerClose
-              render={<Button variant="ghost" size="icon" aria-label="退出系统设置"><ChevronDown aria-hidden="true" /></Button>}
-            />
-          ) : (
-            <Button variant="ghost" size="icon" aria-label="返回系统设置" onClick={() => setView('root')}>
-              <ArrowLeft aria-hidden="true" />
-            </Button>
-          )}
-          <DrawerTitle className="min-w-0 flex-1 text-center text-sm">{view === 'root' ? '系统设置' : '计划任务'}</DrawerTitle>
-          <span className="size-8 shrink-0" aria-hidden="true" />
-        </DrawerHeader>
+        <div className="mobile-content-frame">
+          <DrawerHeader className="flex-row items-center gap-2 p-0 pb-2 pt-3 text-left">
+            {view === 'root' ? (
+              <DrawerClose
+                render={<Button variant="ghost" size="icon" aria-label="退出系统设置"><ChevronDown aria-hidden="true" /></Button>}
+              />
+            ) : (
+              <Button variant="ghost" size="icon" aria-label="返回系统设置" onClick={() => setView('root')}>
+                <ArrowLeft aria-hidden="true" />
+              </Button>
+            )}
+            <DrawerTitle className="min-w-0 flex-1 text-center text-sm">{view === 'root' ? '系统设置' : '计划任务'}</DrawerTitle>
+            <span className="size-8 shrink-0" aria-hidden="true" />
+          </DrawerHeader>
+        </div>
 
-        <AppScrollArea className="min-h-0 flex-1 px-5 pb-[max(env(safe-area-inset-bottom),1.5rem)]">
-          <section className="mx-auto w-full max-w-xl" aria-label={view === 'root' ? '系统设置项目' : '计划任务列表'}>
+        <AppScrollArea className="min-h-0 flex-1">
+          <section className="mobile-content-frame pb-[max(env(safe-area-inset-bottom),1.5rem)]" aria-label={view === 'root' ? '系统设置项目' : '计划任务列表'}>
             {view === 'root' ? (
               <ItemGroup className="gap-0">
                 <UnifiedListRow
                   render={<button type="button" onClick={() => setView('tasks')} />}
-                  className="cursor-pointer px-5 py-3"
+                  className="cursor-pointer py-3"
                   separated
                 >
                   <ItemMedia variant="icon"><CalendarClock aria-hidden="true" /></ItemMedia>
@@ -1480,7 +1481,7 @@ function ScheduledTaskList({ tasks, isLoading, error, onRunTask }: {
       {error && <p className="pb-3 text-sm text-destructive">{error}</p>}
       <ItemGroup className="gap-0">
         {tasks.map((task) => (
-          <UnifiedListRow key={task.id} className="px-5 py-3" separated>
+          <UnifiedListRow key={task.id} className="py-3" separated>
             <ItemContent>
               <ItemTitle className="text-base font-semibold">{task.name}</ItemTitle>
               <ItemDescription className="text-xs">{scheduledTaskDetail(task)}</ItemDescription>
@@ -1533,23 +1534,26 @@ function TrackListRow({
       render={<button type="button" onClick={() => onChooseTrack(track)} aria-label={isActive ? `正在播放《${track.title}》` : `播放《${track.title}》`} />}
       active={isActive}
       aria-current={isActive ? 'true' : undefined}
-      className="cursor-pointer px-5 py-2"
+      className="cursor-pointer py-2"
       separated={separated}
     >
       {trackNumber === undefined ? (
         <AlbumArtwork artwork={track} size="sm" />
       ) : (
-        <span className="w-8 shrink-0 text-xs tabular-nums text-muted-foreground">#{String(trackNumber).padStart(2, '0')}</span>
+        <span className="flex w-8 shrink-0 items-center text-xs tabular-nums text-muted-foreground">
+          {isActive ? <PlaySolidIcon className="size-3.5" aria-hidden="true" /> : `#${String(trackNumber).padStart(2, '0')}`}
+        </span>
       )}
       <ItemContent className="gap-0.5">
         <ItemTitle>{track.title}</ItemTitle>
         <ItemDescription>{showAlbum ? `${artistLine(track)} · ${track.album.title}` : artistNames(track.artists)}</ItemDescription>
       </ItemContent>
-      <ItemActions className="gap-3">
+      {/*
+       * 时长是该行最后一个可见列，直接贴齐内容框结束侧。播放状态移入左侧编号
+       * 区，避免为不存在的尾部图标预留固定空位而破坏所有时长的右对齐。
+       */}
+      <ItemActions className="shrink-0 gap-0">
         {showDuration && <span className="text-xs text-muted-foreground">{formatTime(track.durationMs)}</span>}
-        {isActive ? (
-          <PlaySolidIcon className="size-4" role="img" aria-label="正在播放" />
-        ) : <span className="size-4" aria-hidden="true" />}
       </ItemActions>
     </UnifiedListRow>
   );

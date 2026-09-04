@@ -91,6 +91,30 @@
     --sidebar-ring: oklch(0.708 0 0);
     --album-page-background-start: oklch(0.968 0.016 8);
     --album-page-background-middle: oklch(0.985 0.009 350);
+    /*
+     * 移动端正文横向节奏以 390px 视口的 20px 留白为基准，使用比例值在紧凑
+     * 手机与大屏手机之间连续过渡，并限制在 16 至 32px，避免纯百分比在两端失控。
+     * 起始侧和结束侧分别叠加安全区，横屏设备两侧不对称时仍能保持可读区域安全。
+     */
+    --mobile-content-gutter: clamp(1rem, 5.128vw, 2rem);
+    --mobile-content-gutter-start: max(var(--mobile-content-gutter), env(safe-area-inset-left, 0px));
+    --mobile-content-gutter-end: max(var(--mobile-content-gutter), env(safe-area-inset-right, 0px));
+    --mobile-content-max-width: 36rem;
+    /*
+     * 这里必须先得到实际正文列宽，再计算其相对视口的外侧留白。滚动条使用同一
+     * 结果定位，因而在正文由比例宽度切换到 36rem 最大宽度时不会跳动。
+     */
+    --mobile-content-column-width: min(
+      var(--mobile-content-max-width),
+      calc(100% - var(--mobile-content-gutter-start) - var(--mobile-content-gutter-end))
+    );
+    --mobile-content-column-outset: calc((100% - var(--mobile-content-column-width)) / 2);
+    --mobile-scrollbar-width: 0.5rem;
+    --mobile-scrollbar-gap: 0.75rem;
+    --mobile-scrollbar-inset: max(
+      env(safe-area-inset-right, 0px),
+      calc(var(--mobile-content-column-outset) - var(--mobile-scrollbar-gap) - var(--mobile-scrollbar-width))
+    );
 }
 
 .dark {
@@ -157,6 +181,28 @@
 }
 
 @layer components {
+  /*
+   * 统一页头、正文和抽屉的内容框。窄屏时它由比例留白控制；超过最大内容宽度后，
+   * 框本身连同两侧留白居中，从而让视觉边界和滚动条的计算共用同一条内容轨。
+   */
+  .mobile-content-frame {
+    width: 100%;
+    max-width: calc(
+      var(--mobile-content-max-width) +
+      var(--mobile-content-gutter-start) +
+      var(--mobile-content-gutter-end)
+    );
+    margin-inline: auto;
+    padding-inline-start: var(--mobile-content-gutter-start);
+    padding-inline-end: var(--mobile-content-gutter-end);
+  }
+
+  /* 底部导航保留全宽背景，但按钮区域必须避开横屏设备的两侧安全区。 */
+  .mobile-navigation {
+    padding-inline-start: max(0.5rem, env(safe-area-inset-left, 0px));
+    padding-inline-end: max(0.5rem, env(safe-area-inset-right, 0px));
+  }
+
   .rime-logo {
     display: inline-block;
     font-family: 'Rock Salt', cursive;

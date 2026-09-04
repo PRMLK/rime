@@ -6,15 +6,16 @@ type AppScrollAreaProps = ComponentPropsWithoutRef<typeof ScrollArea>;
 
 /*
  * Base UI 会把轨道的 insetInlineEnd（行内结束侧偏移）以内联样式设为 0。
- * 因此必须通过同一内联属性覆盖，普通 right（右侧偏移）样式无法改变轨道位置。
+ * 该变量由全局内容框计算实际正文列宽，既考虑比例留白和安全区，也考虑 36rem
+ * 最大宽度；因此不能再用单独的 36rem 公式，否则在临界宽度会产生横向跳动。
  */
-const mobileScrollbarInset = 'max(0rem, calc((100% - 36rem) / 2 - 1.25rem))';
+const mobileScrollbarInset = 'var(--mobile-scrollbar-inset)';
 
 /**
  * 应用页面使用的统一滚动区域。
  *
  * 使用 Base UI 的滚动状态与拖动行为，将竖向滑块悬浮在内容右侧；宽屏时对齐
- * `max-w-xl（最大宽度限制）` 内容区外侧的留白，不占用内容宽度；
+ * 比例内容框的外侧留白，不占用内容宽度；
  * 水平轨道始终隐藏，避免窄屏页面出现横向滚动入口。
  *
  * @param props - `ScrollArea（滚动区域）` 的根容器属性与内容。
@@ -36,8 +37,8 @@ export const AppScrollArea = forwardRef<HTMLDivElement, AppScrollAreaProps>(func
         'absolute inset-y-3 h-auto w-2 border-0 bg-transparent p-0.5',
         scrollbarClassName,
       )}
-      // 宽屏按 36rem 内容列右缘定位；窄屏贴近容器右边，并保留轨道自身的透明内边距。
-      scrollbarStyle={{ ...scrollbarStyle, insetInlineEnd: mobileScrollbarInset }}
+      // 轨道始终为绝对定位：滑块出现或隐藏均不会改变正文列宽。
+      scrollbarStyle={{ width: 'var(--mobile-scrollbar-width)', ...scrollbarStyle, insetInlineEnd: mobileScrollbarInset }}
       thumbClassName={cn(
         'bg-muted-foreground/70 transition-colors hover:bg-foreground/70 active:bg-foreground/80',
         thumbClassName,
