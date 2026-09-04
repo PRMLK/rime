@@ -25,6 +25,7 @@ import {
 import { AlbumArtwork, AlbumArtworkFrame, AlbumArtworkSkeleton } from '@/components/AlbumArtwork';
 import { AlbumVinylArtwork } from '@/components/AlbumVinylArtwork';
 import { RimeLogo } from '@/components/RimeLogo';
+import { UnifiedListFooterLogo, UnifiedListRow } from '@/components/UnifiedListRow';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Carousel, CarouselContent, CarouselItem } from '@/components/ui/carousel';
@@ -48,7 +49,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import {
-  Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle,
+  ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle,
 } from '@/components/ui/item';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
@@ -83,19 +84,6 @@ const miniPlayerControlClassName = [
   'focus-visible:before:scale-100 focus-visible:before:opacity-100 focus-visible:before:ring-2 focus-visible:before:ring-ring/50',
   'motion-reduce:before:transition-none [&_svg]:relative [&_svg]:z-10',
 ].join(' ');
-
-/**
- * 曲目行的状态层统一延展至主内容边缘，内容本身仍按页面的 20px 对齐。
- * 遮罩不参与布局，也不会遮住文字和操作图标；当前播放仅提高遮罩不透明度。
- */
-const listRowOverlayClassName = [
-  'relative isolate -mx-5 w-[calc(100%+2.5rem)] rounded-none border-0 bg-transparent',
-  'before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:bg-muted/45 before:opacity-0',
-  'before:transition-opacity before:duration-150 before:ease-out hover:bg-transparent hover:before:opacity-100',
-  'focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:before:transition-none',
-].join(' ');
-
-const activeTrackRowOverlayClassName = 'before:bg-muted/70 before:opacity-100';
 
 const libraryItems = [
   { title: '我喜欢的音乐', detail: '尚未同步' },
@@ -226,10 +214,13 @@ export function MobilePlayer() {
           className="h-[100dvh] gap-0 overflow-hidden bg-background text-foreground"
         >
           <main className={cn(
-            'min-h-0 flex-1 overflow-y-auto px-5',
-            activeDetail?.kind === 'album' ? 'pt-0' : 'pt-6',
+            'min-h-0 flex-1 overflow-y-auto',
+            activeDetail?.kind === 'album' ? 'px-0 pt-0' : 'px-5 pt-6',
           )}>
-            <div className="mx-auto w-full max-w-xl pb-8">
+            <div className={cn(
+              'w-full pb-8',
+              activeDetail?.kind !== 'album' && 'mx-auto max-w-xl',
+            )}>
               {activeDetail?.kind !== 'album' && (
                 <header className="flex items-center gap-2">
                   {activeDetail && (
@@ -281,7 +272,7 @@ export function MobilePlayer() {
           </main>
 
           <footer className="shrink-0 border-t bg-background">
-            <section className="mx-auto grid w-full max-w-xl grid-rows-[2.75rem_2.75rem] px-4" aria-label="正在播放">
+            <section className="grid w-full grid-rows-[2.75rem_2.75rem] px-4" aria-label="正在播放">
               <div className="flex min-w-0 items-center gap-3">
                 <DrawerTrigger
                   render={
@@ -353,7 +344,7 @@ export function MobilePlayer() {
               </div>
             </section>
             <Separator />
-            <nav className="mx-auto w-full max-w-xl pb-[max(env(safe-area-inset-bottom),0rem)]" aria-label="主导航">
+            <nav className="w-full pb-[max(env(safe-area-inset-bottom),0rem)]" aria-label="主导航">
               <TabsList variant="line" size="mobile">
                 {navigationItems.map((item) => {
                   const isActive = activeTab === item.id;
@@ -635,8 +626,8 @@ function AlbumDetailView({
         </div>
       </div>
 
-      <h3 className="col-start-1 row-start-2 mt-[22.222cqw] px-4 text-sm font-semibold">曲目</h3>
-      <ItemGroup className="col-start-1 row-start-3 mt-2 gap-0 px-4">
+      <h3 className="col-start-1 row-start-2 mt-[22.222cqw] px-5 text-sm font-semibold">曲目</h3>
+      <ItemGroup className="col-start-1 row-start-3 mt-2 px-5">
         {detail.tracks.map((track, index) => (
           <TrackListRow
             key={track.id}
@@ -649,6 +640,7 @@ function AlbumDetailView({
           />
         ))}
       </ItemGroup>
+      <UnifiedListFooterLogo className="col-start-1 row-start-5" />
     </section>
   );
 }
@@ -712,9 +704,9 @@ function AlbumDetailToolbar({
 }) {
   const firstTrack = detail?.tracks[0];
   const isFluid = size === 'fluid';
-  const toolbarClassName = isFluid ? 'pt-[2.083cqw]' : 'pt-3';
+  const toolbarClassName = isFluid ? 'pt-[max(env(safe-area-inset-top),0.75rem)]' : 'pt-3';
   const toolbarButtonClassName = isFluid
-    ? 'size-[5.556cqw] rounded-[1.389cqw] [&_svg]:size-[2.778cqw]!'
+    ? 'size-[clamp(2rem,5.556cqw,2.75rem)] rounded-[clamp(0.5rem,1.389cqw,0.75rem)] [&_svg]:size-[clamp(1rem,2.778cqw,1.375rem)]!'
     : undefined;
 
   return (
@@ -1064,6 +1056,7 @@ function NowPlayingDrawer({
                 onChooseTrack={onChooseTrack}
               />
             ))}
+            {queue.length > 0 && <UnifiedListFooterLogo />}
             {queue.length === 0 && <p className="py-6 text-sm text-muted-foreground">暂无曲目</p>}
           </div>
         </section>
@@ -1227,6 +1220,7 @@ function SearchView({ query, results, isSearching, error, activeTrackId, onQuery
             onChooseTrack={onChooseTrack}
           />
         ))}
+        {!error && results.length > 0 && <UnifiedListFooterLogo />}
       </div>
     </section>
   );
@@ -1236,26 +1230,31 @@ function LibraryView({ onOpenSystemSettings }: { onOpenSystemSettings: () => voi
   return (
     <section className="mt-8" aria-labelledby="library-heading">
       <h2 id="library-heading" className="text-sm font-semibold">我的音乐</h2>
-      <div className="mt-3">
+      <ItemGroup className="mt-3">
         {libraryItems.map((item) => (
-          <Button key={item.title} variant="ghost" className={cn('h-auto justify-start border-b px-5 py-3 text-left last:border-b-0', listRowOverlayClassName)} disabled>
-            <LibraryBig data-icon="inline-start" aria-hidden="true" />
-            <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{item.title}</span><span className="mt-1 block text-xs text-muted-foreground">{item.detail}</span></span>
-          </Button>
+          <UnifiedListRow key={item.title} render={<button type="button" disabled />} className="cursor-not-allowed px-5 py-3" separated>
+            <ItemMedia variant="icon"><LibraryBig aria-hidden="true" /></ItemMedia>
+            <ItemContent>
+              <ItemTitle>{item.title}</ItemTitle>
+              <ItemDescription>{item.detail}</ItemDescription>
+            </ItemContent>
+          </UnifiedListRow>
         ))}
-      </div>
+      </ItemGroup>
       <Separator className="my-8" />
       <h2 className="text-sm font-semibold">设置</h2>
-      <ItemGroup className="mt-3 gap-0">
-        <Item
+      <ItemGroup className="mt-3">
+        <UnifiedListRow
           render={<button type="button" onClick={onOpenSystemSettings} />}
-          className={cn('cursor-pointer border-b px-5 py-3 last:border-b-0', listRowOverlayClassName)}
+          className="cursor-pointer px-5 py-3"
+          separated
         >
           <ItemMedia variant="icon"><Settings aria-hidden="true" /></ItemMedia>
           <ItemContent><ItemTitle>系统设置</ItemTitle></ItemContent>
           <ItemActions><ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" /></ItemActions>
-        </Item>
+        </UnifiedListRow>
       </ItemGroup>
+      <UnifiedListFooterLogo />
     </section>
   );
 }
@@ -1335,15 +1334,16 @@ function SystemSettingsDrawer({ open, onOpenChange }: { open: boolean; onOpenCha
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-[max(env(safe-area-inset-bottom),1.5rem)]">
           <section className="mx-auto w-full max-w-xl" aria-label={view === 'root' ? '系统设置项目' : '计划任务列表'}>
             {view === 'root' ? (
-              <ItemGroup className="gap-0">
-                <Item
+              <ItemGroup>
+                <UnifiedListRow
                   render={<button type="button" onClick={() => setView('tasks')} />}
-                  className="cursor-pointer rounded-none px-0 py-4 hover:bg-muted/50"
+                  className="cursor-pointer px-5 py-3"
+                  separated
                 >
                   <ItemMedia variant="icon"><CalendarClock aria-hidden="true" /></ItemMedia>
                   <ItemContent><ItemTitle>计划任务</ItemTitle></ItemContent>
                   <ItemActions><ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" /></ItemActions>
-                </Item>
+                </UnifiedListRow>
               </ItemGroup>
             ) : (
               <ScheduledTaskList tasks={scheduledTasks} isLoading={isLoading} error={error} onRunTask={runTask} />
@@ -1368,9 +1368,9 @@ function ScheduledTaskList({ tasks, isLoading, error, onRunTask }: {
   return (
     <>
       {error && <p className="pb-3 text-sm text-destructive">{error}</p>}
-      <ItemGroup className="gap-0">
+      <ItemGroup>
         {tasks.map((task) => (
-          <Item key={task.id} className="rounded-none border-b px-0 py-4 last:border-b-0">
+          <UnifiedListRow key={task.id} className="px-5 py-3" separated>
             <ItemContent>
               <ItemTitle className="text-base font-semibold">{task.name}</ItemTitle>
               <ItemDescription className="text-xs">{scheduledTaskDetail(task)}</ItemDescription>
@@ -1393,7 +1393,7 @@ function ScheduledTaskList({ tasks, isLoading, error, onRunTask }: {
                 <TooltipContent>{task.status === 'running' ? '正在执行' : '立即执行'}</TooltipContent>
               </Tooltip>
             </ItemActions>
-          </Item>
+          </UnifiedListRow>
         ))}
       </ItemGroup>
       {!isLoading && !error && tasks.length === 0 && <p className="py-12 text-center text-sm text-muted-foreground">暂无计划任务</p>}
@@ -1419,17 +1419,12 @@ function TrackListRow({
   onChooseTrack: (track: Track) => void;
 }) {
   return (
-    <Item
-      size="xs"
+    <UnifiedListRow
       render={<button type="button" onClick={() => onChooseTrack(track)} aria-label={isActive ? `正在播放《${track.title}》` : `播放《${track.title}》`} />}
-      variant="default"
+      active={isActive}
       aria-current={isActive ? 'true' : undefined}
-      className={cn(
-        listRowOverlayClassName,
-        isActive && activeTrackRowOverlayClassName,
-        'cursor-pointer px-5 py-2',
-        separated && 'border-b last:border-b-0',
-      )}
+      className="cursor-pointer px-5 py-2"
+      separated={separated}
     >
       {trackNumber === undefined ? (
         <AlbumArtwork artwork={track} size="sm" />
@@ -1446,7 +1441,7 @@ function TrackListRow({
           <PlaySolidIcon className="size-4" role="img" aria-label="正在播放" />
         ) : <span className="size-4" aria-hidden="true" />}
       </ItemActions>
-    </Item>
+    </UnifiedListRow>
   );
 }
 
