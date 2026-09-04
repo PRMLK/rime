@@ -13,6 +13,11 @@ type AlbumRef struct {
 	Title string `json:"title"`
 }
 
+type ArtworkFocus struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
+
 type Album struct {
 	ID        string      `json:"id"`
 	Title     string      `json:"title"`
@@ -36,14 +41,15 @@ type ArtistDetail struct {
 }
 
 type Track struct {
-	ID          string      `json:"id"`
-	Title       string      `json:"title"`
-	Album       AlbumRef    `json:"album"`
-	Artists     []ArtistRef `json:"artists"`
-	DurationMs  int64       `json:"durationMs"`
-	DiscNumber  int         `json:"discNumber,omitempty"`
-	TrackNumber int         `json:"trackNumber,omitempty"`
-	ArtworkID   *string     `json:"artworkId,omitempty"`
+	ID           string        `json:"id"`
+	Title        string        `json:"title"`
+	Album        AlbumRef      `json:"album"`
+	Artists      []ArtistRef   `json:"artists"`
+	DurationMs   int64         `json:"durationMs"`
+	DiscNumber   int           `json:"discNumber,omitempty"`
+	TrackNumber  int           `json:"trackNumber,omitempty"`
+	ArtworkID    *string       `json:"artworkId,omitempty"`
+	ArtworkFocus *ArtworkFocus `json:"artworkFocus,omitempty"`
 }
 
 type MediaFile struct {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -56,6 +57,9 @@ func run(logger *slog.Logger) error {
 	defer store.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if err := prepareArtworkFocus(ctx, store, artworkCache, logger); err != nil {
+		return err
+	}
 	libraryScanner := scanner.New(cfg.MusicDir, artworkCache, store, logger)
 	lyricsScanner := lyrics.NewScanner(
 		cfg.LyricsDir,
@@ -119,4 +123,46 @@ func run(logger *slog.Logger) error {
 		return nil
 	}
 	return err
+}
+
+type artworkFocusStore interface {
+	ArtworkFocusAssets(context.Context) ([]artwork.Asset, error)
+	UpdateArtworkFocus(context.Context, string, artwork.Focus) error
+}
+
+type artworkFocusCache interface {
+	PrimeFocus(string, artwork.Focus)
+	AnalyzeStoredFocus(artwork.Asset) (artwork.Focus, error)
+}
+
+func prepareArtworkFocus(ctx context.Context, store artworkFocusStore, cache artworkFocusCache, logger *slog.Logger) error {
+	assets, err := store.ArtworkFocusAssets(ctx)
+	if err != nil {
+		return fmt.Errorf("list artwork focus state: %w", err)
+	}
+
+	missing := 0
+	updated := 0
+	failed := 0
+	for _, asset := range assets {
+		if asset.FocusVersion >= artwork.FocusAlgorithmVersion {
+			cache.PrimeFocus(asset.ContentHash, artwork.Focus{X: asset.FocusX, Y: asset.FocusY})
+			continue
+		}
+		missing++
+		focus, err := cache.AnalyzeStoredFocus(asset)
+		if err != nil {
+			failed++
+			logger.Warn("recalculate artwork focus", "artwork_id", asset.ID, "error", err)
+			continue
+		}
+		if err := store.UpdateArtworkFocus(ctx, asset.ID, focus); err != nil {
+			return fmt.Errorf("persist artwork focus %s: %w", asset.ID, err)
+		}
+		updated++
+	}
+	if missing > 0 {
+		logger.Info("artwork focus backfill complete", "missing", missing, "updated", updated, "failed", failed)
+	}
+	return nil
 }

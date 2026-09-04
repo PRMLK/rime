@@ -126,6 +126,9 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 	if page.Items[0].ArtworkID == nil {
 		t.Fatal("search result has no artwork ID")
 	}
+	if page.Items[0].ArtworkFocus == nil || page.Items[0].ArtworkFocus.X < 0 || page.Items[0].ArtworkFocus.X > 1 || page.Items[0].ArtworkFocus.Y < 0 || page.Items[0].ArtworkFocus.Y > 1 {
+		t.Fatalf("search result has invalid artwork focus: %+v", page.Items[0].ArtworkFocus)
+	}
 	assertLyrics(t, server.URL, page.Items[0].ID, lyrics.SourceSidecar)
 	manualDir := filepath.Join(lyricsDir, page.Items[0].ID)
 	if err := os.MkdirAll(manualDir, 0o750); err != nil {

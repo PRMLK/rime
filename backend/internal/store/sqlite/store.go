@@ -117,8 +117,8 @@ func (s *Store) UpsertScannedFile(ctx context.Context, scanID string, file scann
 	var artworkID *string
 	if file.Artwork != nil {
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO artworks(id, content_hash, content_type, extension, storage_key, source_kind, source_path, size, width, height, created_at)
-			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			INSERT INTO artworks(id, content_hash, content_type, extension, storage_key, source_kind, source_path, size, width, height, focus_x, focus_y, focus_version, created_at)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(id) DO UPDATE SET
 				content_type = excluded.content_type,
 				extension = excluded.extension,
@@ -127,10 +127,13 @@ func (s *Store) UpsertScannedFile(ctx context.Context, scanID string, file scann
 				source_path = excluded.source_path,
 				size = excluded.size,
 				width = excluded.width,
-				height = excluded.height`,
+				height = excluded.height,
+				focus_x = excluded.focus_x,
+				focus_y = excluded.focus_y,
+				focus_version = excluded.focus_version`,
 			file.Artwork.ID, file.Artwork.ContentHash, file.Artwork.ContentType, file.Artwork.Extension,
 			file.Artwork.StorageKey, file.Artwork.SourceKind, file.Artwork.SourcePath, file.Artwork.Size,
-			file.Artwork.Width, file.Artwork.Height, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			file.Artwork.Width, file.Artwork.Height, file.Artwork.FocusX, file.Artwork.FocusY, file.Artwork.FocusVersion, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return err
 		}
 		artworkID = &file.Artwork.ID
@@ -213,6 +216,45 @@ func (s *Store) UpsertScannedFile(ctx context.Context, scanID string, file scann
 func (s *Store) CompleteScan(ctx context.Context, scanID string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE media_files SET available = 0 WHERE seen_scan_id <> ?`, scanID)
 	return err
+}
+
+func (s *Store) ArtworkFocusAssets(ctx context.Context) ([]artwork.Asset, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, content_hash, storage_key, focus_x, focus_y, focus_version
+		FROM artworks
+		ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var assets []artwork.Asset
+	for rows.Next() {
+		var asset artwork.Asset
+		if err := rows.Scan(&asset.ID, &asset.ContentHash, &asset.StorageKey, &asset.FocusX, &asset.FocusY, &asset.FocusVersion); err != nil {
+			return nil, err
+		}
+		assets = append(assets, asset)
+	}
+	return assets, rows.Err()
+}
+
+func (s *Store) UpdateArtworkFocus(ctx context.Context, artworkID string, focus artwork.Focus) error {
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE artworks
+		SET focus_x = ?, focus_y = ?, focus_version = ?
+		WHERE id = ?`, focus.X, focus.Y, artwork.FocusAlgorithmVersion, artworkID)
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if updated != 1 {
+		return fmt.Errorf("update artwork focus %s: updated %d rows", artworkID, updated)
+	}
+	return nil
 }
 
 func (s *Store) RecentAlbums(ctx context.Context, limit int) ([]catalog.Album, error) {
@@ -687,13 +729,18 @@ func (s *Store) SearchTracks(ctx context.Context, query string, limit int, curso
 func (s *Store) GetTrack(ctx context.Context, trackID string) (catalog.Track, error) {
 	var track catalog.Track
 	var artworkID sql.NullString
+	var artworkFocusX, artworkFocusY sql.NullFloat64
 	err := s.db.QueryRowContext(ctx, `
-		SELECT t.id, t.title, t.duration_ms, t.disc_number, t.track_number, al.id, al.title, COALESCE(t.artwork_id, al.artwork_id)
+		SELECT t.id, t.title, t.duration_ms, t.disc_number, t.track_number, al.id, al.title, al.artwork_id, aw.focus_x, aw.focus_y
 		FROM tracks t JOIN albums al ON al.id = t.album_id
+		LEFT JOIN artworks aw ON aw.id = al.artwork_id
 		WHERE t.id = ? AND EXISTS (SELECT 1 FROM media_files mf WHERE mf.track_id = t.id AND mf.available = 1)`, trackID).
-		Scan(&track.ID, &track.Title, &track.DurationMs, &track.DiscNumber, &track.TrackNumber, &track.Album.ID, &track.Album.Title, &artworkID)
+		Scan(&track.ID, &track.Title, &track.DurationMs, &track.DiscNumber, &track.TrackNumber, &track.Album.ID, &track.Album.Title, &artworkID, &artworkFocusX, &artworkFocusY)
 	if artworkID.Valid {
 		track.ArtworkID = &artworkID.String
+		if artworkFocusX.Valid && artworkFocusY.Valid {
+			track.ArtworkFocus = &catalog.ArtworkFocus{X: artworkFocusX.Float64, Y: artworkFocusY.Float64}
+		}
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return catalog.Track{}, playback.ErrTrackNotFound
@@ -723,10 +770,10 @@ func (s *Store) GetTrack(ctx context.Context, trackID string) (catalog.Track, er
 func (s *Store) GetArtwork(ctx context.Context, artworkID string) (artwork.Asset, error) {
 	var asset artwork.Asset
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, content_hash, content_type, extension, storage_key, source_kind, source_path, size, width, height
+		SELECT id, content_hash, content_type, extension, storage_key, source_kind, source_path, size, width, height, focus_x, focus_y, focus_version
 		FROM artworks WHERE id = ?`, artworkID).
 		Scan(&asset.ID, &asset.ContentHash, &asset.ContentType, &asset.Extension, &asset.StorageKey,
-			&asset.SourceKind, &asset.SourcePath, &asset.Size, &asset.Width, &asset.Height)
+			&asset.SourceKind, &asset.SourcePath, &asset.Size, &asset.Width, &asset.Height, &asset.FocusX, &asset.FocusY, &asset.FocusVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return artwork.Asset{}, artwork.ErrNotFound
 	}

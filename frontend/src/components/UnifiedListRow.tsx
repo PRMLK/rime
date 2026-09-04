@@ -30,6 +30,8 @@ export function UnifiedListRow({
     <Item
       size={size}
       variant={variant}
+      data-unified-list-row=""
+      data-active={active ? '' : undefined}
       className={cn(
         'relative isolate -mx-5 w-[calc(100%+2.5rem)] rounded-none border-0 bg-transparent',
         'before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:bg-muted/45 before:opacity-0',

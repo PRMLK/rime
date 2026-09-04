@@ -9,6 +9,11 @@ export type AlbumRef = {
   title: string;
 };
 
+export type ArtworkFocus = {
+  x: number;
+  y: number;
+};
+
 export type Album = {
   id: string;
   title: string;
@@ -38,6 +43,7 @@ export type Track = {
   discNumber?: number;
   trackNumber?: number;
   artworkId?: string;
+  artworkFocus?: ArtworkFocus;
 };
 
 export type SearchPage = {

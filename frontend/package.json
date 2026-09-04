@@ -17,6 +17,7 @@
     "clsx": "^2.1.1",
     "embla-carousel-react": "^8.6.0",
     "lucide-react": "^0.468.0",
+    "node-vibrant": "^4.0.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "shadcn": "^4.20.0",
