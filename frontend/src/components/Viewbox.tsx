@@ -53,11 +53,16 @@ type ViewboxInsets = {
   left: number;
 };
 
+type ViewboxCanvasPosition = {
+  x: number;
+  y: number;
+};
+
 type ViewboxPreferences = {
   deviceId: ViewboxDevicePresetId;
   zoomMode: ViewboxZoomMode;
   manualZoom: number;
-  canvasInsets: ViewboxInsets;
+  canvasPosition: ViewboxCanvasPosition;
   showRuler: boolean;
   showGrid: boolean;
 };
@@ -76,16 +81,20 @@ const VIEWBOX_ZOOM_STEP = 5;
 const VIEWBOX_RULER_TOP_SIZE = 18;
 const VIEWBOX_RULER_LEFT_SIZE = 24;
 const VIEWBOX_DEFAULT_ZOOM = 70;
-const VIEWBOX_INSET_MIN = 0;
-const VIEWBOX_INSET_MAX = 1200;
-const VIEWBOX_INSET_STEP = 1;
-const VIEWBOX_DEFAULT_INSETS: ViewboxInsets = { top: 70, right: 110, bottom: 70, left: 110 };
-const VIEWBOX_PREFERENCES_STORAGE_KEY = 'rime.viewbox.preferences.v1';
+const VIEWBOX_STAGE_BASE_INSETS: ViewboxInsets = { top: 70, right: 110, bottom: 70, left: 110 };
+const VIEWBOX_CANVAS_POSITION_MIN = -500;
+const VIEWBOX_CANVAS_POSITION_MAX = 500;
+const VIEWBOX_CANVAS_POSITION_STEP = 1;
+const VIEWBOX_LEGACY_CANVAS_INSET_MAX = 3600;
+const VIEWBOX_DEFAULT_CANVAS_POSITION: ViewboxCanvasPosition = { x: 0, y: 0 };
+const VIEWBOX_PREFERENCES_STORAGE_KEY = 'rime.viewbox.preferences.v3';
+const VIEWBOX_V2_PREFERENCES_STORAGE_KEY = 'rime.viewbox.preferences.v2';
+const VIEWBOX_LEGACY_PREFERENCES_STORAGE_KEY = 'rime.viewbox.preferences.v1';
 const VIEWBOX_DEFAULT_PREFERENCES: ViewboxPreferences = {
   deviceId: 'phone',
   zoomMode: 'manual',
   manualZoom: VIEWBOX_DEFAULT_ZOOM,
-  canvasInsets: VIEWBOX_DEFAULT_INSETS,
+  canvasPosition: VIEWBOX_DEFAULT_CANVAS_POSITION,
   showRuler: false,
   showGrid: false,
 };
@@ -115,7 +124,7 @@ export function Viewbox({ previewSource = import.meta.env.VITE_VIEWBOX_SRC ?? '/
   const [stageSize, setStageSize] = useState<StageSize>({ width: 0, height: 0 });
   const [zoomMode, setZoomMode] = useState<ViewboxZoomMode>(initialPreferences.zoomMode);
   const [manualZoom, setManualZoom] = useState(initialPreferences.manualZoom);
-  const [canvasInsets, setCanvasInsets] = useState<ViewboxInsets>(initialPreferences.canvasInsets);
+  const [canvasPosition, setCanvasPosition] = useState<ViewboxCanvasPosition>(initialPreferences.canvasPosition);
   const [reloadGeneration, setReloadGeneration] = useState(0);
   const [showRuler, setShowRuler] = useState(initialPreferences.showRuler);
   const [showGrid, setShowGrid] = useState(initialPreferences.showGrid);
@@ -123,7 +132,7 @@ export function Viewbox({ previewSource = import.meta.env.VITE_VIEWBOX_SRC ?? '/
     () => VIEWBOX_DEVICE_PRESETS.find((preset) => preset.id === deviceId) ?? VIEWBOX_DEVICE_PRESETS[1],
     [deviceId],
   );
-  const fitZoom = getFittedZoom(stageSize, device, showRuler, canvasInsets);
+  const fitZoom = getFittedZoom(stageSize, device, showRuler, VIEWBOX_STAGE_BASE_INSETS);
   const zoomPercent = zoomMode === 'fit' ? fitZoom : manualZoom;
   const zoom = zoomPercent / 100;
   const rulerTopSize = showRuler ? VIEWBOX_RULER_TOP_SIZE : 0;
@@ -135,6 +144,7 @@ export function Viewbox({ previewSource = import.meta.env.VITE_VIEWBOX_SRC ?? '/
   const viewportShellStyle = {
     width: `${Math.round(device.width * zoom) + rulerLeftSize}px`,
     height: `${Math.round(device.height * zoom) + rulerTopSize}px`,
+    transform: `translate(${canvasPosition.x}px, ${canvasPosition.y}px)`,
   } satisfies CSSProperties;
   const viewportStyle = {
     top: `${rulerTopSize}px`,
@@ -144,10 +154,10 @@ export function Viewbox({ previewSource = import.meta.env.VITE_VIEWBOX_SRC ?? '/
     transform: `scale(${zoom})`,
   } satisfies CSSProperties;
   const stageStyle = {
-    paddingTop: `${canvasInsets.top}px`,
-    paddingRight: `${canvasInsets.right}px`,
-    paddingBottom: `${canvasInsets.bottom}px`,
-    paddingLeft: `${canvasInsets.left}px`,
+    paddingTop: `${VIEWBOX_STAGE_BASE_INSETS.top}px`,
+    paddingRight: `${VIEWBOX_STAGE_BASE_INSETS.right}px`,
+    paddingBottom: `${VIEWBOX_STAGE_BASE_INSETS.bottom}px`,
+    paddingLeft: `${VIEWBOX_STAGE_BASE_INSETS.left}px`,
   } satisfies CSSProperties;
 
   useEffect(() => {
@@ -155,11 +165,11 @@ export function Viewbox({ previewSource = import.meta.env.VITE_VIEWBOX_SRC ?? '/
       deviceId,
       zoomMode,
       manualZoom,
-      canvasInsets,
+      canvasPosition,
       showRuler,
       showGrid,
     });
-  }, [canvasInsets, deviceId, manualZoom, showGrid, showRuler, zoomMode]);
+  }, [canvasPosition, deviceId, manualZoom, showGrid, showRuler, zoomMode]);
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -220,57 +230,46 @@ export function Viewbox({ previewSource = import.meta.env.VITE_VIEWBOX_SRC ?? '/
   };
 
   /**
-   * 按摇杆传入的连续位移平移画布，同时保持同一轴上的总留白不变。
+   * 按摇杆传入的连续位移平移画布，并以舞台中心作为坐标原点。
    *
-   * 例如向上拖动会减少上边距并等量增加下边距，因此画布不会改变可用空间大小，
-   * 只会在预览区域内平移。靠近边界时使用可用的最小值，避免任意一侧超出 0 至 1200px。
+   * x 轴和 y 轴均可在 -500px 至 500px 间移动；正 x 表示向右，正 y 表示向下。
+   * 位置通过 transform（变换）应用到视口外壳，不会挤占预览舞台的可用尺寸，
+   * 因而不会影响“适配画布”的缩放计算。
    *
    * @param deltaX - 水平拖动距离；正数向右移动画布，负数向左移动画布。
    * @param deltaY - 垂直拖动距离；正数向下移动画布，负数向上移动画布。
-   * @returns 无返回值；边距状态更新后会同步写入本地缓存。
+   * @returns 无返回值；坐标状态更新后会同步写入本地缓存。
    */
   const moveCanvas = (deltaX: number, deltaY: number) => {
     const horizontalDistance = Math.round(deltaX);
     const verticalDistance = Math.round(deltaY);
     if (horizontalDistance === 0 && verticalDistance === 0) return;
 
-    setCanvasInsets((insets) => {
-      let nextInsets = insets;
-
-      if (horizontalDistance > 0) {
-        nextInsets = shiftCanvasInsetPair(nextInsets, 'right', 'left', horizontalDistance);
-      } else if (horizontalDistance < 0) {
-        nextInsets = shiftCanvasInsetPair(nextInsets, 'left', 'right', Math.abs(horizontalDistance));
-      }
-
-      if (verticalDistance > 0) {
-        return shiftCanvasInsetPair(nextInsets, 'bottom', 'top', verticalDistance);
-      }
-      if (verticalDistance < 0) {
-        return shiftCanvasInsetPair(nextInsets, 'top', 'bottom', Math.abs(verticalDistance));
-      }
-      return nextInsets;
+    setCanvasPosition((position) => {
+      return {
+        x: clampCanvasPosition(position.x + horizontalDistance),
+        y: clampCanvasPosition(position.y + verticalDistance),
+      };
     });
   };
 
   /**
-   * 恢复画布默认留白，使预览回到初始居中位置。
+   * 恢复画布默认坐标，使预览回到初始居中位置。
    * @returns 无返回值；使用新对象避免修改共享的默认配置。
    */
   const resetCanvasPosition = () => {
-    setCanvasInsets({ ...VIEWBOX_DEFAULT_INSETS });
+    setCanvasPosition({ ...VIEWBOX_DEFAULT_CANVAS_POSITION });
   };
 
   /**
    * 让设备以当前可用区域的最大比例重新适配，并消除摇杆带来的方向偏移。
    *
-   * 居中时不改变水平或垂直方向的边距总和，因此画布可用空间和计算出的适配比例
-   * 保持稳定；只重新分配两侧边距以使画布回到舞台中心。
+   * 适配时同步将 x/y 坐标归零，使画布回到舞台中心并保持完整的双向移动范围。
    *
    * @returns 无返回值；同步更新适配模式与居中的画布位置。
    */
   const fitAndCenterCanvas = () => {
-    setCanvasInsets((insets) => getCenteredCanvasInsets(insets));
+    setCanvasPosition({ ...VIEWBOX_DEFAULT_CANVAS_POSITION });
     setZoomMode('fit');
   };
 
@@ -461,11 +460,11 @@ export function Viewbox({ previewSource = import.meta.env.VITE_VIEWBOX_SRC ?? '/
                 <span className="viewbox-control-section-label">画布位置</span>
                 <div className="viewbox-canvas-position-control">
                   <ViewboxJoystick onMove={moveCanvas} />
-                  <div className="viewbox-inset-readout" aria-label="当前画布边距">
-                    <span>上 <output>{canvasInsets.top}px</output></span>
-                    <span>右 <output>{canvasInsets.right}px</output></span>
-                    <span>下 <output>{canvasInsets.bottom}px</output></span>
-                    <span>左 <output>{canvasInsets.left}px</output></span>
+                  <div className="viewbox-inset-readout" aria-label="当前画布位置，范围为正负五百像素">
+                    <span>上 <output>{-canvasPosition.y}px</output></span>
+                    <span>右 <output>{canvasPosition.x}px</output></span>
+                    <span>下 <output>{canvasPosition.y}px</output></span>
+                    <span>左 <output>{-canvasPosition.x}px</output></span>
                   </div>
                   <Tooltip>
                     <TooltipTrigger
@@ -573,56 +572,16 @@ type ViewboxJoystickPosition = {
 const VIEWBOX_JOYSTICK_MAX_OFFSET = 21;
 
 /**
- * 将当前边距重新平分到同一轴的两侧，使画布处于预览舞台的几何中心。
+ * 将单轴画布坐标限制在允许的双向移动范围内。
  *
- * 保留每个轴向的边距总和，避免居中操作改变 getFittedZoom（适配缩放计算）使用的
- * 可用宽高。总和为奇数时最多产生 1px 差异，视觉上仍保持居中。
+ * 统一在状态写入前截断，避免指针高速移动或键盘连续按键使坐标越过 -500px 至 500px。
  *
- * @param insets - 当前上、右、下、左边距。
- * @returns 水平和垂直边距均已平分的居中边距对象。
+ * @param value - 尚未限制的 x 或 y 坐标，单位为 CSS 像素。
+ * @returns 位于 -500px 至 500px 范围内的整数坐标。
  */
-function getCenteredCanvasInsets(insets: ViewboxInsets): ViewboxInsets {
-  const verticalHalf = (insets.top + insets.bottom) / 2;
-  const horizontalHalf = (insets.left + insets.right) / 2;
-
-  return {
-    top: Math.floor(verticalHalf),
-    right: Math.ceil(horizontalHalf),
-    bottom: Math.ceil(verticalHalf),
-    left: Math.floor(horizontalHalf),
-  };
-}
-
-/**
- * 平移一组相对边距，确保画布位置变化不会改变当前可用画布空间。
- *
- * sourceSide（来源边）减少，targetSide（目标边）等量增加。例如画布向右移动时，
- * 右边距减少而左边距增加。该方式使画布只发生位移，不会被缩放或重新计算尺寸。
- *
- * @param insets - 当前上、右、下、左边距。
- * @param sourceSide - 需要减少的边距方向。
- * @param targetSide - 需要增加的边距方向。
- * @param distance - 期望移动距离，单位为 CSS 像素。
- * @returns 已按边界截断后的新边距；没有可移动空间时返回原对象。
- */
-function shiftCanvasInsetPair(
-  insets: ViewboxInsets,
-  sourceSide: keyof ViewboxInsets,
-  targetSide: keyof ViewboxInsets,
-  distance: number,
-): ViewboxInsets {
-  const amount = Math.min(
-    Math.round(distance),
-    insets[sourceSide] - VIEWBOX_INSET_MIN,
-    VIEWBOX_INSET_MAX - insets[targetSide],
-  );
-  if (amount <= 0) return insets;
-
-  return {
-    ...insets,
-    [sourceSide]: insets[sourceSide] - amount,
-    [targetSide]: insets[targetSide] + amount,
-  };
+function clampCanvasPosition(value: number): number {
+  const roundedValue = Math.round(value);
+  return Math.min(VIEWBOX_CANVAS_POSITION_MAX, Math.max(VIEWBOX_CANVAS_POSITION_MIN, roundedValue));
 }
 
 /**
@@ -778,13 +737,19 @@ function ViewboxRangeControl({ label, value, min, max, step, onValueChange, valu
  */
 function readViewboxPreferences(): ViewboxPreferences {
   try {
-    const serializedPreferences = localStorage.getItem(VIEWBOX_PREFERENCES_STORAGE_KEY);
+    const currentSerializedPreferences = localStorage.getItem(VIEWBOX_PREFERENCES_STORAGE_KEY);
+    const serializedPreferences = currentSerializedPreferences
+      ?? localStorage.getItem(VIEWBOX_V2_PREFERENCES_STORAGE_KEY)
+      ?? localStorage.getItem(VIEWBOX_LEGACY_PREFERENCES_STORAGE_KEY);
     if (!serializedPreferences) return createDefaultViewboxPreferences();
 
     const parsedPreferences: unknown = JSON.parse(serializedPreferences);
     if (!isRecord(parsedPreferences)) return createDefaultViewboxPreferences();
 
-    const parsedInsets = isRecord(parsedPreferences.canvasInsets) ? parsedPreferences.canvasInsets : {};
+    // v1/v2 使用四边读数；v3 改用以中心为零点的 x/y 坐标。
+    const canvasPosition = currentSerializedPreferences === null
+      ? readLegacyCanvasPosition(parsedPreferences.canvasInsets)
+      : readStoredCanvasPosition(parsedPreferences.canvasPosition);
     return {
       deviceId: isViewboxDevicePresetId(parsedPreferences.deviceId)
         ? parsedPreferences.deviceId
@@ -797,36 +762,7 @@ function readViewboxPreferences(): ViewboxPreferences {
         VIEWBOX_ZOOM_STEP,
         VIEWBOX_DEFAULT_PREFERENCES.manualZoom,
       ),
-      canvasInsets: {
-        top: readBoundedNumber(
-          parsedInsets.top,
-          VIEWBOX_INSET_MIN,
-          VIEWBOX_INSET_MAX,
-          VIEWBOX_INSET_STEP,
-          VIEWBOX_DEFAULT_PREFERENCES.canvasInsets.top,
-        ),
-        right: readBoundedNumber(
-          parsedInsets.right,
-          VIEWBOX_INSET_MIN,
-          VIEWBOX_INSET_MAX,
-          VIEWBOX_INSET_STEP,
-          VIEWBOX_DEFAULT_PREFERENCES.canvasInsets.right,
-        ),
-        bottom: readBoundedNumber(
-          parsedInsets.bottom,
-          VIEWBOX_INSET_MIN,
-          VIEWBOX_INSET_MAX,
-          VIEWBOX_INSET_STEP,
-          VIEWBOX_DEFAULT_PREFERENCES.canvasInsets.bottom,
-        ),
-        left: readBoundedNumber(
-          parsedInsets.left,
-          VIEWBOX_INSET_MIN,
-          VIEWBOX_INSET_MAX,
-          VIEWBOX_INSET_STEP,
-          VIEWBOX_DEFAULT_PREFERENCES.canvasInsets.left,
-        ),
-      },
+      canvasPosition,
       showRuler: typeof parsedPreferences.showRuler === 'boolean' ? parsedPreferences.showRuler : false,
       showGrid: typeof parsedPreferences.showGrid === 'boolean' ? parsedPreferences.showGrid : false,
     };
@@ -851,12 +787,12 @@ function writeViewboxPreferences(preferences: ViewboxPreferences): void {
 
 /**
  * 生成不会与可变状态共享引用的默认预览工具偏好。
- * @returns 包含独立边距对象的默认 ViewboxPreferences（预览框偏好）。
+ * @returns 包含独立画布坐标对象的默认 ViewboxPreferences（预览框偏好）。
  */
 function createDefaultViewboxPreferences(): ViewboxPreferences {
   return {
     ...VIEWBOX_DEFAULT_PREFERENCES,
-    canvasInsets: { ...VIEWBOX_DEFAULT_PREFERENCES.canvasInsets },
+    canvasPosition: { ...VIEWBOX_DEFAULT_PREFERENCES.canvasPosition },
   };
 }
 
@@ -879,6 +815,57 @@ function isViewboxDevicePresetId(value: unknown): value is ViewboxDevicePresetId
 }
 
 /**
+ * 读取并校验 v3 本地存储中的画布坐标。
+ *
+ * x 轴和 y 轴以舞台中心为零点，均限制为 -500px 至 500px。损坏或缺失的字段
+ * 会分别回退为 0，保证预览始终从可预测的位置开始渲染。
+ *
+ * @param value - 本地存储中读取的未知坐标对象。
+ * @returns 位于双向边界内且已对齐步进的画布坐标。
+ */
+function readStoredCanvasPosition(value: unknown): ViewboxCanvasPosition {
+  const parsedPosition = isRecord(value) ? value : {};
+  return {
+    x: readBoundedNumber(
+      parsedPosition.x,
+      VIEWBOX_CANVAS_POSITION_MIN,
+      VIEWBOX_CANVAS_POSITION_MAX,
+      VIEWBOX_CANVAS_POSITION_STEP,
+      VIEWBOX_DEFAULT_CANVAS_POSITION.x,
+    ),
+    y: readBoundedNumber(
+      parsedPosition.y,
+      VIEWBOX_CANVAS_POSITION_MIN,
+      VIEWBOX_CANVAS_POSITION_MAX,
+      VIEWBOX_CANVAS_POSITION_STEP,
+      VIEWBOX_DEFAULT_CANVAS_POSITION.y,
+    ),
+  };
+}
+
+/**
+ * 将 v1/v2 四边读数转换为以舞台中心为零点的 x/y 坐标。
+ *
+ * 旧版通过相对边距的差值移动画布，因此左右、上下读数之差的一半就是实际位移。
+ * 转换后再使用当前的双向坐标边界截断，避免异常缓存将画布移出允许范围。
+ *
+ * @param value - v1/v2 本地存储中的未知四边读数对象。
+ * @returns 换算并限制后的画布坐标。
+ */
+function readLegacyCanvasPosition(value: unknown): ViewboxCanvasPosition {
+  const parsedInsets = isRecord(value) ? value : {};
+  const top = readBoundedNumber(parsedInsets.top, 0, VIEWBOX_LEGACY_CANVAS_INSET_MAX, 1, 0);
+  const right = readBoundedNumber(parsedInsets.right, 0, VIEWBOX_LEGACY_CANVAS_INSET_MAX, 1, 0);
+  const bottom = readBoundedNumber(parsedInsets.bottom, 0, VIEWBOX_LEGACY_CANVAS_INSET_MAX, 1, 0);
+  const left = readBoundedNumber(parsedInsets.left, 0, VIEWBOX_LEGACY_CANVAS_INSET_MAX, 1, 0);
+
+  return {
+    x: clampCanvasPosition((left - right) / 2),
+    y: clampCanvasPosition((top - bottom) / 2),
+  };
+}
+
+/**
  * 校验、限制并对齐缓存中的数值，避免损坏或旧版本缓存将画布推到异常比例。
  * @param value - 缓存中读取的未知数值。
  * @param minimum - 当前控件允许的最小值。
@@ -898,7 +885,7 @@ function readBoundedNumber(value: unknown, minimum: number, maximum: number, ste
  * @param stageSize - 预览舞台的当前宽高。
  * @param device - 当前选中的设备预设及其逻辑尺寸。
  * @param includeRulers - 是否为外置标尺预留顶部与左侧空间。
- * @param insets - 当前画布四边的留白，用于从可用预览面积中扣除。
+ * @param insets - 预览舞台固定的四边留白，用于从可用预览面积中扣除。
  * @returns 介于 40% 和 300% 的整数缩放比例；舞台尚未完成测量时返回 100%。
  */
 function getFittedZoom(

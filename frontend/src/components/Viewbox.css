@@ -54,7 +54,7 @@ body {
   position: relative;
   min-width: 0;
   min-height: 0;
-  transition: width 220ms ease, height 220ms ease;
+  transition: width 220ms ease, height 220ms ease, transform 220ms ease;
 }
 
 .viewbox-viewport {
