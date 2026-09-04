@@ -637,30 +637,16 @@ function AlbumDetailView({
 
       <h3 className="col-start-1 row-start-2 mt-[22.222cqw] px-4 text-sm font-semibold">曲目</h3>
       <ItemGroup className="col-start-1 row-start-3 mt-2 gap-0 px-4">
-        {detail.tracks.map((track) => (
-          <Item
+        {detail.tracks.map((track, index) => (
+          <TrackListRow
             key={track.id}
-            render={<button type="button" onClick={() => onChooseTrack(track)} aria-label={`播放《${track.title}》`} />}
-            variant={activeTrackId === track.id ? 'muted' : 'default'}
-            className="cursor-pointer rounded-none border-b px-0 py-3 last:border-b-0"
-          >
-            {/*
-              曲名区与操作区使用相同的响应式宽度：窄屏保留 120px 防止中文曲名过早截断，
-              宽屏上最多 128px。左侧图标与文字共用一列，右侧时长与播放图标分居另一列两端，
-              从而避免两端内容宽度随曲名或时长变化而产生不对称的视觉边界。
-            */}
-            <div className="flex w-[clamp(7.5rem,22.222cqw,8rem)] shrink-0 items-center gap-2.5">
-              <ItemMedia variant="icon"><Disc3 aria-hidden="true" /></ItemMedia>
-              <ItemContent className="min-w-0">
-                <ItemTitle>{track.title}</ItemTitle>
-                <ItemDescription>{artistNames(track.artists)}</ItemDescription>
-              </ItemContent>
-            </div>
-            <ItemActions className="ml-auto w-[clamp(7.5rem,22.222cqw,8rem)] shrink-0 justify-between">
-              <span className="text-xs text-muted-foreground">{formatTime(track.durationMs)}</span>
-              <Play aria-hidden="true" />
-            </ItemActions>
-          </Item>
+            track={track}
+            isActive={activeTrackId === track.id}
+            trackNumber={index + 1}
+            showDuration
+            separated
+            onChooseTrack={onChooseTrack}
+          />
         ))}
       </ItemGroup>
     </section>
