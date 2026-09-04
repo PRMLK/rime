@@ -24,6 +24,7 @@ import {
 } from '@/api/rime';
 import { AlbumArtwork, AlbumArtworkFrame, AlbumArtworkSkeleton } from '@/components/AlbumArtwork';
 import { AlbumVinylArtwork } from '@/components/AlbumVinylArtwork';
+import { RimeLogo } from '@/components/RimeLogo';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Carousel, CarouselContent, CarouselItem } from '@/components/ui/carousel';
@@ -82,6 +83,19 @@ const miniPlayerControlClassName = [
   'focus-visible:before:scale-100 focus-visible:before:opacity-100 focus-visible:before:ring-2 focus-visible:before:ring-ring/50',
   'motion-reduce:before:transition-none [&_svg]:relative [&_svg]:z-10',
 ].join(' ');
+
+/**
+ * 曲目行的状态层统一延展至主内容边缘，内容本身仍按页面的 20px 对齐。
+ * 遮罩不参与布局，也不会遮住文字和操作图标；当前播放仅提高遮罩不透明度。
+ */
+const listRowOverlayClassName = [
+  'relative isolate -mx-5 w-[calc(100%+2.5rem)] rounded-none border-0 bg-transparent',
+  'before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:bg-muted/45 before:opacity-0',
+  'before:transition-opacity before:duration-150 before:ease-out hover:bg-transparent hover:before:opacity-100',
+  'focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:before:transition-none',
+].join(' ');
+
+const activeTrackRowOverlayClassName = 'before:bg-muted/70 before:opacity-100';
 
 const libraryItems = [
   { title: '我喜欢的音乐', detail: '尚未同步' },
@@ -223,10 +237,10 @@ export function MobilePlayer() {
                       <ArrowLeft aria-hidden="true" />
                     </Button>
                   )}
-                  <div>
-                    <p className="text-xs text-muted-foreground">Rime Music</p>
-                    <h1 className="mt-1 text-xl font-semibold">{pageLabel}</h1>
+                  <div className="min-w-0 flex-1">
+                    <h1 className="text-xl font-semibold">{pageLabel}</h1>
                   </div>
+                  <RimeLogo className="shrink-0" />
                 </header>
               )}
 
@@ -993,7 +1007,7 @@ function NowPlayingDrawer({
             </div>
             <div className="flex shrink-0 flex-col items-end gap-1">
               <Tooltip>
-                <TooltipTrigger render={<Button variant={isLiked ? 'secondary' : 'ghost'} size="icon" aria-label={isLiked ? '取消喜欢' : '喜欢这首歌'} aria-pressed={isLiked} disabled={!playback.track} onClick={onToggleLike}><Heart aria-hidden="true" /></Button>} />
+                <TooltipTrigger render={<Button variant="ghost" size="icon" aria-label={isLiked ? '取消喜欢' : '喜欢这首歌'} aria-pressed={isLiked} disabled={!playback.track} onClick={onToggleLike}><Heart fill={isLiked ? 'currentColor' : 'none'} aria-hidden="true" /></Button>} />
                 <TooltipContent>{isLiked ? '取消喜欢' : '喜欢这首歌'}</TooltipContent>
               </Tooltip>
               <div className="h-5">
@@ -1056,7 +1070,14 @@ function NowPlayingDrawer({
             <span className="text-xs text-muted-foreground">{queue.length} 首</span>
           </div>
           <div className="mt-2">
-            {queue.map((track) => <QueueItem key={track.id} track={track} onChooseTrack={onChooseTrack} />)}
+            {queue.map((track) => (
+              <QueueItem
+                key={track.id}
+                track={track}
+                isActive={playback.track?.id === track.id}
+                onChooseTrack={onChooseTrack}
+              />
+            ))}
             {queue.length === 0 && <p className="py-6 text-sm text-muted-foreground">暂无曲目</p>}
           </div>
         </section>
@@ -1212,14 +1233,13 @@ function SearchView({ query, results, isSearching, error, activeTrackId, onQuery
       </div>
       <div className="mt-2">
         {error ? <p className="py-8 text-center text-sm text-destructive">{error}</p> : !isSearching && results.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">没有找到匹配的音乐</p> : results.map((track) => (
-          <Button key={track.id} variant={activeTrackId === track.id ? 'secondary' : 'ghost'} className="h-auto w-full justify-start rounded-none px-2 py-3 text-left" onClick={() => onChooseTrack(track)}>
-            <AlbumArtwork artwork={track} size="sm" />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium">{track.title}</span>
-              <span className="mt-1 block truncate text-xs text-muted-foreground">{artistLine(track)} · {track.album.title}</span>
-            </span>
-            <Play data-icon="inline-end" aria-hidden="true" />
-          </Button>
+          <TrackListRow
+            key={track.id}
+            track={track}
+            isActive={activeTrackId === track.id}
+            showAlbum
+            onChooseTrack={onChooseTrack}
+          />
         ))}
       </div>
     </section>
@@ -1232,7 +1252,7 @@ function LibraryView({ onOpenSystemSettings }: { onOpenSystemSettings: () => voi
       <h2 id="library-heading" className="text-sm font-semibold">我的音乐</h2>
       <div className="mt-3">
         {libraryItems.map((item) => (
-          <Button key={item.title} variant="ghost" className="h-auto w-full justify-start rounded-none px-0 py-4 text-left" disabled>
+          <Button key={item.title} variant="ghost" className={cn('h-auto justify-start border-b px-5 py-3 text-left last:border-b-0', listRowOverlayClassName)} disabled>
             <LibraryBig data-icon="inline-start" aria-hidden="true" />
             <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{item.title}</span><span className="mt-1 block text-xs text-muted-foreground">{item.detail}</span></span>
           </Button>
@@ -1243,7 +1263,7 @@ function LibraryView({ onOpenSystemSettings }: { onOpenSystemSettings: () => voi
       <ItemGroup className="mt-3 gap-0">
         <Item
           render={<button type="button" onClick={onOpenSystemSettings} />}
-          className="cursor-pointer rounded-none px-0 py-4 hover:bg-muted/50"
+          className={cn('cursor-pointer border-b px-5 py-3 last:border-b-0', listRowOverlayClassName)}
         >
           <ItemMedia variant="icon"><Settings aria-hidden="true" /></ItemMedia>
           <ItemContent><ItemTitle>系统设置</ItemTitle></ItemContent>
@@ -1395,13 +1415,57 @@ function ScheduledTaskList({ tasks, isLoading, error, onRunTask }: {
   );
 }
 
-function QueueItem({ track, onChooseTrack }: { track: Track; onChooseTrack: (track: Track) => void }) {
+function TrackListRow({
+  track,
+  isActive = false,
+  trackNumber,
+  showAlbum = false,
+  showDuration = false,
+  separated = false,
+  onChooseTrack,
+}: {
+  track: Track;
+  isActive?: boolean;
+  trackNumber?: number;
+  showAlbum?: boolean;
+  showDuration?: boolean;
+  separated?: boolean;
+  onChooseTrack: (track: Track) => void;
+}) {
   return (
-    <Button variant="ghost" className="h-auto w-full justify-start rounded-none border-b px-0 py-3 text-left last:border-b-0" onClick={() => onChooseTrack(track)}>
-      <AlbumArtwork artwork={track} size="sm" />
-      <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{track.title}</span><span className="mt-0.5 block truncate text-xs text-muted-foreground">{artistLine(track)}</span></span>
-    </Button>
+    <Item
+      size="xs"
+      render={<button type="button" onClick={() => onChooseTrack(track)} aria-label={isActive ? `正在播放《${track.title}》` : `播放《${track.title}》`} />}
+      variant="default"
+      aria-current={isActive ? 'true' : undefined}
+      className={cn(
+        listRowOverlayClassName,
+        isActive && activeTrackRowOverlayClassName,
+        'cursor-pointer px-5 py-2',
+        separated && 'border-b last:border-b-0',
+      )}
+    >
+      {trackNumber === undefined ? (
+        <AlbumArtwork artwork={track} size="sm" />
+      ) : (
+        <span className="w-8 shrink-0 text-xs tabular-nums text-muted-foreground">#{String(trackNumber).padStart(2, '0')}</span>
+      )}
+      <ItemContent className="gap-0.5">
+        <ItemTitle>{track.title}</ItemTitle>
+        <ItemDescription>{showAlbum ? `${artistLine(track)} · ${track.album.title}` : artistNames(track.artists)}</ItemDescription>
+      </ItemContent>
+      <ItemActions className="gap-3">
+        {showDuration && <span className="text-xs text-muted-foreground">{formatTime(track.durationMs)}</span>}
+        {isActive ? (
+          <PlaySolidIcon className="size-4" role="img" aria-label="正在播放" />
+        ) : <span className="size-4" aria-hidden="true" />}
+      </ItemActions>
+    </Item>
   );
+}
+
+function QueueItem({ track, isActive, onChooseTrack }: { track: Track; isActive: boolean; onChooseTrack: (track: Track) => void }) {
+  return <TrackListRow track={track} isActive={isActive} onChooseTrack={onChooseTrack} separated />;
 }
 
 function PlayerButton({ label, disabled, onClick, children, className }: { label: string; disabled: boolean; onClick: () => void; children: ReactNode; className?: string }) {
