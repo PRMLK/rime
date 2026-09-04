@@ -6,16 +6,15 @@ type AppScrollAreaProps = ComponentPropsWithoutRef<typeof ScrollArea>;
 
 /*
  * Base UI 会把轨道的 insetInlineEnd（行内结束侧偏移）以内联样式设为 0。
- * 该变量由全局内容框计算实际正文列宽，既考虑比例留白和安全区，也考虑 36rem
- * 最大宽度；因此不能再用单独的 36rem 公式，否则在临界宽度会产生横向跳动。
+ * 该变量由全局内容框的右侧比例留白与安全区共同计算。正文允许使用完整视口宽度，
+ * 因此不能在组件内另行引入固定最大宽度，否则宽屏会重新出现居中的窄列。
  */
 const mobileScrollbarInset = 'var(--mobile-scrollbar-inset)';
 
 /**
  * 应用页面使用的统一滚动区域。
  *
- * 使用 Base UI 的滚动状态与拖动行为，将竖向滑块悬浮在内容右侧；宽屏时对齐
- * 比例内容框的外侧留白，不占用内容宽度；
+ * 使用 Base UI 的滚动状态与拖动行为，将竖向滑块悬浮在正文右侧留白，不占用内容宽度；
  * 水平轨道始终隐藏，避免窄屏页面出现横向滚动入口。
  *
  * @param props - `ScrollArea（滚动区域）` 的根容器属性与内容。
