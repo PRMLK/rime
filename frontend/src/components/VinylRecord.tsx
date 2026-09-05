@@ -46,7 +46,16 @@ export function VinylRecord({
        * 动画的 transform（变换）覆盖外层的 -translate-y-1/2，导致唱片偏离中线。
        * motion-safe（允许动效）尊重系统的减少动态效果偏好。
        */}
-      <div className={cn('relative size-full rounded-full bg-primary', vinylRotationClassName(isPlaying))}>
+      <div
+        data-playing={isPlaying ? 'true' : undefined}
+        className="relative size-full rounded-full bg-primary motion-safe:animate-[spin_10s_linear_infinite] motion-safe:[animation-play-state:paused] motion-safe:data-[playing=true]:[animation-play-state:running]"
+      >
+        {/*
+         * 旋转动画始终挂在同一个盘面元素上，暂停时只修改 animation-play-state（动画
+         * 播放状态）。如果按 isPlaying（正在播放）移除 animation（动画）属性，浏览器
+         * 会销毁动画实例，恢复播放时只能从 0 度重新开始；data-playing（播放状态数据
+         * 属性）切换则会冻结并恢复同一个时间线，因此可准确保留暂停时的盘面角度。
+         */}
         {/* 外圈纹路用半透明边框表达唱片的压纹质感。 */}
         <div
           className={cn(
@@ -82,17 +91,4 @@ export function VinylRecord({
       </div>
     </div>
   );
-}
-
-/**
- * 返回黑胶盘面的旋转动画类。
- *
- * 动画定义留在 `VinylRecord（黑胶唱片）` 组件内，而调用方只传递当前播放状态；
- * 这样黑胶的旋转速度、无限循环和减少动态效果策略不会散落到各个页面。
- *
- * @param isPlaying 当前是否正在播放对应专辑的曲目。
- * @returns 播放中返回平滑匀速旋转类，非播放状态返回空类名。
- */
-function vinylRotationClassName(isPlaying: boolean): string {
-  return isPlaying ? 'motion-safe:animate-[spin_8s_linear_infinite]' : '';
 }
