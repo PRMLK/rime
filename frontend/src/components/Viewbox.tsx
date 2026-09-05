@@ -84,8 +84,8 @@ const VIEWBOX_RULER_TOP_SIZE = 18;
 const VIEWBOX_RULER_LEFT_SIZE = 24;
 const VIEWBOX_DEFAULT_ZOOM = 70;
 const VIEWBOX_STAGE_BASE_INSETS: ViewboxInsets = { top: 70, right: 110, bottom: 70, left: 110 };
-const VIEWBOX_CANVAS_POSITION_MIN = -500;
-const VIEWBOX_CANVAS_POSITION_MAX = 500;
+const VIEWBOX_CANVAS_POSITION_MIN = -1500;
+const VIEWBOX_CANVAS_POSITION_MAX = 1500;
 const VIEWBOX_CANVAS_POSITION_STEP = 1;
 const VIEWBOX_LEGACY_CANVAS_INSET_MAX = 3600;
 const VIEWBOX_DEFAULT_CANVAS_POSITION: ViewboxCanvasPosition = { x: 0, y: 0 };
@@ -404,7 +404,7 @@ export function Viewbox({ previewSource = import.meta.env.VITE_VIEWBOX_SRC ?? '/
   /**
    * 按摇杆传入的连续位移平移画布，并以舞台中心作为坐标原点。
    *
-   * x 轴和 y 轴均可在 -500px 至 500px 间移动；正 x 表示向右，正 y 表示向下。
+   * x 轴和 y 轴均可在 -1500px 至 1500px 间移动；正 x 表示向右，正 y 表示向下。
    * 位置通过 transform（变换）应用到视口外壳，不会挤占预览舞台的可用尺寸，
    * 因而不会影响“适配画布”的缩放计算。
    *
@@ -634,7 +634,7 @@ export function Viewbox({ previewSource = import.meta.env.VITE_VIEWBOX_SRC ?? '/
                 <span className="viewbox-control-section-label">画布位置</span>
                 <div className="viewbox-canvas-position-control">
                   <ViewboxJoystick onMove={moveCanvas} />
-                  <div className="viewbox-inset-readout" aria-label="当前画布位置，范围为正负五百像素">
+                  <div className="viewbox-inset-readout" aria-label="当前画布位置，范围为正负一千五百像素">
                     <span>上 <output>{-canvasPosition.y}px</output></span>
                     <span>右 <output>{canvasPosition.x}px</output></span>
                     <span>下 <output>{canvasPosition.y}px</output></span>
@@ -748,10 +748,10 @@ const VIEWBOX_JOYSTICK_MAX_OFFSET = 21;
 /**
  * 将单轴画布坐标限制在允许的双向移动范围内。
  *
- * 统一在状态写入前截断，避免指针高速移动或键盘连续按键使坐标越过 -500px 至 500px。
+ * 统一在状态写入前截断，避免指针高速移动或键盘连续按键使坐标越过 -1500px 至 1500px。
  *
  * @param value - 尚未限制的 x 或 y 坐标，单位为 CSS 像素。
- * @returns 位于 -500px 至 500px 范围内的整数坐标。
+ * @returns 位于 -1500px 至 1500px 范围内的整数坐标。
  */
 function clampCanvasPosition(value: number): number {
   const roundedValue = Math.round(value);
@@ -991,7 +991,7 @@ function isViewboxDevicePresetId(value: unknown): value is ViewboxDevicePresetId
 /**
  * 读取并校验 v3 本地存储中的画布坐标。
  *
- * x 轴和 y 轴以舞台中心为零点，均限制为 -500px 至 500px。损坏或缺失的字段
+ * x 轴和 y 轴以舞台中心为零点，均限制为 -1500px 至 1500px。损坏或缺失的字段
  * 会分别回退为 0，保证预览始终从可预测的位置开始渲染。
  *
  * @param value - 本地存储中读取的未知坐标对象。
