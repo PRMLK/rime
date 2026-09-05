@@ -333,6 +333,9 @@ paths:
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 50, default: 12 }
+        - name: cursor
+          in: query
+          schema: { type: string }
       responses:
         '200':
           description: Albums ordered by the most recent media library ingestion time
@@ -606,6 +609,8 @@ components:
         items:
           type: array
           items: { $ref: '#/components/schemas/Album' }
+        nextCursor: { type: string }
+        previousCursor: { type: string }
     AlbumDetail:
       allOf:
         - $ref: '#/components/schemas/Album'
@@ -670,6 +675,7 @@ components:
           type: array
           items: { $ref: '#/components/schemas/Track' }
         nextCursor: { type: string }
+        previousCursor: { type: string }
     ScheduledTask:
       type: object
       required: [id, name, status]

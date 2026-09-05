@@ -140,10 +140,14 @@ func (h *Handler) recentAlbums(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, http.StatusBadRequest, "invalid_limit", "Invalid limit", "Limit must be an integer.")
 		return
 	}
-	page, err := h.browse.RecentAlbums(r.Context(), limit)
+	page, err := h.browse.RecentAlbums(r.Context(), limit, r.URL.Query().Get("cursor"))
 	if err != nil {
 		if errors.Is(err, browse.ErrInvalidLimit) {
 			writeProblem(w, r, http.StatusBadRequest, "invalid_limit", "Invalid limit", err.Error())
+			return
+		}
+		if errors.Is(err, browse.ErrInvalidCursor) {
+			writeProblem(w, r, http.StatusBadRequest, "invalid_cursor", "Invalid cursor", "Cursor must be a value returned by this endpoint.")
 			return
 		}
 		h.logger.Error("list recent albums", "error", err)

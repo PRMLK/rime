@@ -24,6 +24,8 @@ export type Album = {
 
 export type AlbumPage = {
   items: Album[];
+  nextCursor?: string;
+  previousCursor?: string;
 };
 
 export type AlbumDetail = Album & {
@@ -87,6 +89,7 @@ export type PlaylistDetail = Playlist & {
 export type SearchPage = {
   items: Track[];
   nextCursor?: string;
+  previousCursor?: string;
 };
 
 export type LyricsLine = {
@@ -251,19 +254,30 @@ export function resetUserPassword(userId: string, password: string): Promise<voi
   return request<void>(`/api/v1/admin/users/${encodeURIComponent(userId)}/password-reset`, { method: 'POST', body: JSON.stringify({ password }) });
 }
 
-export function searchTracks(query: string, signal?: AbortSignal): Promise<SearchPage> {
+/**
+ * 搜索曲目，并按服务端游标取得指定结果页。
+ *
+ * @param query 搜索关键字；为空时返回曲库排序后的第一页。
+ * @param cursor 服务端返回的上一页或下一页游标；未提供时请求第一页。
+ * @param signal 页面离开或输入变化时用于取消旧请求的中止信号。
+ * @returns 包含曲目和双向游标的异步分页结果。
+ */
+export function searchTracks(query: string, cursor?: string, signal?: AbortSignal): Promise<SearchPage> {
   const parameters = new URLSearchParams({ query, limit: '30' });
+  if (cursor) parameters.set('cursor', cursor);
   return request<SearchPage>(`/api/v1/search?${parameters}`, { signal });
 }
 
 /**
  * 获取按入库时间倒序排列的专辑。
  * @param limit 需要返回的专辑数量，后端当前允许的范围为 1 至 50。
+ * @param cursor 服务端返回的上一页或下一页游标；未提供时请求第一页。
  * @param signal 用于在离开页面时取消未完成请求的 AbortSignal（中止信号）。
  * @returns 包含最近入库专辑的 Promise（异步结果）。
  */
-export function getRecentAlbums(limit = 12, signal?: AbortSignal): Promise<AlbumPage> {
+export function getRecentAlbums(limit = 12, cursor?: string, signal?: AbortSignal): Promise<AlbumPage> {
   const parameters = new URLSearchParams({ limit: String(limit) });
+  if (cursor) parameters.set('cursor', cursor);
   return request<AlbumPage>(`/api/v1/albums/recent?${parameters}`, { signal });
 }
 

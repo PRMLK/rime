@@ -18,6 +18,7 @@ import (
 	"golang.org/x/text/unicode/norm"
 
 	"rime/backend/internal/artwork"
+	"rime/backend/internal/browse"
 	"rime/backend/internal/catalog"
 	"rime/backend/internal/id"
 	"rime/backend/internal/library/scanner"
@@ -257,7 +258,13 @@ func (s *Store) UpdateArtworkFocus(ctx context.Context, artworkID string, focus 
 	return nil
 }
 
-func (s *Store) RecentAlbums(ctx context.Context, limit int) ([]catalog.Album, error) {
+// RecentAlbums 以稳定排序返回最近入库专辑的一页。
+// cursor 是内部偏移游标；它只能由同一接口返回的 nextCursor 或 previousCursor 提供。
+func (s *Store) RecentAlbums(ctx context.Context, limit int, cursor string) (browse.AlbumPage, error) {
+	offset, err := decodeCursor(cursor)
+	if err != nil {
+		return browse.AlbumPage{}, browse.ErrInvalidCursor
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT al.id, al.title, al.artwork_id, MAX(mf.indexed_at) AS added_at
 		FROM albums al
@@ -266,23 +273,23 @@ func (s *Store) RecentAlbums(ctx context.Context, limit int) ([]catalog.Album, e
 		WHERE mf.available = 1 AND mf.indexed_at IS NOT NULL
 		GROUP BY al.id, al.title, al.artwork_id
 		ORDER BY added_at DESC, al.normalized_title, al.id
-		LIMIT ?`, limit)
+		LIMIT ? OFFSET ?`, limit+1, offset)
 	if err != nil {
-		return nil, err
+		return browse.AlbumPage{}, err
 	}
 	defer rows.Close()
 
-	result := make([]catalog.Album, 0, limit)
+	result := make([]catalog.Album, 0, limit+1)
 	for rows.Next() {
 		var album catalog.Album
 		var artworkID sql.NullString
 		var addedAt string
 		if err := rows.Scan(&album.ID, &album.Title, &artworkID, &addedAt); err != nil {
-			return nil, err
+			return browse.AlbumPage{}, err
 		}
 		parsed, err := time.Parse(time.RFC3339Nano, addedAt)
 		if err != nil {
-			return nil, fmt.Errorf("parse album indexed time: %w", err)
+			return browse.AlbumPage{}, fmt.Errorf("parse album indexed time: %w", err)
 		}
 		album.AddedAt = parsed
 		if artworkID.Valid {
@@ -290,11 +297,23 @@ func (s *Store) RecentAlbums(ctx context.Context, limit int) ([]catalog.Album, e
 		}
 		album.Artists, err = s.albumArtists(ctx, album.ID)
 		if err != nil {
-			return nil, err
+			return browse.AlbumPage{}, err
 		}
 		result = append(result, album)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return browse.AlbumPage{}, err
+	}
+
+	page := browse.AlbumPage{Items: result}
+	if offset > 0 {
+		page.PreviousCursor = encodeCursor(max(0, offset-limit))
+	}
+	if len(page.Items) > limit {
+		page.Items = page.Items[:limit]
+		page.NextCursor = encodeCursor(offset + limit)
+	}
+	return page, nil
 }
 
 // AlbumDetail 读取一个专辑的基础资料、专辑歌手及全部可播放曲目。
@@ -712,6 +731,10 @@ func (s *Store) SearchTracks(ctx context.Context, query string, limit int, curso
 	}
 
 	page := search.Page{Items: make([]catalog.Track, 0, min(limit, len(ids)))}
+	// 当前游标描述本页起点；偏移量大于零时可确定性地回到上一个固定大小页面。
+	if offset > 0 {
+		page.PreviousCursor = encodeCursor(max(0, offset-limit))
+	}
 	if len(ids) > limit {
 		ids = ids[:limit]
 		page.NextCursor = encodeCursor(offset + limit)

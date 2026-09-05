@@ -12,7 +12,7 @@ import {
   UserIcon as UserSolidIcon,
 } from '@heroicons/react/24/solid';
 import {
-  ArrowLeft, CalendarClock, ChevronDown, ChevronRight, Disc3, Heart,
+  ArrowLeft, CalendarClock, ChevronDown, ChevronLeft, ChevronRight, Disc3, Heart,
   ListPlus, LoaderCircle, MoreHorizontal, Pause, Play, SkipBack, SkipForward, Sparkles, UserRound, Users,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode, type RefObject } from 'react';
@@ -63,6 +63,7 @@ import {
   prefersLightArtworkForegroundForPixels,
 } from '@/lib/artwork-color';
 import { cn } from '@/lib/utils';
+import { formatMobileRoute, useMobileRoute } from '@/lib/mobile-route';
 import { HtmlAudioPlayer, type PlayerSnapshot } from '@/services/player/HtmlAudioPlayer';
 
 type NavigationTab = 'home' | 'search' | 'library';
@@ -103,21 +104,36 @@ export function MobilePlayer({ user, onAuthChanged }: { user: User; onAuthChange
   const miniPlayerSurfaceRef = useRef<HTMLElement>(null);
   const miniPlayerTitleRef = useRef<HTMLSpanElement>(null);
   const miniPlayerArtistRef = useRef<HTMLSpanElement>(null);
-  const [activeTab, setActiveTab] = useState<NavigationTab>('home');
+  const [route, navigate] = useMobileRoute();
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isLiked, setIsLiked] = useState(false);
   const [isUpdatingLike, setIsUpdatingLike] = useState(false);
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>('sequence');
-  const [query, setQuery] = useState('');
   const [results, setResults] = useState<Track[]>([]);
   const [playbackQueue, setPlaybackQueue] = useState<Track[]>([]);
-  const [isSearching, setIsSearching] = useState(true);
+  const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string>();
-  const [detailStack, setDetailStack] = useState<DetailView[]>([]);
+  const [searchCursors, setSearchCursors] = useState<{ next?: string; previous?: string }>({});
   const [albumBackgroundColor, setAlbumBackgroundColor] = useState<string>();
+  const activeTab: NavigationTab = route.kind === 'tab'
+    ? route.tab
+    : route.kind === 'search'
+      ? 'search'
+      : route.kind === 'recent-albums'
+        ? 'home'
+        : route.sourceTab;
+  const query = route.kind === 'search' ? route.query : '';
+  const cursor = route.kind === 'search' ? route.cursor : undefined;
+  const recentAlbumsCursor = route.kind === 'recent-albums' ? route.cursor : undefined;
   const activeLabel = navigationItems.find((item) => item.id === activeTab)?.label ?? '首页';
-  const activeDetail = detailStack[detailStack.length - 1];
+  const activeDetail: DetailView | undefined = route.kind === 'album'
+    ? { kind: 'album', id: route.albumId }
+    : route.kind === 'artist'
+      ? { kind: 'artist', id: route.artistId }
+      : route.kind === 'recent-albums'
+        ? { kind: 'recent-albums' }
+        : undefined;
   const pageLabel = activeDetail?.kind === 'album'
     ? '专辑'
     : activeDetail?.kind === 'artist'
@@ -130,9 +146,7 @@ export function MobilePlayer({ user, onAuthChanged }: { user: User; onAuthChange
    * 不一定改变视口尺寸，因此使用当前页面身份作为 key（重建标识）强制重新挂载，
    * 防止长列表的滑块状态残留到首页等短内容页面。
    */
-  const contentScrollAreaKey = activeDetail
-    ? `${activeTab}:${activeDetail.kind}:${'id' in activeDetail ? activeDetail.id : ''}`
-    : activeTab;
+  const contentScrollAreaKey = formatMobileRoute(route);
   const isPlaying = playback.status === 'playing';
   const playbackLabel = isPlaying ? '暂停播放' : '开始播放';
   const miniPlayerArtworkColor = useAlbumArtworkAccentColor(playback.track?.artworkId);
@@ -164,12 +178,29 @@ export function MobilePlayer({ user, onAuthChanged }: { user: User; onAuthChange
   const queue = currentIndex >= 0 ? activePlaybackQueue.slice(currentIndex + 1) : activePlaybackQueue.slice(0, 3);
 
   useEffect(() => {
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => {
-      setIsSearching(true);
+    if (route.kind !== 'search') {
+      setSearchCursors({});
       setSearchError(undefined);
-      searchTracks(query.trim(), controller.signal)
-        .then((page) => setResults(page.items))
+      setIsSearching(false);
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    /*
+     * results 同时是“从搜索结果开始播放”时的默认队列。离开搜索页时不能清空它，
+     * 否则正在播放的歌曲无法自动前进；只有开始加载另一个搜索 URL 时才清空可视
+     * 列表，避免新搜索短暂展示上一组结果。
+     */
+    setResults([]);
+    setSearchCursors({});
+    setIsSearching(true);
+    setSearchError(undefined);
+    const timeout = window.setTimeout(() => {
+      searchTracks(query.trim(), cursor, controller.signal)
+        .then((page) => {
+          setResults(page.items);
+          setSearchCursors({ next: page.nextCursor, previous: page.previousCursor });
+        })
         .catch((error: unknown) => {
           if (error instanceof DOMException && error.name === 'AbortError') return;
           setSearchError(error instanceof Error ? error.message : '搜索失败');
@@ -182,7 +213,7 @@ export function MobilePlayer({ user, onAuthChanged }: { user: User; onAuthChange
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [query]);
+  }, [cursor, query, route.kind]);
 
   useEffect(() => () => player.dispose(), [player]);
 
@@ -263,40 +294,44 @@ export function MobilePlayer({ user, onAuthChanged }: { user: User; onAuthChange
   }), [chooseTrack, playback.track, playbackMode, playRelative, player]);
 
   /**
-   * 将专辑详情压入当前浏览栈，使从歌手页进入专辑后能逐层返回。
+   * 打开专辑详情，并将来源标签保存在路由中。
    * @param albumId 专辑的唯一标识。
-   * @returns 无返回值；状态更新后界面显示对应的专辑详情。
+   * @returns 无返回值；地址栏更新为可直接分享的专辑链接。
    */
   const openAlbum = useCallback((albumId: string) => {
     // 在新封面取色完成前先显示默认色，避免上一张专辑的主色短暂残留。
     setAlbumBackgroundColor(undefined);
-    setDetailStack((stack) => [...stack, { kind: 'album', id: albumId }]);
-  }, []);
+    navigate({ kind: 'album', albumId, sourceTab: activeTab });
+  }, [activeTab, navigate]);
 
   /**
-   * 将歌手详情压入当前浏览栈，使返回按钮能回到来源专辑。
+   * 打开歌手详情，并保留当前主标签作为直接链接的返回目标。
    * @param artistId 歌手的唯一标识。
-   * @returns 无返回值；状态更新后界面显示对应的歌手详情。
+   * @returns 无返回值；地址栏更新为可直接分享的歌手链接。
    */
   const openArtist = useCallback((artistId: string) => {
-    setDetailStack((stack) => [...stack, { kind: 'artist', id: artistId }]);
-  }, []);
+    navigate({ kind: 'artist', artistId, sourceTab: activeTab });
+  }, [activeTab, navigate]);
 
   /**
-   * 打开最近入库完整列表，保留首页在浏览栈中以支持返回。
-   * @returns 无返回值；状态更新后界面显示最多 50 张最近入库专辑。
+   * 打开最近入库完整列表。
+   * @returns 无返回值；地址栏更新为最近入库路由。
    */
   const openRecentAlbums = useCallback(() => {
-    setDetailStack((stack) => [...stack, { kind: 'recent-albums' }]);
-  }, []);
+    navigate({ kind: 'recent-albums' });
+  }, [navigate]);
 
   /**
-   * 关闭当前详情视图，并恢复到浏览栈中的上一页。
-   * @returns 无返回值；位于栈底时回到当前主导航页面。
+   * 关闭当前详情视图，并回到路由记录的来源主标签。
+   *
+   * 浏览器硬件返回和手势仍由 hashchange（哈希变更）监听器处理；页头按钮使用
+   * 路由中的来源标签作为兜底，因此用户直接打开详情链接时不会离开应用。
+   *
+   * @returns 无返回值；地址栏切换到来源主标签。
    */
   const closeDetail = useCallback(() => {
-    setDetailStack((stack) => stack.slice(0, -1));
-  }, []);
+    navigate({ kind: 'tab', tab: activeTab });
+  }, [activeTab, navigate]);
 
   return (
     <TooltipProvider>
@@ -309,9 +344,8 @@ export function MobilePlayer({ user, onAuthChanged }: { user: User; onAuthChange
         <Tabs
           value={activeTab}
           onValueChange={(value) => {
-            setActiveTab(value as NavigationTab);
-            setDetailStack([]);
             setAlbumBackgroundColor(undefined);
+            navigate({ kind: 'tab', tab: value as NavigationTab });
           }}
           className="relative isolate h-[100dvh] min-h-0 min-w-0 gap-0 overflow-hidden bg-background text-foreground"
           style={activeDetail?.kind === 'album' && albumBackgroundColor
@@ -363,7 +397,13 @@ export function MobilePlayer({ user, onAuthChanged }: { user: User; onAuthChange
                     />
                   )}
                   {activeDetail.kind === 'artist' && <ArtistDetailView artistId={activeDetail.id} onOpenAlbum={openAlbum} />}
-                  {activeDetail.kind === 'recent-albums' && <RecentAlbumsView onOpenAlbum={openAlbum} />}
+                  {activeDetail.kind === 'recent-albums' && (
+                    <RecentAlbumsView
+                      cursor={recentAlbumsCursor}
+                      onCursorChange={(nextCursor) => navigate({ kind: 'recent-albums', cursor: nextCursor })}
+                      onOpenAlbum={openAlbum}
+                    />
+                  )}
                 </TabsContent>
               ) : (
                 <>
@@ -374,8 +414,11 @@ export function MobilePlayer({ user, onAuthChanged }: { user: User; onAuthChange
                       results={results}
                       isSearching={isSearching}
                       error={searchError}
+                      nextCursor={searchCursors.next}
+                      previousCursor={searchCursors.previous}
                       activeTrackId={playback.track?.id}
-                      onQueryChange={setQuery}
+                      onQueryChange={(nextQuery) => navigate({ kind: 'search', query: nextQuery }, { replace: true })}
+                      onCursorChange={(nextCursor) => navigate({ kind: 'search', query, cursor: nextCursor })}
                       onChooseTrack={chooseStandaloneTrack}
                     />
                   </TabsContent>
@@ -533,7 +576,7 @@ function HomeView({
     const controller = new AbortController();
     setIsLoading(true);
     setError(undefined);
-    getRecentAlbums(12, controller.signal)
+    getRecentAlbums(12, undefined, controller.signal)
       .then((page) => setAlbums(page.items))
       .catch((loadError: unknown) => {
         if (loadError instanceof DOMException && loadError.name === 'AbortError') return;
@@ -589,20 +632,34 @@ function HomeView({
 
 /**
  * 渲染最近入库的完整专辑网格，供首页标题入口打开。
+ * @param cursor 当前 URL 路由指定的游标；未提供时加载第一页。
+ * @param onCursorChange 使用服务端游标跳转到相邻页的回调。
  * @param onOpenAlbum 收到专辑 ID 后打开对应专辑详情页的回调。
- * @returns 最近入库的加载、空状态或最多 50 张专辑的网格。
+ * @returns 最近入库的加载、空状态或当前游标对应的专辑网格。
  */
-function RecentAlbumsView({ onOpenAlbum }: { onOpenAlbum: (albumId: string) => void }) {
+function RecentAlbumsView({
+  cursor,
+  onCursorChange,
+  onOpenAlbum,
+}: {
+  cursor?: string;
+  onCursorChange: (cursor: string) => void;
+  onOpenAlbum: (albumId: string) => void;
+}) {
   const [albums, setAlbums] = useState<Album[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string>();
+  const [cursors, setCursors] = useState<{ next?: string; previous?: string }>({});
 
   useEffect(() => {
     const controller = new AbortController();
     setIsLoading(true);
     setError(undefined);
-    getRecentAlbums(50, controller.signal)
-      .then((page) => setAlbums(page.items))
+    getRecentAlbums(24, cursor, controller.signal)
+      .then((page) => {
+        setAlbums(page.items);
+        setCursors({ next: page.nextCursor, previous: page.previousCursor });
+      })
       .catch((loadError: unknown) => {
         if (loadError instanceof DOMException && loadError.name === 'AbortError') return;
         setError(loadError instanceof Error ? loadError.message : '最近入库加载失败');
@@ -611,7 +668,7 @@ function RecentAlbumsView({ onOpenAlbum }: { onOpenAlbum: (albumId: string) => v
         if (!controller.signal.aborted) setIsLoading(false);
       });
     return () => controller.abort();
-  }, []);
+  }, [cursor]);
 
   if (isLoading) {
     return (
@@ -638,6 +695,12 @@ function RecentAlbumsView({ onOpenAlbum }: { onOpenAlbum: (albumId: string) => v
       <div className="grid grid-cols-2 gap-3">
         {albums.map((album) => <AlbumCard key={album.id} album={album} onOpenAlbum={onOpenAlbum} />)}
       </div>
+      <CursorPagination
+        label="最近入库分页"
+        previousCursor={cursors.previous}
+        nextCursor={cursors.next}
+        onCursorChange={onCursorChange}
+      />
     </section>
   );
 }
@@ -1350,13 +1413,45 @@ function LyricsPanel({ track, positionMs }: { track?: Track; positionMs: number 
   );
 }
 
-function SearchView({ query, results, isSearching, error, activeTrackId, onQueryChange, onChooseTrack }: {
+/**
+ * 渲染搜索结果和由 URL 驱动的游标分页操作。
+ *
+ * 搜索词变化时父组件会替换当前路由并清除游标；翻页则创建新的历史记录。这样刷新、
+ * 复制链接与浏览器前进后退都能恢复同一批结果，而无需依赖组件内的临时页码状态。
+ *
+ * @param query 当前搜索关键字。
+ * @param results 当前游标对应的曲目集合。
+ * @param isSearching 是否正在加载当前页。
+ * @param error 当前请求的错误信息。
+ * @param nextCursor 服务端返回的下一页游标。
+ * @param previousCursor 服务端返回的上一页游标。
+ * @param activeTrackId 正在播放的曲目 ID。
+ * @param onQueryChange 更新搜索词并重置分页的回调。
+ * @param onCursorChange 使用指定游标跳转页面的回调。
+ * @param onChooseTrack 选择曲目播放的回调。
+ * @returns 搜索输入、结果列表和分页导航元素。
+ */
+function SearchView({
+  query,
+  results,
+  isSearching,
+  error,
+  nextCursor,
+  previousCursor,
+  activeTrackId,
+  onQueryChange,
+  onCursorChange,
+  onChooseTrack,
+}: {
   query: string;
   results: Track[];
   isSearching: boolean;
   error?: string;
+  nextCursor?: string;
+  previousCursor?: string;
   activeTrackId?: string;
   onQueryChange: (query: string) => void;
+  onCursorChange: (cursor: string) => void;
   onChooseTrack: (track: Track) => void;
 }) {
   return (
@@ -1380,7 +1475,67 @@ function SearchView({ query, results, isSearching, error, activeTrackId, onQuery
         ))}
         {!error && results.length > 0 && <UnifiedListFooterLogo />}
       </div>
+      {!error && !isSearching && (
+        <CursorPagination
+          label="搜索结果分页"
+          previousCursor={previousCursor}
+          nextCursor={nextCursor}
+          onCursorChange={onCursorChange}
+        />
+      )}
     </section>
+  );
+}
+
+/**
+ * CursorPagination（游标分页）提供搜索结果的前后翻页操作。
+ *
+ * 组件不解析游标、不自行加载数据，只将服务端返回的透明字符串交回路由层。这样分页
+ * 控件可复用于其他列表，并避免客户端与 API 对排序规则产生两套实现。
+ *
+ * @param previousCursor 服务端返回的上一页游标。
+ * @param nextCursor 服务端返回的下一页游标。
+ * @param onCursorChange 用户选择目标页时接收游标的回调。
+ * @returns 没有任何相邻页时返回 null，否则返回语义化分页导航。
+ */
+function CursorPagination({
+  label,
+  previousCursor,
+  nextCursor,
+  onCursorChange,
+}: {
+  label: string;
+  previousCursor?: string;
+  nextCursor?: string;
+  onCursorChange: (cursor: string) => void;
+}) {
+  if (!previousCursor && !nextCursor) return null;
+
+  return (
+    <nav className="mt-6 flex items-center justify-between gap-3" aria-label={label}>
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={!previousCursor}
+        onClick={() => {
+          if (previousCursor) onCursorChange(previousCursor);
+        }}
+      >
+        <ChevronLeft data-icon="inline-start" aria-hidden="true" />
+        上一页
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={!nextCursor}
+        onClick={() => {
+          if (nextCursor) onCursorChange(nextCursor);
+        }}
+      >
+        下一页
+        <ChevronRight data-icon="inline-end" aria-hidden="true" />
+      </Button>
+    </nav>
   );
 }
 
