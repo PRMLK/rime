@@ -11,6 +11,7 @@ import {
   Ruler,
 } from 'lucide-react';
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -25,6 +26,7 @@ import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@/componen
 import { Slider } from '@/components/ui/slider';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { mobileRouteChangeEvent } from '@/lib/mobile-route';
 import './Viewbox.css';
 
 type ViewboxDevicePresetId = 'phone-compact' | 'phone' | 'phone-tall' | 'tablet-portrait' | 'tablet-landscape';
@@ -100,6 +102,70 @@ const VIEWBOX_DEFAULT_PREFERENCES: ViewboxPreferences = {
 };
 
 /**
+ * 将哈希值规范化为移动端可识别的路由。
+ *
+ * @param hash - 原始哈希值，可为空或缺少 `#/` 前缀。
+ * @returns 以 `#/` 开头的路由；无效值会回退至首页。
+ */
+function normalizePreviewRouteHash(hash: string): string {
+  return hash.startsWith('#/') ? hash : '#/home';
+}
+
+/**
+ * 从预览页面地址中提取初始移动端路由。
+ *
+ * @param previewSource - iframe（内嵌预览页）原始地址。
+ * @returns 地址中已有的路由，或首页路由。
+ */
+function getPreviewRouteFromSource(previewSource: string): string {
+  const hashIndex = previewSource.indexOf('#');
+  return normalizePreviewRouteHash(hashIndex === -1 ? '' : previewSource.slice(hashIndex));
+}
+
+/**
+ * 将移动端路由附加到预览页面地址。
+ *
+ * @param previewSource - 不含或包含旧哈希的预览页面地址。
+ * @param routeHash - 需要写入的新移动端哈希路由。
+ * @returns 可直接赋给 iframe `src` 的完整地址。
+ */
+function createPreviewSource(previewSource: string, routeHash: string): string {
+  const hashIndex = previewSource.indexOf('#');
+  const sourceWithoutHash = hashIndex === -1 ? previewSource : previewSource.slice(0, hashIndex);
+  return `${sourceWithoutHash}${normalizePreviewRouteHash(routeHash)}`;
+}
+
+/**
+ * 读取同源预览页当前的哈希路由。
+ *
+ * 当预览地址跨域时，浏览器会拒绝读取 iframe 的 `location`；此时返回 `undefined`，
+ * 编辑器仍可把外层路由传入预览页，但不会尝试反向读取子页状态。
+ *
+ * @param frame - 预览 iframe 元素。
+ * @returns 规范化后的移动端路由；不可读取时返回 `undefined`。
+ */
+function readFrameRouteHash(frame: HTMLIFrameElement | null): string | undefined {
+  try {
+    const frameWindow = frame?.contentWindow;
+    return frameWindow ? normalizePreviewRouteHash(frameWindow.location.hash) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 判断页面地址栏是否已有合法的移动端哈希路由。
+ *
+ * @param previewSource - 预览页面原始地址，用于在地址栏为空时提供回退值。
+ * @returns 外层编辑器应使用的初始移动端路由。
+ */
+function getEditorRoute(previewSource: string): string {
+  return window.location.hash.startsWith('#/')
+    ? normalizePreviewRouteHash(window.location.hash)
+    : getPreviewRouteFromSource(previewSource);
+}
+
+/**
  * 提供独立于移动端播放器的响应式预览与视觉检查工具。
  *
  * 该组件只控制 iframe（内嵌预览页）的显示尺寸和辅助叠层，不读取或修改
@@ -112,6 +178,8 @@ const VIEWBOX_DEFAULT_PREFERENCES: ViewboxPreferences = {
  */
 export function Viewbox({ previewSource = import.meta.env.VITE_VIEWBOX_SRC ?? '/mobile.html' }: ViewboxProps) {
   const stageRef = useRef<HTMLElement>(null);
+  const previewFrameRef = useRef<HTMLIFrameElement>(null);
+  const frameListenerCleanupRef = useRef<(() => void) | undefined>(undefined);
   const initialPreferencesRef = useRef<ViewboxPreferences | null>(null);
   if (initialPreferencesRef.current === null) {
     initialPreferencesRef.current = readViewboxPreferences();
@@ -126,6 +194,8 @@ export function Viewbox({ previewSource = import.meta.env.VITE_VIEWBOX_SRC ?? '/
   const [manualZoom, setManualZoom] = useState(initialPreferences.manualZoom);
   const [canvasPosition, setCanvasPosition] = useState<ViewboxCanvasPosition>(initialPreferences.canvasPosition);
   const [reloadGeneration, setReloadGeneration] = useState(0);
+  const [previewRouteHash, setPreviewRouteHash] = useState(() => getEditorRoute(previewSource));
+  const [frameSource, setFrameSource] = useState(() => createPreviewSource(previewSource, getEditorRoute(previewSource)));
   const [showRuler, setShowRuler] = useState(initialPreferences.showRuler);
   const [showGrid, setShowGrid] = useState(initialPreferences.showGrid);
   const device = useMemo(
@@ -171,6 +241,62 @@ export function Viewbox({ previewSource = import.meta.env.VITE_VIEWBOX_SRC ?? '/
     });
   }, [canvasPosition, deviceId, manualZoom, showGrid, showRuler, zoomMode]);
 
+  /**
+   * 将预览页路由写入编辑器地址栏。
+   *
+   * 搜索输入通过 replaceState（替换历史）更新时，不应为每个字符新增一条历史记录；
+   * 其他跳转继续使用浏览器原生哈希历史，确保编辑器页的前进和后退可以控制预览页。
+   *
+   * @param routeHash - 来自预览页的规范化哈希路由。
+   * @param replace - 是否替换当前编辑器历史记录。
+   * @returns 无返回值。
+   */
+  const writeEditorRoute = useCallback((routeHash: string, replace: boolean) => {
+    const nextRouteHash = normalizePreviewRouteHash(routeHash);
+    setPreviewRouteHash(nextRouteHash);
+    if (window.location.hash === nextRouteHash) return;
+
+    if (replace) {
+      window.history.replaceState(window.history.state, '', nextRouteHash);
+      return;
+    }
+
+    window.location.hash = nextRouteHash;
+  }, []);
+
+  useEffect(() => {
+    const nextRouteHash = getEditorRoute(previewSource);
+    setPreviewRouteHash(nextRouteHash);
+    setFrameSource(createPreviewSource(previewSource, nextRouteHash));
+  }, [previewSource]);
+
+  useEffect(() => {
+    /**
+     * 响应编辑器自身的前进、后退或直达哈希链接。
+     *
+     * 仅在子页面确实处于不同路由时更新 iframe src，避免移动端主动跳转后被
+     * 父页面重新加载，进而丢失播放队列等仅存在于内存中的状态。
+     */
+    const syncFrameFromEditor = () => {
+      const nextRouteHash = getEditorRoute(previewSource);
+      setPreviewRouteHash(nextRouteHash);
+      if (readFrameRouteHash(previewFrameRef.current) !== nextRouteHash) {
+        setFrameSource(createPreviewSource(previewSource, nextRouteHash));
+      }
+    };
+
+    window.addEventListener('hashchange', syncFrameFromEditor);
+    window.addEventListener('popstate', syncFrameFromEditor);
+    return () => {
+      window.removeEventListener('hashchange', syncFrameFromEditor);
+      window.removeEventListener('popstate', syncFrameFromEditor);
+    };
+  }, [previewSource]);
+
+  useEffect(() => {
+    return () => frameListenerCleanupRef.current?.();
+  }, []);
+
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return undefined;
@@ -205,8 +331,54 @@ export function Viewbox({ previewSource = import.meta.env.VITE_VIEWBOX_SRC ?? '/
    * @returns 无返回值；刷新会清空预览页中的临时状态，但不会影响外层工具设置。
    */
   const reloadPreview = () => {
+    setFrameSource(createPreviewSource(previewSource, previewRouteHash));
     setReloadGeneration((generation) => generation + 1);
   };
+
+  /**
+   * 在 iframe 加载完成后建立同源双向路由同步。
+   *
+   * 子页普通导航会触发 hashchange（哈希变化）；搜索输入使用 replaceState（替换历史），
+   * 则由 mobileRouteChangeEvent（移动端路由变化事件）补充通知。跨域预览无法读取子页
+   * 地址栏时会自动降级为单向同步，不影响预览页面加载。
+   *
+   * @returns 无返回值；监听器会在 iframe 重载或组件卸载时清理。
+   */
+  const handlePreviewLoad = useCallback(() => {
+    frameListenerCleanupRef.current?.();
+    frameListenerCleanupRef.current = undefined;
+
+    const frame = previewFrameRef.current;
+    const frameWindow = frame?.contentWindow;
+    if (!frame || !frameWindow || readFrameRouteHash(frame) === undefined) return;
+
+    /**
+     * 把子页当前路由同步到编辑器地址栏。
+     * @param event - 可选的子页路由事件，用于识别是否替换历史。
+     * @param replaceFallback - 首次加载时使用替换，避免编辑器初始化额外新增历史记录。
+     * @returns 无返回值。
+     */
+    const syncEditorFromFrame = (event?: Event, replaceFallback = false) => {
+      const routeHash = readFrameRouteHash(frame);
+      if (!routeHash) return;
+      const detail = (event as CustomEvent<{ replace?: unknown }> | undefined)?.detail;
+      writeEditorRoute(routeHash, detail?.replace === true || replaceFallback);
+    };
+
+    try {
+      frameWindow.addEventListener('hashchange', syncEditorFromFrame);
+      frameWindow.addEventListener('popstate', syncEditorFromFrame);
+      frameWindow.addEventListener(mobileRouteChangeEvent, syncEditorFromFrame);
+      frameListenerCleanupRef.current = () => {
+        frameWindow.removeEventListener('hashchange', syncEditorFromFrame);
+        frameWindow.removeEventListener('popstate', syncEditorFromFrame);
+        frameWindow.removeEventListener(mobileRouteChangeEvent, syncEditorFromFrame);
+      };
+      syncEditorFromFrame(undefined, true);
+    } catch {
+      // 跨域 iframe 无法监听子页面事件，保留外层路由驱动预览页的能力。
+    }
+  }, [writeEditorRoute]);
 
   /**
    * 切换预览设备并恢复“适配画布”缩放。
@@ -283,10 +455,12 @@ export function Viewbox({ previewSource = import.meta.env.VITE_VIEWBOX_SRC ?? '/
               <div className="viewbox-viewport" role="region" aria-label={viewportLabel} style={viewportStyle}>
                 <iframe
                   key={reloadGeneration}
+                  ref={previewFrameRef}
                   className="viewbox-frame"
                   title={viewportLabel}
-                  src={previewSource}
+                  src={frameSource}
                   allow="autoplay"
+                  onLoad={handlePreviewLoad}
                 />
                 <ViewboxOverlays showGrid={showGrid} />
               </div>

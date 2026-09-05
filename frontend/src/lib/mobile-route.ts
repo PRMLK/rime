@@ -18,6 +18,24 @@ export type MobileRoute =
   | { kind: 'artist'; artistId: string; sourceTab: MobileTab };
 
 /**
+ * 移动端路由变化事件名称。
+ *
+ * 原生 `hashchange`（哈希变化）无法感知 `history.replaceState`（替换历史）
+ * 对地址栏的更新，因此编辑器外层页面通过该事件同步 iframe（内嵌预览页）的路由。
+ */
+export const mobileRouteChangeEvent = 'rime:mobile-route-change';
+
+/**
+ * 移动端路由变化事件的附加数据。
+ */
+export interface MobileRouteChangeDetail {
+  /** 规范化后的哈希路由，例如 `#/search?q=Rime`。 */
+  hash: string;
+  /** 是否使用替换历史的方式更新，避免搜索输入产生大量历史记录。 */
+  replace: boolean;
+}
+
+/**
  * 从 location.hash（地址哈希）读取当前移动端页面。
  *
  * 解析时始终回退到首页，避免手工输入错误链接后使应用进入不可恢复状态。cursor
@@ -80,6 +98,22 @@ export function formatMobileRoute(route: MobileRoute): string {
 }
 
 /**
+ * 广播当前移动端路由，供同源编辑器预览页同步地址栏。
+ *
+ * @param route - 将要发布的移动端路由。
+ * @param replace - 是否以替换当前历史记录的方式完成本次跳转。
+ * @returns 无返回值。
+ */
+function publishMobileRouteChange(route: MobileRoute, replace: boolean): void {
+  const detail: MobileRouteChangeDetail = {
+    hash: formatMobileRoute(route),
+    replace,
+  };
+
+  window.dispatchEvent(new CustomEvent<MobileRouteChangeDetail>(mobileRouteChangeEvent, { detail }));
+}
+
+/**
  * useMobileRoute（移动端路由 Hook）将哈希地址与 React 状态保持同步。
  *
  * 输入搜索词时调用者可传入 replace，避免每一次键入都占用浏览器历史；用户点击
@@ -92,7 +126,11 @@ export function useMobileRoute(): [MobileRoute, (route: MobileRoute, options?: {
 
   useEffect(() => {
     /** 地址由浏览器前进后退改变时，重新解析并更新界面。 */
-    const syncRoute = () => setRoute(parseMobileRoute(window.location.hash));
+    const syncRoute = () => {
+      const nextRoute = parseMobileRoute(window.location.hash);
+      setRoute(nextRoute);
+      publishMobileRouteChange(nextRoute, false);
+    };
     window.addEventListener('hashchange', syncRoute);
     window.addEventListener('popstate', syncRoute);
     return () => {
@@ -109,6 +147,7 @@ export function useMobileRoute(): [MobileRoute, (route: MobileRoute, options?: {
       // history.replaceState 不会触发 hashchange，因此同步更新 React 状态。
       window.history.replaceState({ rimeMobileRoute: true }, '', nextHash);
       setRoute(nextRoute);
+      publishMobileRouteChange(nextRoute, true);
       return;
     }
 
