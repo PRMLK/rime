@@ -98,6 +98,19 @@ const miniPlayerPrimaryControlClassName = [
 
 const miniPlayerTextToneCache = new Map<string, boolean>();
 
+/**
+ * 首页最近入库轮播单项的响应式边长变量。
+ *
+ * 轮播项优先保持内容轨道 40% 的既有密度；`30cqh`（容器查询高度）与
+ * `AlbumDetailHero（专辑详情头图）` 一样读取 `.mobile-content-scroll`
+ * 的可用高度，使横屏时封面不会仅因屏幕较宽而无限放大。8rem 下限确保紧凑
+ * 横屏仍有可辨识的封面和标题，20rem 上限则限制平板与桌面上的单张视觉权重。
+ * 变量定义在 `HomeView（首页视图）` 根节点，加载骨架和真实的 Carousel（轮播）
+ * 项目都从同一来源读取，异步状态切换不会改变封面尺寸。
+ */
+const homeRecentAlbumCardSizeVariableClassName =
+  '[--home-recent-album-card-size:clamp(8rem,min(40%,30cqh),20rem)]';
+
 export function MobilePlayer({ user, onAuthChanged }: { user: User; onAuthChanged: () => void }) {
   const player = useMemo(() => new HtmlAudioPlayer(), []);
   const playback = useSyncExternalStore(player.subscribe, player.getSnapshot);
@@ -589,7 +602,7 @@ function HomeView({
   }, []);
 
   return (
-    <section className="mt-8" aria-labelledby="recent-albums-heading">
+    <section className={cn('mt-8', homeRecentAlbumCardSizeVariableClassName)} aria-labelledby="recent-albums-heading">
       {/* 主导航页面统一在页头下保留 2rem 间距，与各详情页保持一致。 */}
       <h2 id="recent-albums-heading">
         <Button variant="ghost" className="h-auto gap-0 p-0 text-sm font-semibold" onClick={onOpenRecentAlbums}>
@@ -600,7 +613,7 @@ function HomeView({
       {isLoading ? (
         <div className="mt-3 flex gap-3 overflow-hidden" role="status" aria-label="正在加载最近入库的专辑">
           {[0, 1, 2, 3].map((item) => (
-            <div key={item} className="w-2/5 shrink-0">
+            <div key={item} className="w-[var(--home-recent-album-card-size)] shrink-0">
               <AlbumArtworkSkeleton className="aspect-square w-full" />
               <Skeleton className="mt-3 h-3 w-4/5" />
               <Skeleton className="mt-2 h-3 w-3/5" />
@@ -619,7 +632,7 @@ function HomeView({
         <Carousel className="mt-3" opts={{ align: 'start', dragFree: true, containScroll: 'trimSnaps' }} aria-label="最近入库专辑" tabIndex={0}>
           <CarouselContent className="-ml-3">
             {albums.map((album) => (
-              <CarouselItem key={album.id} className="basis-2/5 pl-3">
+              <CarouselItem key={album.id} className="basis-[var(--home-recent-album-card-size)] pl-3">
                 <AlbumCard album={album} onOpenAlbum={onOpenAlbum} />
               </CarouselItem>
             ))}
