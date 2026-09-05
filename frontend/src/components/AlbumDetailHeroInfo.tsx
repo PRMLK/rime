@@ -47,20 +47,22 @@ export function AlbumDetailHeroInfo({
         <AlbumDetailHeroArtistLinks artists={album.artists} onOpenArtist={onOpenArtist} />
         <AlbumDetailHeroDescriptionEntry description={album.description} />
       </div>
-      <div className="mt-[0.694cqw] flex min-w-0 items-center gap-[1.389cqw]">
+      <div className="mt-[1.389cqw] flex min-w-0 items-center gap-[1.111cqw]">
         {/*
-          标题以 5cqw 缩放；图标同样以头图容器宽度为基准，主播放使用 4.167cqw，
-          次要操作使用 3.333cqw。播放按钮的圆角以 2.083cqw 同步缩放，圆形次要
-          按钮则由 rounded-full（50% 半径）天然保持自适应，整体保留主次操作差异。
+          专辑操作使用不透明的 album-action（专辑操作色）语义令牌，并与页面背景共享封面色：
+          播放保留较深基底，收藏与更多保留较浅基底，换专辑时三者会随封面同步变色，同时
+          不会退回黑色、白色或透明底面。图标按钮不显示 Tooltip（提示气泡）文字，操作名称
+          仅由 aria-label（辅助技术标签）提供给读屏软件，避免遮挡专辑信息。
         */}
         <Button
+          variant="album-primary"
           size="icon"
-          className="size-[9.722cqw] rounded-[2.083cqw]"
+          className="size-[8.333cqw] shrink-0 rounded-lg"
           aria-label="全部播放"
           disabled={album.tracks.length === 0}
           onClick={() => onPlayAll(album.tracks)}
         >
-          <Play className="size-[4.167cqw]" data-icon="inline-start" aria-hidden="true" />
+          <Play className="size-[3.472cqw]" data-icon="inline-start" aria-hidden="true" />
         </Button>
         <AlbumDetailHeroUnavailableAction icon={Heart} label="收藏专辑" />
         <AlbumDetailHeroUnavailableAction icon={Ellipsis} label="更多操作" />
@@ -153,8 +155,8 @@ function AlbumDetailHeroArtistLinks({
  * @param props - 图标与操作名称。
  * @param props.icon - 用于该不可用操作的 Lucide 图标组件。
  * @param props.label - 面向辅助技术的操作名称。
- * 图标以 3.333cqw 随 `AlbumDetailHero（专辑详情头图）` 缩放，避免外层圆形按钮
- * 放大或缩小时仍保留固定像素图标。
+ * 图标以 2.778cqw 随 `AlbumDetailHero（专辑详情头图）` 缩放；辅助按钮略小于主播放
+ * 按钮，使用户优先识别“播放全部”，但仍保持清晰可辨的图标比例。
  *
  * @returns 可点击但当前不产生副作用的次要圆形图标按钮。
  */
@@ -167,13 +169,13 @@ function AlbumDetailHeroUnavailableAction({
 }) {
   return (
     <Button
-      variant="outline"
+      variant="album-secondary"
       size="icon"
-      className="size-[8.333cqw] rounded-full bg-transparent"
+      className="size-[6.944cqw] shrink-0 rounded-full"
       aria-label={label}
       onClick={handleReservedAlbumAction}
     >
-      <Icon className="size-[3.333cqw]" data-icon="inline-start" aria-hidden="true" />
+      <Icon className="size-[2.778cqw]" data-icon="inline-start" aria-hidden="true" />
     </Button>
   );
 }

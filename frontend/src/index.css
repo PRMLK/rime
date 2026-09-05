@@ -47,6 +47,10 @@
     --color-card: var(--card);
     --color-foreground: var(--foreground);
     --color-background: var(--background);
+    --color-album-action-primary: var(--album-action-primary);
+    --color-album-action-primary-foreground: var(--album-action-primary-foreground);
+    --color-album-action-secondary: var(--album-action-secondary);
+    --color-album-action-secondary-foreground: var(--album-action-secondary-foreground);
     --radius-sm: calc(var(--radius) * 0.6);
     --radius-md: calc(var(--radius) * 0.8);
     --radius-lg: var(--radius);
@@ -89,6 +93,23 @@
     --sidebar-accent-foreground: oklch(0.205 0 0);
     --sidebar-border: oklch(0.922 0 0);
     --sidebar-ring: oklch(0.708 0 0);
+    /*
+     * 操作色与页面背景共用 --album-page-artwork-color（专辑页封面色）：换专辑时色相会
+     * 随封面同步变化。固定的暖红色基底限制明度，避免深色封面推回近黑、浅色封面推回
+     * 近白；两种按钮底色始终是不透明的。语义令牌由 Button（按钮）变体统一消费。
+     */
+    --album-action-primary: color-mix(
+      in oklch,
+      var(--album-page-artwork-color, var(--album-page-background-start)) 30%,
+      oklch(0.27 0.08 10)
+    );
+    --album-action-primary-foreground: oklch(0.985 0.004 165);
+    --album-action-secondary: color-mix(
+      in oklch,
+      var(--album-page-artwork-color, var(--album-page-background-start)) 26%,
+      oklch(0.78 0.055 10)
+    );
+    --album-action-secondary-foreground: oklch(0.24 0.04 10);
     --album-page-background-start: oklch(0.968 0.016 8);
     --album-page-background-middle: oklch(0.985 0.009 350);
     /*
@@ -144,6 +165,18 @@
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.556 0 0);
+    --album-action-primary: color-mix(
+      in oklch,
+      var(--album-page-artwork-color, var(--album-page-background-start)) 28%,
+      oklch(0.5 0.1 10)
+    );
+    --album-action-primary-foreground: oklch(0.18 0.025 10);
+    --album-action-secondary: color-mix(
+      in oklch,
+      var(--album-page-artwork-color, var(--album-page-background-start)) 24%,
+      oklch(0.4 0.06 10)
+    );
+    --album-action-secondary-foreground: oklch(0.94 0.025 10);
     --album-page-background-start: oklch(0.24 0.014 8);
     --album-page-background-middle: oklch(0.22 0.01 350);
 }

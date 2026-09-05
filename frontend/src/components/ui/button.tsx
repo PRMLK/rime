@@ -9,6 +9,11 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default: "bg-primary text-primary-foreground hover:bg-primary/80",
+        // 专辑头图操作与页面背景共享封面色，底色始终保持不透明。
+        "album-primary":
+          "bg-album-action-primary text-album-action-primary-foreground hover:brightness-95",
+        "album-secondary":
+          "bg-album-action-secondary text-album-action-secondary-foreground hover:brightness-95",
         outline:
           "border-border bg-background hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50",
         secondary:
@@ -31,6 +36,9 @@ const buttonVariants = cva(
         "icon-sm":
           "size-7 rounded-[min(var(--radius-md),12px)] in-data-[slot=button-group]:rounded-lg",
         "icon-lg": "size-9",
+        // PageHeader（页面顶部栏）提供容器查询基准。箭头画布、按钮点击区与标题按同一比例伸缩，
+        // clamp（限幅）确保窄屏不挤压、宽屏不无限放大；仅左移 SVG 的透明留白，按钮外框不偏移。
+        "navigation-icon": "h-[clamp(1.75rem,3.5cqw,2.45rem)] w-[clamp(4.286rem,8.571cqw,6rem)] justify-start p-0 [&_svg:not([class*='size-'])]:-ml-[clamp(0.893rem,1.786cqw,1.25rem)] [&_svg:not([class*='size-'])]:h-[clamp(2.143rem,4.286cqw,3rem)] [&_svg:not([class*='size-'])]:w-[clamp(4.286rem,8.571cqw,6rem)]",
       },
     },
     defaultVariants: {

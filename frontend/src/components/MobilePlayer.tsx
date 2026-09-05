@@ -301,6 +301,11 @@ export function MobilePlayer({ user, onAuthChanged }: { user: User; onAuthChange
   return (
     <TooltipProvider>
       <Drawer open={isPlayerOpen} onOpenChange={setIsPlayerOpen} swipeDirection="down">
+        {/*
+         * 封面色放在 Tabs（标签页容器）而不是背景兄弟节点上，使页头、详情内容中的
+         * album-action（专辑操作色）令牌都能继承同一颜色。离开专辑页时移除该变量，
+         * 各组件将自动回退到自身主题默认值。
+         */}
         <Tabs
           value={activeTab}
           onValueChange={(value) => {
@@ -309,6 +314,9 @@ export function MobilePlayer({ user, onAuthChanged }: { user: User; onAuthChange
             setAlbumBackgroundColor(undefined);
           }}
           className="relative isolate h-[100dvh] min-h-0 min-w-0 gap-0 overflow-hidden bg-background text-foreground"
+          style={activeDetail?.kind === 'album' && albumBackgroundColor
+            ? { '--album-page-artwork-color': albumBackgroundColor } as CSSProperties
+            : undefined}
         >
           {/*
            * 根布局固定为“页头 / 内容 / 底部”三段：页头与底部均不参与压缩，
@@ -324,9 +332,6 @@ export function MobilePlayer({ user, onAuthChanged }: { user: User; onAuthChange
               aria-hidden="true"
               className="album-page-background pointer-events-none absolute inset-0 z-0"
               data-artwork-color={albumBackgroundColor ? '' : undefined}
-              style={albumBackgroundColor
-                ? { '--album-page-artwork-color': albumBackgroundColor } as CSSProperties
-                : undefined}
             />
           )}
 

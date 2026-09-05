@@ -34,18 +34,22 @@ export function PageHeader({ title, showBackButton = false, onBack, className }:
   const isTitleVisible = !canGoBack;
 
   return (
-    <header className={cn('grid min-w-0 grid-cols-[2.5rem_minmax(0,1fr)_2.5rem] items-center', className)}>
+    <header className={cn('@container/page-header grid min-w-0 grid-cols-[clamp(4.286rem,8.571cqw,6rem)_minmax(0,1fr)_clamp(4.286rem,8.571cqw,6rem)] items-center', className)}>
       {canGoBack && (
-        <Button variant="ghost" size="sm" className="col-start-1 row-start-1 w-10 justify-start px-0" aria-label="返回上一页" onClick={onBack}>
-          {/* 40×28px 与 text-xl（20px）双中文字的默认排版框一致；仅横向拉长箭头以提升识别度。 */}
-          <ArrowLeft className="origin-left scale-x-110" aria-hidden="true" />
+        <Button variant="ghost" size="navigation-icon" className="col-start-1 row-start-1" aria-label="返回上一页" onClick={onBack}>
+          {/*
+           * 页头本身是容器查询基准。按钮外框从内容轨道起排，导航图标规格与两侧网格
+           * 使用相同宽度公式；Lucide 箭头画布的透明左边距只在按钮内补偿，实际尖端、
+           * 按钮外框和首页标题始终共用同一条左对齐线。
+           */}
+          <ArrowLeft data-icon="inline-start" strokeWidth={2.5} aria-hidden="true" />
         </Button>
       )}
-      {/* 两端固定为 40px，避免返回按钮、标题或品牌标识的自然宽度推动彼此的位置。 */}
+      {/* 两端列按容器宽度在 68.6 至 96px 内伸缩，标题或品牌标识不会推动彼此的位置。 */}
       <div className="col-start-1 row-start-1 min-w-0">
-        {isTitleVisible && <h1 className="text-xl font-semibold">{title}</h1>}
+        {isTitleVisible && <h1 className="text-[clamp(1.25rem,2.5cqw,1.75rem)] leading-[clamp(1.75rem,3.5cqw,2.45rem)] font-semibold">{title}</h1>}
       </div>
-      <RimeLogo className="col-start-3 row-start-1 justify-self-end" />
+      <RimeLogo className="col-start-3 row-start-1 justify-self-end text-[clamp(0.875rem,1.75cqw,1.25rem)]" />
     </header>
   );
 }
