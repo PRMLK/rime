@@ -227,6 +227,12 @@
     container-type: size;
   }
 
+  /* 列数由 ArtistAlbumGrid（歌手专辑网格）写入的局部变量驱动，所有列平分余宽。 */
+  .artist-album-grid {
+    display: grid;
+    grid-template-columns: repeat(var(--artist-album-grid-columns, 2), minmax(0, 1fr));
+  }
+
   /* 底部导航保留全宽背景，但按钮区域必须避开横屏设备的两侧安全区。 */
   .mobile-navigation {
     padding-inline-start: max(0.5rem, env(safe-area-inset-left, 0px));

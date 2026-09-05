@@ -111,6 +111,12 @@ const miniPlayerTextToneCache = new Map<string, boolean>();
 const homeRecentAlbumCardSizeVariableClassName =
   '[--home-recent-album-card-size:clamp(8rem,min(40%,30cqh),20rem)]';
 
+/** 单张歌手专辑封面允许达到的最大边长，超过后才增加一列。 */
+const artistAlbumCardMaximumSizeInRem = 14;
+
+/** 歌手专辑网格在任何宽度下都至少保留两列。 */
+const artistAlbumGridMinimumColumns = 2;
+
 export function MobilePlayer({ user, onAuthChanged }: { user: User; onAuthChanged: () => void }) {
   const player = useMemo(() => new HtmlAudioPlayer(), []);
   const playback = useSyncExternalStore(player.subscribe, player.getSnapshot);
@@ -1035,7 +1041,7 @@ function ArtistDetailView({ artistId, onOpenAlbum }: { artistId: string; onOpenA
     return () => controller.abort();
   }, [artistId]);
 
-  if (isLoading) return <DetailLoading label="正在加载歌手" />;
+  if (isLoading) return <ArtistDetailLoading />;
   if (error || !detail) return <DetailEmpty title="歌手加载失败" description={error ?? '未找到可播放的作品'} />;
 
   return (
@@ -1053,33 +1059,113 @@ function ArtistDetailView({ artistId, onOpenAlbum }: { artistId: string; onOpenA
 
       <Separator className="my-6" />
       <h3 className="text-sm font-semibold">专辑</h3>
-      <div className="mt-3 grid grid-cols-2 gap-3">
+      <ArtistAlbumGrid>
         {detail.albums.map((album) => <AlbumCard key={album.id} album={album} onOpenAlbum={onOpenAlbum} />)}
-      </div>
+      </ArtistAlbumGrid>
     </section>
   );
 }
 
 /**
- * 渲染详情页请求期间的固定尺寸骨架屏，避免内容加载后发生布局跳动。
- * @param label 供辅助技术读取的加载状态说明。
- * @returns 详情页骨架屏的 React 元素。
+ * 渲染歌手详情请求期间的自适应骨架屏。
+ *
+ * 骨架中的头像、歌手资料和专辑网格与 ArtistDetailView（歌手详情视图）的正式
+ * 结构一一对应。专辑占位复用与正式列表相同的 ArtistAlbumGrid（歌手专辑网格）
+ * 布局，横竖屏切换或异步数据返回都不会改变网格项的尺寸。
+ *
+ * @returns 带有歌手资料和响应式专辑网格的加载状态元素。
  */
-function DetailLoading({ label }: { label: string }) {
+function ArtistDetailLoading() {
   return (
-    <section className="mt-8" aria-label={label} role="status">
-      <div className="flex items-start gap-4">
-        <Skeleton className="size-32 shrink-0 rounded-md" />
-        <div className="flex flex-1 flex-col gap-3 pt-1">
+    <section className="mt-8" aria-label="正在加载歌手" role="status">
+      <div className="flex items-center gap-3">
+        <Skeleton className="size-14 shrink-0 rounded-md" />
+        <div className="flex min-w-0 flex-col gap-1">
           <Skeleton className="h-3 w-12" />
-          <Skeleton className="h-6 w-4/5" />
-          <Skeleton className="h-4 w-2/5" />
+          <Skeleton className="h-6 w-40 max-w-full" />
+          <Skeleton className="h-4 w-16" />
         </div>
       </div>
-      <div className="mt-8 flex flex-col gap-1">
-        {[0, 1, 2, 3].map((item) => <Skeleton key={item} className="h-14 w-full" />)}
-      </div>
+      <Separator className="my-6" />
+      <Skeleton className="h-3 w-12" />
+      <ArtistAlbumGrid>
+        {[0, 1, 2, 3].map((item) => (
+          <div key={item}>
+            <AlbumArtworkSkeleton className="aspect-square w-full" />
+            <Skeleton className="mt-2 h-3 w-4/5" />
+            <Skeleton className="mt-1 h-3 w-3/5" />
+          </div>
+        ))}
+      </ArtistAlbumGrid>
     </section>
+  );
+}
+
+/**
+ * 根据实际网格宽度计算“封面不超过上限时的最少列数”。
+ *
+ * 若网格宽度为 `W`、列间距为 `G`、单张封面最大边长为 `M`，每列宽度需满足
+ * `(W - (N - 1) * G) / N <= M`。整理后得到
+ * `N >= (W + G) / (M + G)`，故取上整即可：两列达到 `M` 才变三列，三列达到
+ * `M` 才变四列。通过 ResizeObserver（尺寸观察器）跟踪实际 CSS 容器宽度，安全区、
+ * 页面留白和画布缩放都会自然纳入计算，不需要维护有限个视口断点。
+ *
+ * @param gridRef 指向专辑网格根元素的 React 引用。
+ * @returns 当前容器宽度下满足封面最大边长的最少列数，至少为两列。
+ */
+function useArtistAlbumGridColumns(gridRef: RefObject<HTMLDivElement | null>): number {
+  const [columns, setColumns] = useState(artistAlbumGridMinimumColumns);
+
+  useEffect(() => {
+    const grid = gridRef.current;
+    if (!grid) return;
+
+    /** 读取浏览器最终布局值，避免将 Tailwind 的 rem 间距或页面缩放写死为像素。 */
+    const updateColumns = () => {
+      const rootFontSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
+      const gridGap = Number.parseFloat(getComputedStyle(grid).columnGap);
+      const maximumArtworkSize = rootFontSize * artistAlbumCardMaximumSizeInRem;
+
+      if (grid.clientWidth <= 0 || !Number.isFinite(gridGap) || !Number.isFinite(maximumArtworkSize)) return;
+
+      const nextColumns = Math.max(
+        artistAlbumGridMinimumColumns,
+        Math.ceil((grid.clientWidth + gridGap) / (maximumArtworkSize + gridGap)),
+      );
+      setColumns((currentColumns) => currentColumns === nextColumns ? currentColumns : nextColumns);
+    };
+
+    const observer = new ResizeObserver(updateColumns);
+    observer.observe(grid);
+    updateColumns();
+    return () => observer.disconnect();
+  }, [gridRef]);
+
+  return columns;
+}
+
+/**
+ * 渲染列数由实际容器宽度决定的歌手专辑网格。
+ *
+ * 该组件把测得的列数写入局部 CSS 自定义属性，由 `artist-album-grid`（歌手专辑
+ * 网格）类以等份轨道布局。业务层只提供专辑卡片或加载骨架，避免正式态与加载态
+ * 各自实现不同的断点规则。
+ *
+ * @param children 要排入网格的专辑卡片或骨架元素。
+ * @returns 填满当前宽度、每张封面不超过上限的专辑网格。
+ */
+function ArtistAlbumGrid({ children }: { children: ReactNode }) {
+  const gridRef = useRef<HTMLDivElement>(null);
+  const columns = useArtistAlbumGridColumns(gridRef);
+
+  return (
+    <div
+      ref={gridRef}
+      className="artist-album-grid mt-3 gap-3"
+      style={{ '--artist-album-grid-columns': columns } as CSSProperties}
+    >
+      {children}
+    </div>
   );
 }
 
