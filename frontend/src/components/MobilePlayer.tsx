@@ -98,7 +98,8 @@ export function MobilePlayer({
   const [isLiked, setIsLiked] = useState(false);
   const [isLoadingLike, setIsLoadingLike] = useState(false);
   const [updatingLikeTrackID, setUpdatingLikeTrackID] = useState<string>();
-  const activeTrackIDRef = useRef<string>();
+  // 当前曲目在首次渲染前可能不存在；显式初始化为 undefined，避免 Ref（引用）错误地承诺始终有曲目 ID。
+  const activeTrackIDRef = useRef<string | undefined>(undefined);
   activeTrackIDRef.current = playback.track?.id;
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>('sequence');
   const [playbackQueue, setPlaybackQueue] = useState<Track[]>([]);

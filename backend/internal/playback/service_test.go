@@ -32,9 +32,17 @@ func (r *playbackRepositoryStub) PlaybackSessionMedia(context.Context, string, t
 	return r.track, r.record.Source, nil
 }
 
-func (*playbackRepositoryStub) RecordPlaybackEvent(context.Context, string, string, Event) error {
+func (*playbackRepositoryStub) RecordPlaybackEvent(context.Context, string, string, Event, time.Time) error {
 	return nil
 }
+
+// RecentPlaybackTracks 为播放服务测试提供空的历史读取结果。
+// 该测试桩仅覆盖转码和直连来源选择，不需要构造持久化历史；因此返回空列表且不返回错误。
+// 参数依次为请求上下文、用户 ID 和读取条数，返回值与 Repository（仓储）接口保持一致。
+func (*playbackRepositoryStub) RecentPlaybackTracks(context.Context, string, int) ([]catalog.Track, error) {
+	return nil, nil
+}
+
 func (*playbackRepositoryStub) DeletePlaybackSession(context.Context, string, string) error {
 	return nil
 }
