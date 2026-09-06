@@ -2,7 +2,11 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      允许原生 WebView（网页容器）的背景延伸到异形屏边缘；实际可放置内容的范围
+      由 CSS 的 safe-area-inset-*（安全区环境变量）单独控制，避免 iOS 刘海遮挡。
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#ffffff" />
     <title>Rime Music</title>
   </head>

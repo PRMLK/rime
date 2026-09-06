@@ -369,8 +369,12 @@ export function MobilePlayer({
             />
           )}
 
-          {/* 页头下方保留 8px 间距，避免首个内容元素紧贴顶部栏。 */}
-          <div className="mobile-content-frame relative z-10 shrink-0 pt-4 pb-2">
+          {/*
+           * 专辑根背景保持 absolute inset-0（绝对定位并铺满）以延续至状态栏下方；
+           * 页头本身则在原有 16px 上间距之上叠加真实顶部安全区，避免被状态栏、
+           * 刘海或挖孔遮挡。普通网页中的安全区为 0px，因此视觉间距保持不变。
+           */}
+          <div className="mobile-content-frame relative z-10 shrink-0 pt-[calc(1rem+var(--mobile-safe-area-top))] pb-2">
             <PageHeader
               title={pageLabel}
               showBackButton={Boolean(activeDetail)}

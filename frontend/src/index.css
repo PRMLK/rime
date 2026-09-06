@@ -118,6 +118,12 @@
      * 起始侧和结束侧分别叠加安全区，横屏设备两侧不对称时仍能保持可读区域安全。
      */
     --mobile-content-gutter: clamp(1rem, 5.128vw, 2rem);
+    /*
+     * App 壳启用 edge-to-edge（边到边显示）后，背景可以绘制在系统状态栏下方，
+     * 但可交互的页头内容必须避开状态栏、刘海和挖孔。浏览器普通网页返回 0px，
+     * 因而引用此变量不会额外制造顶部空白。
+     */
+    --mobile-safe-area-top: env(safe-area-inset-top, 0px);
     --mobile-content-gutter-start: max(var(--mobile-content-gutter), env(safe-area-inset-left, 0px));
     --mobile-content-gutter-end: max(var(--mobile-content-gutter), env(safe-area-inset-right, 0px));
     /*
