@@ -9,9 +9,8 @@ import (
 )
 
 type Page struct {
-	Items          []catalog.Track `json:"items"`
-	NextCursor     string          `json:"nextCursor,omitempty"`
-	PreviousCursor string          `json:"previousCursor,omitempty"`
+	Items      []catalog.Track `json:"items"`
+	NextCursor string          `json:"nextCursor,omitempty"`
 }
 
 type Repository interface {

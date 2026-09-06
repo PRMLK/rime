@@ -86,16 +86,19 @@ paths:
   /me/playlists:
     get:
       operationId: listOwnPlaylists
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 10 }
+        - name: cursor
+          in: query
+          schema: { type: string }
       responses:
         '200':
           description: Current user's playlists
           content:
             application/json:
-              schema:
-                type: object
-                required: [items]
-                properties:
-                  items: { type: array, items: { $ref: '#/components/schemas/Playlist' } }
+              schema: { $ref: '#/components/schemas/PlaylistPage' }
     post:
       operationId: createOwnPlaylist
       requestBody:
@@ -370,6 +373,12 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 30 }
+        - name: cursor
+          in: query
+          schema: { type: string }
       responses:
         '200':
           description: Artist metadata and their available albums
@@ -569,6 +578,14 @@ components:
             tracks:
               type: array
               items: { $ref: '#/components/schemas/Track' }
+    PlaylistPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Playlist' }
+        nextCursor: { type: string }
     SystemInfo:
       type: object
       required: [name, apiVersion, capabilities]
@@ -610,7 +627,6 @@ components:
           type: array
           items: { $ref: '#/components/schemas/Album' }
         nextCursor: { type: string }
-        previousCursor: { type: string }
     AlbumDetail:
       allOf:
         - $ref: '#/components/schemas/Album'
@@ -629,6 +645,7 @@ components:
         albums:
           type: array
           items: { $ref: '#/components/schemas/Album' }
+        nextCursor: { type: string }
     Track:
       type: object
       required: [id, title, album, artists, durationMs, available]
@@ -675,7 +692,6 @@ components:
           type: array
           items: { $ref: '#/components/schemas/Track' }
         nextCursor: { type: string }
-        previousCursor: { type: string }
     ScheduledTask:
       type: object
       required: [id, name, status]

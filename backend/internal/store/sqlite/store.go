@@ -259,7 +259,7 @@ func (s *Store) UpdateArtworkFocus(ctx context.Context, artworkID string, focus 
 }
 
 // RecentAlbums 以稳定排序返回最近入库专辑的一页。
-// cursor 是内部偏移游标；它只能由同一接口返回的 nextCursor 或 previousCursor 提供。
+// cursor 是内部偏移游标；它只能由同一接口返回的 nextCursor 提供。
 func (s *Store) RecentAlbums(ctx context.Context, limit int, cursor string) (browse.AlbumPage, error) {
 	offset, err := decodeCursor(cursor)
 	if err != nil {
@@ -306,9 +306,6 @@ func (s *Store) RecentAlbums(ctx context.Context, limit int, cursor string) (bro
 	}
 
 	page := browse.AlbumPage{Items: result}
-	if offset > 0 {
-		page.PreviousCursor = encodeCursor(max(0, offset-limit))
-	}
 	if len(page.Items) > limit {
 		page.Items = page.Items[:limit]
 		page.NextCursor = encodeCursor(offset + limit)
@@ -373,12 +370,16 @@ func (s *Store) AlbumDetail(ctx context.Context, albumID string) (catalog.AlbumD
 	return detail, nil
 }
 
-// ArtistDetail 读取歌手资料，以及该歌手参与且仍有可播放曲目的专辑。
-// 参数 ctx 用于取消数据库查询，artistID 为目标歌手 ID。
-// 返回 sql.ErrNoRows 表示歌手不存在，或该歌手没有任何可播放曲目。
-func (s *Store) ArtistDetail(ctx context.Context, artistID string) (catalog.ArtistDetail, error) {
+// ArtistDetail 读取歌手资料，以及该歌手参与且仍有可播放曲目的一批专辑。
+// 参数 ctx 用于取消数据库查询，artistID 为目标歌手 ID，limit 为单批上限，cursor 为
+// 服务端先前返回的续页游标。返回 sql.ErrNoRows 表示歌手不存在或没有可播放曲目。
+func (s *Store) ArtistDetail(ctx context.Context, artistID string, limit int, cursor string) (browse.ArtistDetailPage, error) {
+	offset, err := decodeCursor(cursor)
+	if err != nil {
+		return browse.ArtistDetailPage{}, browse.ErrInvalidCursor
+	}
 	var detail catalog.ArtistDetail
-	err := s.db.QueryRowContext(ctx, `
+	err = s.db.QueryRowContext(ctx, `
 		SELECT ar.id, ar.name
 		FROM artists ar
 		WHERE ar.id = ?
@@ -392,7 +393,7 @@ func (s *Store) ArtistDetail(ctx context.Context, artistID string) (catalog.Arti
 		  )`, artistID).
 		Scan(&detail.ID, &detail.Name)
 	if err != nil {
-		return catalog.ArtistDetail{}, err
+		return browse.ArtistDetailPage{}, err
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
@@ -419,9 +420,10 @@ func (s *Store) ArtistDetail(ctx context.Context, artistID string) (catalog.Arti
 				WHERE t.album_id = al.id AND ta.artist_id = ?
 			)
 		  )
-		ORDER BY al.normalized_title, al.id`, artistID, artistID)
+		ORDER BY al.normalized_title, al.id
+		LIMIT ? OFFSET ?`, artistID, artistID, limit+1, offset)
 	if err != nil {
-		return catalog.ArtistDetail{}, err
+		return browse.ArtistDetailPage{}, err
 	}
 	defer rows.Close()
 
@@ -431,11 +433,11 @@ func (s *Store) ArtistDetail(ctx context.Context, artistID string) (catalog.Arti
 		var artworkID sql.NullString
 		var addedAt string
 		if err := rows.Scan(&album.ID, &album.Title, &artworkID, &addedAt); err != nil {
-			return catalog.ArtistDetail{}, err
+			return browse.ArtistDetailPage{}, err
 		}
 		parsed, err := time.Parse(time.RFC3339Nano, addedAt)
 		if err != nil {
-			return catalog.ArtistDetail{}, fmt.Errorf("parse artist album indexed time: %w", err)
+			return browse.ArtistDetailPage{}, fmt.Errorf("parse artist album indexed time: %w", err)
 		}
 		album.AddedAt = parsed
 		if artworkID.Valid {
@@ -443,14 +445,19 @@ func (s *Store) ArtistDetail(ctx context.Context, artistID string) (catalog.Arti
 		}
 		album.Artists, err = s.albumArtists(ctx, album.ID)
 		if err != nil {
-			return catalog.ArtistDetail{}, err
+			return browse.ArtistDetailPage{}, err
 		}
 		detail.Albums = append(detail.Albums, album)
 	}
 	if err := rows.Err(); err != nil {
-		return catalog.ArtistDetail{}, err
+		return browse.ArtistDetailPage{}, err
 	}
-	return detail, nil
+	page := browse.ArtistDetailPage{ArtistDetail: detail}
+	if len(page.Albums) > limit {
+		page.Albums = page.Albums[:limit]
+		page.NextCursor = encodeCursor(offset + limit)
+	}
+	return page, nil
 }
 
 func (s *Store) albumArtists(ctx context.Context, albumID string) ([]catalog.ArtistRef, error) {
@@ -731,10 +738,6 @@ func (s *Store) SearchTracks(ctx context.Context, query string, limit int, curso
 	}
 
 	page := search.Page{Items: make([]catalog.Track, 0, min(limit, len(ids)))}
-	// 当前游标描述本页起点；偏移量大于零时可确定性地回到上一个固定大小页面。
-	if offset > 0 {
-		page.PreviousCursor = encodeCursor(max(0, offset-limit))
-	}
 	if len(ids) > limit {
 		ids = ids[:limit]
 		page.NextCursor = encodeCursor(offset + limit)

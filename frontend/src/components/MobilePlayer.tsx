@@ -12,17 +12,18 @@ import {
   UserIcon as UserSolidIcon,
 } from '@heroicons/react/24/solid';
 import {
-  ArrowLeft, CalendarClock, ChevronDown, ChevronLeft, ChevronRight, Disc3, Heart,
+  ArrowLeft, CalendarClock, ChevronDown, ChevronRight, Disc3, Heart,
   ListPlus, LoaderCircle, MoreHorizontal, Pause, Play, SkipBack, SkipForward, Sparkles, UserRound, Users,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import {
-  ApiError, addTrackToPlaylist, artworkUrl, createUser as createUserApi, getAlbumDetail, getArtistDetail, getFavoriteStatus, getPlaylists, getRecentAlbums, getScheduledTasks, getTrackLyrics, getUsers, resetUserPassword, runScheduledTask, searchTracks, setFavorite, updateUser as updateUserApi,
-  type Album, type AlbumDetail, type ArtistDetail, type ArtistRef, type LyricsDocument, type ScheduledTask, type Track, type User,
+  ApiError, addTrackToPlaylist, artworkUrl, createUser as createUserApi, getAlbumDetail, getAllPlaylists, getArtistDetail, getFavoriteStatus, getRecentAlbums, getScheduledTasks, getTrackLyrics, getUsers, resetUserPassword, runScheduledTask, searchTracks, setFavorite, updateUser as updateUserApi,
+  type Album, type AlbumDetail, type ArtistRef, type LyricsDocument, type ScheduledTask, type Track, type User,
 } from '@/api/rime';
 import { AlbumArtwork, AlbumArtworkFrame, AlbumArtworkSkeleton } from '@/components/AlbumArtwork';
 import { AlbumDetailHero, AlbumDetailHeroSkeleton } from '@/components/AlbumDetailHero';
 import { AppScrollArea } from '@/components/AppScrollArea';
+import { InfiniteScrollSentinel } from '@/components/InfiniteScrollSentinel';
 import { PageHeader } from '@/components/PageHeader';
 import { LibraryView } from '@/components/LibraryView';
 import { UnifiedListFooterLogo, UnifiedListRow } from '@/components/UnifiedListRow';
@@ -64,6 +65,7 @@ import {
 } from '@/lib/artwork-color';
 import { cn } from '@/lib/utils';
 import { formatMobileRoute, useMobileRoute } from '@/lib/mobile-route';
+import { appendItemsWithoutDuplicates, useProgressiveDisplay } from '@/hooks/use-progressive-display';
 import { HtmlAudioPlayer, type PlayerSnapshot } from '@/services/player/HtmlAudioPlayer';
 
 type NavigationTab = 'home' | 'search' | 'library';
@@ -129,11 +131,7 @@ export function MobilePlayer({ user, onAuthChanged }: { user: User; onAuthChange
   const [isLiked, setIsLiked] = useState(false);
   const [isUpdatingLike, setIsUpdatingLike] = useState(false);
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>('sequence');
-  const [results, setResults] = useState<Track[]>([]);
   const [playbackQueue, setPlaybackQueue] = useState<Track[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [searchError, setSearchError] = useState<string>();
-  const [searchCursors, setSearchCursors] = useState<{ next?: string; previous?: string }>({});
   const [albumBackgroundColor, setAlbumBackgroundColor] = useState<string>();
   const activeTab: NavigationTab = route.kind === 'tab'
     ? route.tab
@@ -143,8 +141,18 @@ export function MobilePlayer({ user, onAuthChanged }: { user: User; onAuthChange
         ? 'home'
         : route.sourceTab;
   const query = route.kind === 'search' ? route.query : '';
-  const cursor = route.kind === 'search' ? route.cursor : undefined;
-  const recentAlbumsCursor = route.kind === 'recent-albums' ? route.cursor : undefined;
+  const loadSearchPage = useCallback(
+    (cursor: string | undefined, signal: AbortSignal) => searchTracks(query.trim(), cursor, signal),
+    [query],
+  );
+  const searchFeed = useInfiniteCursorList({
+    enabled: route.kind === 'search',
+    resetKey: query,
+    delayMs: 250,
+    preserveItemsWhenDisabled: true,
+    loadPage: loadSearchPage,
+  });
+  const results = searchFeed.items;
   const activeLabel = navigationItems.find((item) => item.id === activeTab)?.label ?? '首页';
   const activeDetail: DetailView | undefined = route.kind === 'album'
     ? { kind: 'album', id: route.albumId }
@@ -195,44 +203,6 @@ export function MobilePlayer({ user, onAuthChanged }: { user: User; onAuthChange
   const activePlaybackQueue = playbackQueue.length > 0 ? playbackQueue : results;
   const currentIndex = playback.track ? activePlaybackQueue.findIndex((track) => track.id === playback.track?.id) : -1;
   const queue = currentIndex >= 0 ? activePlaybackQueue.slice(currentIndex + 1) : activePlaybackQueue.slice(0, 3);
-
-  useEffect(() => {
-    if (route.kind !== 'search') {
-      setSearchCursors({});
-      setSearchError(undefined);
-      setIsSearching(false);
-      return undefined;
-    }
-
-    const controller = new AbortController();
-    /*
-     * results 同时是“从搜索结果开始播放”时的默认队列。离开搜索页时不能清空它，
-     * 否则正在播放的歌曲无法自动前进；只有开始加载另一个搜索 URL 时才清空可视
-     * 列表，避免新搜索短暂展示上一组结果。
-     */
-    setResults([]);
-    setSearchCursors({});
-    setIsSearching(true);
-    setSearchError(undefined);
-    const timeout = window.setTimeout(() => {
-      searchTracks(query.trim(), cursor, controller.signal)
-        .then((page) => {
-          setResults(page.items);
-          setSearchCursors({ next: page.nextCursor, previous: page.previousCursor });
-        })
-        .catch((error: unknown) => {
-          if (error instanceof DOMException && error.name === 'AbortError') return;
-          setSearchError(error instanceof Error ? error.message : '搜索失败');
-        })
-        .finally(() => {
-          if (!controller.signal.aborted) setIsSearching(false);
-        });
-    }, 250);
-    return () => {
-      window.clearTimeout(timeout);
-      controller.abort();
-    };
-  }, [cursor, query, route.kind]);
 
   useEffect(() => () => player.dispose(), [player]);
 
@@ -417,11 +387,7 @@ export function MobilePlayer({ user, onAuthChanged }: { user: User; onAuthChange
                   )}
                   {activeDetail.kind === 'artist' && <ArtistDetailView artistId={activeDetail.id} onOpenAlbum={openAlbum} />}
                   {activeDetail.kind === 'recent-albums' && (
-                    <RecentAlbumsView
-                      cursor={recentAlbumsCursor}
-                      onCursorChange={(nextCursor) => navigate({ kind: 'recent-albums', cursor: nextCursor })}
-                      onOpenAlbum={openAlbum}
-                    />
+                    <RecentAlbumsView onOpenAlbum={openAlbum} />
                   )}
                 </TabsContent>
               ) : (
@@ -431,13 +397,14 @@ export function MobilePlayer({ user, onAuthChanged }: { user: User; onAuthChange
                     <SearchView
                       query={query}
                       results={results}
-                      isSearching={isSearching}
-                      error={searchError}
-                      nextCursor={searchCursors.next}
-                      previousCursor={searchCursors.previous}
+                      isSearching={searchFeed.isInitialLoading}
+                      error={searchFeed.initialError}
+                      hasMore={searchFeed.hasMore}
+                      isLoadingMore={searchFeed.isLoadingMore}
+                      loadMoreError={searchFeed.loadMoreError}
                       activeTrackId={playback.track?.id}
                       onQueryChange={(nextQuery) => navigate({ kind: 'search', query: nextQuery }, { replace: true })}
-                      onCursorChange={(nextCursor) => navigate({ kind: 'search', query, cursor: nextCursor })}
+                      onLoadMore={searchFeed.loadMore}
                       onChooseTrack={chooseStandaloneTrack}
                     />
                   </TabsContent>
@@ -650,46 +617,22 @@ function HomeView({
 }
 
 /**
- * 渲染最近入库的完整专辑网格，供首页标题入口打开。
- * @param cursor 当前 URL 路由指定的游标；未提供时加载第一页。
- * @param onCursorChange 使用服务端游标跳转到相邻页的回调。
+ * 渲染最近入库的完整专辑网格，并在用户接近末尾时持续追加下一批。
  * @param onOpenAlbum 收到专辑 ID 后打开对应专辑详情页的回调。
- * @returns 最近入库的加载、空状态或当前游标对应的专辑网格。
+ * @returns 最近入库的加载、空状态或可无限续页的专辑网格。
  */
-function RecentAlbumsView({
-  cursor,
-  onCursorChange,
-  onOpenAlbum,
-}: {
-  cursor?: string;
-  onCursorChange: (cursor: string) => void;
-  onOpenAlbum: (albumId: string) => void;
-}) {
-  const [albums, setAlbums] = useState<Album[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string>();
-  const [cursors, setCursors] = useState<{ next?: string; previous?: string }>({});
+function RecentAlbumsView({ onOpenAlbum }: { onOpenAlbum: (albumId: string) => void }) {
+  const loadAlbumPage = useCallback(
+    (cursor: string | undefined, signal: AbortSignal) => getRecentAlbums(24, cursor, signal),
+    [],
+  );
+  const albumsFeed = useInfiniteCursorList({
+    enabled: true,
+    resetKey: 'recent-albums',
+    loadPage: loadAlbumPage,
+  });
 
-  useEffect(() => {
-    const controller = new AbortController();
-    setIsLoading(true);
-    setError(undefined);
-    getRecentAlbums(24, cursor, controller.signal)
-      .then((page) => {
-        setAlbums(page.items);
-        setCursors({ next: page.nextCursor, previous: page.previousCursor });
-      })
-      .catch((loadError: unknown) => {
-        if (loadError instanceof DOMException && loadError.name === 'AbortError') return;
-        setError(loadError instanceof Error ? loadError.message : '最近入库加载失败');
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setIsLoading(false);
-      });
-    return () => controller.abort();
-  }, [cursor]);
-
-  if (isLoading) {
+  if (albumsFeed.isInitialLoading) {
     return (
       <section className="mt-8" aria-label="正在加载最近入库的专辑" role="status">
         <div className="grid grid-cols-2 gap-3">
@@ -705,20 +648,21 @@ function RecentAlbumsView({
     );
   }
 
-  if (error || albums.length === 0) {
-    return <DetailEmpty title={error ? '最近入库加载失败' : '暂无最近入库的专辑'} description={error ?? '新入库的专辑将显示在这里'} />;
+  if (albumsFeed.initialError || albumsFeed.items.length === 0) {
+    return <DetailEmpty title={albumsFeed.initialError ? '最近入库加载失败' : '暂无最近入库的专辑'} description={albumsFeed.initialError ?? '新入库的专辑将显示在这里'} />;
   }
 
   return (
     <section className="mt-8" aria-label="最近入库专辑">
       <div className="grid grid-cols-2 gap-3">
-        {albums.map((album) => <AlbumCard key={album.id} album={album} onOpenAlbum={onOpenAlbum} />)}
+        {albumsFeed.items.map((album) => <AlbumCard key={album.id} album={album} onOpenAlbum={onOpenAlbum} />)}
       </div>
-      <CursorPagination
-        label="最近入库分页"
-        previousCursor={cursors.previous}
-        nextCursor={cursors.next}
-        onCursorChange={onCursorChange}
+      <InfiniteScrollSentinel
+        hasMore={albumsFeed.hasMore}
+        isLoading={albumsFeed.isLoadingMore}
+        error={albumsFeed.loadMoreError}
+        observationKey={albumsFeed.items.length}
+        onLoadMore={albumsFeed.loadMore}
       />
     </section>
   );
@@ -784,6 +728,7 @@ function AlbumDetailView({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string>();
   const artworkAccentColor = useAlbumArtworkAccentColor(detail?.artworkId);
+  const displayedTracks = useProgressiveDisplay(detail?.tracks ?? [], albumId, 50);
 
   useEffect(() => {
     onBackgroundColorChange(artworkAccentColor);
@@ -821,7 +766,7 @@ function AlbumDetailView({
 
       <h3 className="mt-8 text-sm font-semibold">曲目{detail.tracks.length}</h3>
       <ItemGroup className="mt-2 gap-0">
-        {detail.tracks.map((track, index) => (
+        {displayedTracks.visibleItems.map((track, index) => (
           <TrackListRow
             key={track.id}
             track={track}
@@ -834,6 +779,12 @@ function AlbumDetailView({
         ))}
       </ItemGroup>
       <UnifiedListFooterLogo />
+      <InfiniteScrollSentinel
+        hasMore={displayedTracks.hasMore}
+        isLoading={false}
+        observationKey={displayedTracks.visibleCount}
+        onLoadMore={displayedTracks.showMore}
+      />
     </section>
   );
 }
@@ -1014,35 +965,91 @@ function AlbumDetailLoading() {
 }
 
 /**
- * 请求并渲染一个歌手及其参与的专辑。
+ * 请求并渲染一个歌手及其参与的专辑；专辑按 30 张一批向后续加载。
  * @param artistId 需要加载的歌手 ID。
  * @param onOpenAlbum 收到专辑 ID 后打开详情页的回调。
- * @returns 歌手详情的 React 元素，包含加载、错误和正常状态。
+ * @returns 歌手详情的 React 元素，包含首次加载、续页和错误状态。
  */
 function ArtistDetailView({ artistId, onOpenAlbum }: { artistId: string; onOpenAlbum: (albumId: string) => void }) {
-  const [detail, setDetail] = useState<ArtistDetail>();
+  const [artist, setArtist] = useState<ArtistRef>();
+  const [albums, setAlbums] = useState<Album[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string>();
+  const [nextCursor, setNextCursor] = useState<string>();
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string>();
+  const requestGenerationRef = useRef(0);
+  const moreControllerRef = useRef<AbortController | undefined>(undefined);
+  const isLoadingMoreRef = useRef(false);
 
   useEffect(() => {
+    const generation = ++requestGenerationRef.current;
     const controller = new AbortController();
+    moreControllerRef.current?.abort();
+    moreControllerRef.current = undefined;
+    isLoadingMoreRef.current = false;
     setIsLoading(true);
     setError(undefined);
-    setDetail(undefined);
-    getArtistDetail(artistId, controller.signal)
-      .then(setDetail)
+    setArtist(undefined);
+    setAlbums([]);
+    setNextCursor(undefined);
+    setIsLoadingMore(false);
+    setLoadMoreError(undefined);
+    getArtistDetail(artistId, 30, undefined, controller.signal)
+      .then((page) => {
+        if (controller.signal.aborted || requestGenerationRef.current !== generation) return;
+        setArtist({ id: page.id, name: page.name });
+        setAlbums(page.albums);
+        setNextCursor(page.nextCursor);
+      })
       .catch((loadError: unknown) => {
-        if (loadError instanceof DOMException && loadError.name === 'AbortError') return;
+        if (controller.signal.aborted || requestGenerationRef.current !== generation) return;
         setError(loadError instanceof Error ? loadError.message : '歌手加载失败');
       })
       .finally(() => {
-        if (!controller.signal.aborted) setIsLoading(false);
+        if (!controller.signal.aborted && requestGenerationRef.current === generation) setIsLoading(false);
       });
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      moreControllerRef.current?.abort();
+    };
   }, [artistId]);
 
+  /**
+   * 加载歌手专辑的下一批。
+   * 游标与请求代次均来自当前歌手，避免切换歌手后把旧响应追加进新页面。
+   */
+  const loadMore = useCallback(() => {
+    if (!nextCursor || isLoading || isLoadingMoreRef.current) return;
+
+    const generation = requestGenerationRef.current;
+    const controller = new AbortController();
+    moreControllerRef.current?.abort();
+    moreControllerRef.current = controller;
+    isLoadingMoreRef.current = true;
+    setIsLoadingMore(true);
+    setLoadMoreError(undefined);
+
+    getArtistDetail(artistId, 30, nextCursor, controller.signal)
+      .then((page) => {
+        if (controller.signal.aborted || requestGenerationRef.current !== generation) return;
+        setAlbums((currentAlbums) => appendItemsWithoutDuplicates(currentAlbums, page.albums));
+        setNextCursor(page.nextCursor);
+      })
+      .catch((loadError: unknown) => {
+        if (controller.signal.aborted || requestGenerationRef.current !== generation) return;
+        setLoadMoreError(loadError instanceof Error ? loadError.message : '专辑加载失败');
+      })
+      .finally(() => {
+        if (controller.signal.aborted || requestGenerationRef.current !== generation) return;
+        if (moreControllerRef.current === controller) moreControllerRef.current = undefined;
+        isLoadingMoreRef.current = false;
+        setIsLoadingMore(false);
+      });
+  }, [artistId, isLoading, nextCursor]);
+
   if (isLoading) return <ArtistDetailLoading />;
-  if (error || !detail) return <DetailEmpty title="歌手加载失败" description={error ?? '未找到可播放的作品'} />;
+  if (error || !artist) return <DetailEmpty title="歌手加载失败" description={error ?? '未找到可播放的作品'} />;
 
   return (
     <section className="mt-8" aria-labelledby="artist-name">
@@ -1052,16 +1059,22 @@ function ArtistDetailView({ artistId, onOpenAlbum }: { artistId: string; onOpenA
         </div>
         <div className="min-w-0">
           <p className="text-xs text-muted-foreground">歌手</p>
-          <h2 id="artist-name" className="mt-1 truncate text-xl font-semibold">{detail.name}</h2>
-          <p className="mt-1 text-sm text-muted-foreground">{detail.albums.length} 张专辑</p>
+          <h2 id="artist-name" className="mt-1 truncate text-xl font-semibold">{artist.name}</h2>
         </div>
       </div>
 
       <Separator className="my-6" />
       <h3 className="text-sm font-semibold">专辑</h3>
       <ArtistAlbumGrid>
-        {detail.albums.map((album) => <AlbumCard key={album.id} album={album} onOpenAlbum={onOpenAlbum} />)}
+        {albums.map((album) => <AlbumCard key={album.id} album={album} onOpenAlbum={onOpenAlbum} />)}
       </ArtistAlbumGrid>
+      <InfiniteScrollSentinel
+        hasMore={Boolean(nextCursor)}
+        isLoading={isLoadingMore}
+        error={loadMoreError}
+        observationKey={albums.length}
+        onLoadMore={loadMore}
+      />
     </section>
   );
 }
@@ -1356,8 +1369,8 @@ function AddToPlaylistMenu({ track }: { track?: Track }) {
   const load = (open: boolean) => {
     if (!open || !track) return;
     setIsLoading(true);
-    getPlaylists()
-      .then((page) => setPlaylists(page.items.filter((playlist) => playlist.kind === 'custom')))
+    getAllPlaylists()
+      .then((items) => setPlaylists(items.filter((playlist) => playlist.kind === 'custom')))
       .finally(() => setIsLoading(false));
   };
 
@@ -1513,44 +1526,47 @@ function LyricsPanel({ track, positionMs }: { track?: Track; positionMs: number 
 }
 
 /**
- * 渲染搜索结果和由 URL 驱动的游标分页操作。
+ * 渲染搜索结果，并在用户接近列表末尾时自动续页。
  *
- * 搜索词变化时父组件会替换当前路由并清除游标；翻页则创建新的历史记录。这样刷新、
- * 复制链接与浏览器前进后退都能恢复同一批结果，而无需依赖组件内的临时页码状态。
+ * 搜索词变化时父组件会替换当前路由并重新从第一批开始。续页游标只保存在组件内存，
+ * 因此自动加载不会制造浏览器历史记录，也不会在地址栏暴露分页实现细节。
  *
  * @param query 当前搜索关键字。
- * @param results 当前游标对应的曲目集合。
- * @param isSearching 是否正在加载当前页。
- * @param error 当前请求的错误信息。
- * @param nextCursor 服务端返回的下一页游标。
- * @param previousCursor 服务端返回的上一页游标。
+ * @param results 已累计加载的曲目集合。
+ * @param isSearching 是否正在加载第一批曲目。
+ * @param error 首次请求的错误信息。
+ * @param hasMore 服务端是否还提供下一批游标。
+ * @param isLoadingMore 是否正在追加后续曲目。
+ * @param loadMoreError 后续请求失败时保留的错误信息。
  * @param activeTrackId 正在播放的曲目 ID。
- * @param onQueryChange 更新搜索词并重置分页的回调。
- * @param onCursorChange 使用指定游标跳转页面的回调。
+ * @param onQueryChange 更新搜索词并重新加载结果的回调。
+ * @param onLoadMore 请求下一批曲目的回调。
  * @param onChooseTrack 选择曲目播放的回调。
- * @returns 搜索输入、结果列表和分页导航元素。
+ * @returns 搜索输入、可持续追加的结果列表和加载触发器。
  */
 function SearchView({
   query,
   results,
   isSearching,
   error,
-  nextCursor,
-  previousCursor,
+  hasMore,
+  isLoadingMore,
+  loadMoreError,
   activeTrackId,
   onQueryChange,
-  onCursorChange,
+  onLoadMore,
   onChooseTrack,
 }: {
   query: string;
   results: Track[];
   isSearching: boolean;
   error?: string;
-  nextCursor?: string;
-  previousCursor?: string;
+  hasMore: boolean;
+  isLoadingMore: boolean;
+  loadMoreError?: string;
   activeTrackId?: string;
   onQueryChange: (query: string) => void;
-  onCursorChange: (cursor: string) => void;
+  onLoadMore: () => void;
   onChooseTrack: (track: Track) => void;
 }) {
   return (
@@ -1574,12 +1590,13 @@ function SearchView({
         ))}
         {!error && results.length > 0 && <UnifiedListFooterLogo />}
       </div>
-      {!error && !isSearching && (
-        <CursorPagination
-          label="搜索结果分页"
-          previousCursor={previousCursor}
-          nextCursor={nextCursor}
-          onCursorChange={onCursorChange}
+      {!error && !isSearching && results.length > 0 && (
+        <InfiniteScrollSentinel
+          hasMore={hasMore}
+          isLoading={isLoadingMore}
+          error={loadMoreError}
+          observationKey={results.length}
+          onLoadMore={onLoadMore}
         />
       )}
     </section>
@@ -1587,55 +1604,152 @@ function SearchView({
 }
 
 /**
- * CursorPagination（游标分页）提供搜索结果的前后翻页操作。
+ * 单个游标批次的通用响应形状。
  *
- * 组件不解析游标、不自行加载数据，只将服务端返回的透明字符串交回路由层。这样分页
- * 控件可复用于其他列表，并避免客户端与 API 对排序规则产生两套实现。
- *
- * @param previousCursor 服务端返回的上一页游标。
- * @param nextCursor 服务端返回的下一页游标。
- * @param onCursorChange 用户选择目标页时接收游标的回调。
- * @returns 没有任何相邻页时返回 null，否则返回语义化分页导航。
+ * 服务端仍负责排序和游标生成；前端只关心本批项目与是否能继续请求后续项目，避免在
+ * 列表组件中重复实现不同资源的分页协议。
  */
-function CursorPagination({
-  label,
-  previousCursor,
-  nextCursor,
-  onCursorChange,
-}: {
-  label: string;
-  previousCursor?: string;
+type CursorPage<T> = {
+  items: T[];
   nextCursor?: string;
-  onCursorChange: (cursor: string) => void;
-}) {
-  if (!previousCursor && !nextCursor) return null;
+};
 
-  return (
-    <nav className="mt-6 flex items-center justify-between gap-3" aria-label={label}>
-      <Button
-        variant="outline"
-        size="sm"
-        disabled={!previousCursor}
-        onClick={() => {
-          if (previousCursor) onCursorChange(previousCursor);
-        }}
-      >
-        <ChevronLeft data-icon="inline-start" aria-hidden="true" />
-        上一页
-      </Button>
-      <Button
-        variant="outline"
-        size="sm"
-        disabled={!nextCursor}
-        onClick={() => {
-          if (nextCursor) onCursorChange(nextCursor);
-        }}
-      >
-        下一页
-        <ChevronRight data-icon="inline-end" aria-hidden="true" />
-      </Button>
-    </nav>
-  );
+/**
+ * useInfiniteCursorList（无限游标列表）所需的请求配置。
+ * @template T 列表项目类型，必须含有稳定 ID，以便追加时去除并发或数据变动引入的重复项。
+ */
+type InfiniteCursorListOptions<T extends { id: string }> = {
+  /** 是否应加载列表；搜索视图离开时为 false，但可按需要保留已加载项目作为播放队列。 */
+  enabled: boolean;
+  /** 搜索词等会使整个数据集失效的稳定标识。变化后必须从第一批重新加载。 */
+  resetKey: string;
+  /** 首次请求前的延迟毫秒数；搜索输入使用延迟避免每次按键都请求。 */
+  delayMs?: number;
+  /** 禁用时是否保留项目；搜索离开页面后需要保留，避免中断当前播放队列。 */
+  preserveItemsWhenDisabled?: boolean;
+  /** 接收可选续页游标和中止信号，返回一批项目及下一批游标。 */
+  loadPage: (cursor: string | undefined, signal: AbortSignal) => Promise<CursorPage<T>>;
+};
+
+/**
+ * useInfiniteCursorList（无限游标列表）把按游标请求的 API 转换成“首次替换、后续追加”的状态。
+ *
+ * 每次 resetKey（重置键）变化都递增请求代次并中止未完成请求。这样输入新搜索词或离开
+ * 页面后，即使旧请求较晚返回，也无法覆盖新列表。续页阶段另有同步加载锁，防止观察器
+ * 在同一可见区域内多次回调时重复请求同一个游标。
+ *
+ * @template T 项目类型，必须提供稳定的字符串 ID。
+ * @param options 控制启用状态、重置条件和批次加载函数的配置。
+ * @returns 已累计项目、首次与续页加载状态、错误信息和加载下一批的回调。
+ */
+function useInfiniteCursorList<T extends { id: string }>({
+  enabled,
+  resetKey,
+  delayMs = 0,
+  preserveItemsWhenDisabled = false,
+  loadPage,
+}: InfiniteCursorListOptions<T>) {
+  const [items, setItems] = useState<T[]>([]);
+  const [nextCursor, setNextCursor] = useState<string>();
+  const [isInitialLoading, setIsInitialLoading] = useState(enabled);
+  const [initialError, setInitialError] = useState<string>();
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string>();
+  const requestGenerationRef = useRef(0);
+  const loadedResetKeyRef = useRef<string | undefined>(undefined);
+  const moreControllerRef = useRef<AbortController | undefined>(undefined);
+  const isLoadingMoreRef = useRef(false);
+
+  useEffect(() => {
+    const generation = ++requestGenerationRef.current;
+    moreControllerRef.current?.abort();
+    moreControllerRef.current = undefined;
+    isLoadingMoreRef.current = false;
+    loadedResetKeyRef.current = undefined;
+    setNextCursor(undefined);
+    setInitialError(undefined);
+    setLoadMoreError(undefined);
+    setIsLoadingMore(false);
+
+    if (!enabled) {
+      setIsInitialLoading(false);
+      if (!preserveItemsWhenDisabled) setItems([]);
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    let timer: number | undefined;
+    setItems([]);
+    setIsInitialLoading(true);
+
+    const loadInitialPage = () => {
+      void loadPage(undefined, controller.signal)
+        .then((page) => {
+          if (controller.signal.aborted || requestGenerationRef.current !== generation) return;
+          setItems(page.items);
+          setNextCursor(page.nextCursor);
+          loadedResetKeyRef.current = resetKey;
+        })
+        .catch((error: unknown) => {
+          if (controller.signal.aborted || requestGenerationRef.current !== generation) return;
+          setInitialError(error instanceof Error ? error.message : '列表加载失败');
+        })
+        .finally(() => {
+          if (!controller.signal.aborted && requestGenerationRef.current === generation) setIsInitialLoading(false);
+        });
+    };
+
+    if (delayMs > 0) timer = window.setTimeout(loadInitialPage, delayMs);
+    else loadInitialPage();
+
+    return () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [delayMs, enabled, loadPage, preserveItemsWhenDisabled, resetKey]);
+
+  const loadMore = useCallback(() => {
+    /*
+     * loadedResetKeyRef（已加载重置键）确保搜索词刚变化、但 React 尚未执行重置 effect
+     * 的短暂窗口内，旧列表尾部观察器不会将旧游标错误带入新搜索。
+     */
+    if (!enabled || !nextCursor || isInitialLoading || isLoadingMoreRef.current || loadedResetKeyRef.current !== resetKey) return;
+
+    const generation = requestGenerationRef.current;
+    const controller = new AbortController();
+    moreControllerRef.current?.abort();
+    moreControllerRef.current = controller;
+    isLoadingMoreRef.current = true;
+    setIsLoadingMore(true);
+    setLoadMoreError(undefined);
+
+    void loadPage(nextCursor, controller.signal)
+      .then((page) => {
+        if (controller.signal.aborted || requestGenerationRef.current !== generation || loadedResetKeyRef.current !== resetKey) return;
+        setItems((currentItems) => appendItemsWithoutDuplicates(currentItems, page.items));
+        setNextCursor(page.nextCursor);
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted || requestGenerationRef.current !== generation || loadedResetKeyRef.current !== resetKey) return;
+        setLoadMoreError(error instanceof Error ? error.message : '加载更多失败');
+      })
+      .finally(() => {
+        if (controller.signal.aborted || requestGenerationRef.current !== generation || loadedResetKeyRef.current !== resetKey) return;
+        if (moreControllerRef.current === controller) moreControllerRef.current = undefined;
+        isLoadingMoreRef.current = false;
+        setIsLoadingMore(false);
+      });
+  }, [enabled, isInitialLoading, loadPage, nextCursor, resetKey]);
+
+  return {
+    items,
+    isInitialLoading,
+    initialError,
+    hasMore: Boolean(nextCursor),
+    isLoadingMore,
+    loadMoreError,
+    loadMore,
+  };
 }
 
 function SystemSettingsDrawer({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {

@@ -10,7 +10,7 @@ import (
 )
 
 type Repository interface {
-	ListPlaylists(context.Context, string) ([]Playlist, error)
+	ListPlaylists(context.Context, string, int, string) (Page, error)
 	GetPlaylist(context.Context, string, string) (Detail, error)
 	CreatePlaylist(context.Context, string, string, string, time.Time) (Playlist, error)
 	RenamePlaylist(context.Context, string, string, string, time.Time) (Playlist, error)
@@ -28,8 +28,16 @@ type Service struct {
 
 func New(repo Repository) *Service { return &Service{repo: repo, now: time.Now} }
 
-func (s *Service) List(ctx context.Context, userID string) ([]Playlist, error) {
-	return s.repo.ListPlaylists(ctx, userID)
+// List 返回当前用户的一批歌单。
+// 参数 limit 为单批数量，未提供时默认 10；cursor 为上一批响应返回的续页游标。
+func (s *Service) List(ctx context.Context, userID string, limit int, cursor string) (Page, error) {
+	if limit == 0 {
+		limit = 10
+	}
+	if limit < 1 || limit > 50 {
+		return Page{}, ErrInvalidLimit
+	}
+	return s.repo.ListPlaylists(ctx, userID, limit, cursor)
 }
 
 func (s *Service) Get(ctx context.Context, userID, playlistID string) (Detail, error) {

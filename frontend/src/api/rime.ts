@@ -25,7 +25,6 @@ export type Album = {
 export type AlbumPage = {
   items: Album[];
   nextCursor?: string;
-  previousCursor?: string;
 };
 
 export type AlbumDetail = Album & {
@@ -41,6 +40,7 @@ export type AlbumDetail = Album & {
 
 export type ArtistDetail = ArtistRef & {
   albums: Album[];
+  nextCursor?: string;
 };
 
 export type Track = {
@@ -86,10 +86,14 @@ export type PlaylistDetail = Playlist & {
   tracks: Track[];
 };
 
+export type PlaylistPage = {
+  items: Playlist[];
+  nextCursor?: string;
+};
+
 export type SearchPage = {
   items: Track[];
   nextCursor?: string;
-  previousCursor?: string;
 };
 
 export type LyricsLine = {
@@ -194,8 +198,37 @@ export function changePassword(currentPassword: string, newPassword: string): Pr
   return request<void>('/api/v1/me/password', { method: 'PATCH', body: JSON.stringify({ currentPassword, newPassword }) });
 }
 
-export function getPlaylists(signal?: AbortSignal): Promise<{ items: Playlist[] }> {
-  return request<{ items: Playlist[] }>('/api/v1/me/playlists', { signal });
+/**
+ * 按游标取得当前用户的一批歌单。
+ * @param limit 单批歌单数量，后端允许范围为 1 至 50。
+ * @param cursor 服务端返回的下一批游标；未提供时请求第一批。
+ * @param signal 页面切换或菜单关闭时用于取消请求的中止信号。
+ * @returns 包含歌单和后续加载游标的异步结果。
+ */
+export function getPlaylists(limit = 10, cursor?: string, signal?: AbortSignal): Promise<PlaylistPage> {
+  const parameters = new URLSearchParams({ limit: String(limit) });
+  if (cursor) parameters.set('cursor', cursor);
+  return request<PlaylistPage>(`/api/v1/me/playlists?${parameters}`, { signal });
+}
+
+/**
+ * 读取当前用户全部歌单，供“添加到歌单”菜单建立完整可选集合。
+ *
+ * 菜单不是长列表页面，不能因主列表采用 10 条续页而遗漏较后的歌单；因此内部以最大
+ * 批次连续请求并合并结果。调用方仍可通过 signal 在菜单关闭时中止整个读取过程。
+ *
+ * @param signal 用于取消连续请求的中止信号。
+ * @returns 所有当前用户歌单的异步数组。
+ */
+export async function getAllPlaylists(signal?: AbortSignal): Promise<Playlist[]> {
+  const items: Playlist[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await getPlaylists(50, cursor, signal);
+    items.push(...page.items);
+    cursor = page.nextCursor;
+  } while (cursor && !signal?.aborted);
+  return items;
 }
 
 export function getPlaylist(playlistId: string, signal?: AbortSignal): Promise<PlaylistDetail> {
@@ -258,9 +291,9 @@ export function resetUserPassword(userId: string, password: string): Promise<voi
  * 搜索曲目，并按服务端游标取得指定结果页。
  *
  * @param query 搜索关键字；为空时返回曲库排序后的第一页。
- * @param cursor 服务端返回的上一页或下一页游标；未提供时请求第一页。
+ * @param cursor 服务端返回的下一批游标；未提供时请求第一批。
  * @param signal 页面离开或输入变化时用于取消旧请求的中止信号。
- * @returns 包含曲目和双向游标的异步分页结果。
+ * @returns 包含曲目和后续加载游标的异步分页结果。
  */
 export function searchTracks(query: string, cursor?: string, signal?: AbortSignal): Promise<SearchPage> {
   const parameters = new URLSearchParams({ query, limit: '30' });
@@ -271,7 +304,7 @@ export function searchTracks(query: string, cursor?: string, signal?: AbortSigna
 /**
  * 获取按入库时间倒序排列的专辑。
  * @param limit 需要返回的专辑数量，后端当前允许的范围为 1 至 50。
- * @param cursor 服务端返回的上一页或下一页游标；未提供时请求第一页。
+ * @param cursor 服务端返回的下一批游标；未提供时请求第一批。
  * @param signal 用于在离开页面时取消未完成请求的 AbortSignal（中止信号）。
  * @returns 包含最近入库专辑的 Promise（异步结果）。
  */
@@ -292,13 +325,17 @@ export function getAlbumDetail(albumId: string, signal?: AbortSignal): Promise<A
 }
 
 /**
- * 获取歌手详情及其参与的可播放专辑。
+ * 获取歌手详情及其参与的可播放专辑批次。
  * @param artistId 歌手的唯一标识。
+ * @param limit 单批专辑数量，后端允许范围为 1 至 50。
+ * @param cursor 服务端返回的下一批游标；未提供时请求第一批。
  * @param signal 用于在离开详情页时取消未完成请求的 AbortSignal（中止信号）。
- * @returns 包含歌手信息和专辑列表的 Promise（异步结果）。
+ * @returns 包含歌手信息、当前批次专辑和后续加载游标的 Promise（异步结果）。
  */
-export function getArtistDetail(artistId: string, signal?: AbortSignal): Promise<ArtistDetail> {
-  return request<ArtistDetail>(`/api/v1/artists/${encodeURIComponent(artistId)}`, { signal });
+export function getArtistDetail(artistId: string, limit = 30, cursor?: string, signal?: AbortSignal): Promise<ArtistDetail> {
+  const parameters = new URLSearchParams({ limit: String(limit) });
+  if (cursor) parameters.set('cursor', cursor);
+  return request<ArtistDetail>(`/api/v1/artists/${encodeURIComponent(artistId)}?${parameters}`, { signal });
 }
 
 export function getTrackLyrics(trackId: string, signal?: AbortSignal): Promise<LyricsDocument> {

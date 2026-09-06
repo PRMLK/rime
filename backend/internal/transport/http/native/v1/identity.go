@@ -252,13 +252,29 @@ func requestIsHTTPS(r *http.Request) bool {
 	return r.TLS != nil || strings.EqualFold(strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]), "https")
 }
 
+// listPlaylists 返回当前用户的一批歌单。
+// 参数 w 写入分页响应，r 读取可选的 limit 和 cursor 查询参数；无效参数返回 400，
+// 游标有效时响应仅包含当前批次和下一批游标，避免一次性传输全部歌单。
 func (h *Handler) listPlaylists(w http.ResponseWriter, r *http.Request) {
-	items, err := h.playlists.List(r.Context(), currentUser(r).ID)
+	limit, err := optionalInt(r.URL.Query().Get("limit"))
 	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "invalid_limit", "Invalid limit", "Limit must be an integer.")
+		return
+	}
+	page, err := h.playlists.List(r.Context(), currentUser(r).ID, limit, r.URL.Query().Get("cursor"))
+	if err != nil {
+		if errors.Is(err, playlists.ErrInvalidLimit) {
+			writeProblem(w, r, http.StatusBadRequest, "invalid_limit", "Invalid limit", err.Error())
+			return
+		}
+		if errors.Is(err, playlists.ErrInvalidCursor) {
+			writeProblem(w, r, http.StatusBadRequest, "invalid_cursor", "Invalid cursor", "Cursor must be a value returned by this endpoint.")
+			return
+		}
 		h.playlistError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, page)
 }
 
 func (h *Handler) createPlaylist(w http.ResponseWriter, r *http.Request) {

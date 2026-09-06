@@ -16,15 +16,21 @@ var (
 )
 
 type AlbumPage struct {
-	Items          []catalog.Album `json:"items"`
-	NextCursor     string          `json:"nextCursor,omitempty"`
-	PreviousCursor string          `json:"previousCursor,omitempty"`
+	Items      []catalog.Album `json:"items"`
+	NextCursor string          `json:"nextCursor,omitempty"`
+}
+
+// ArtistDetailPage 表示歌手资料和当前批次的专辑。
+// Albums 仅包含当前请求范围内的专辑；NextCursor 非空时，调用方可继续取得后续专辑。
+type ArtistDetailPage struct {
+	catalog.ArtistDetail
+	NextCursor string `json:"nextCursor,omitempty"`
 }
 
 type Repository interface {
 	RecentAlbums(context.Context, int, string) (AlbumPage, error)
 	AlbumDetail(context.Context, string) (catalog.AlbumDetail, error)
-	ArtistDetail(context.Context, string) (catalog.ArtistDetail, error)
+	ArtistDetail(context.Context, string, int, string) (ArtistDetailPage, error)
 }
 
 type Service struct {
@@ -37,8 +43,8 @@ func New(repo Repository) *Service {
 
 // RecentAlbums 返回最近入库专辑的一个游标页。
 //
-// 参数 ctx 用于取消请求，limit 为单页最大项目数，未提供时默认 12；cursor 为上一页或
-// 下一页响应中返回的透明游标，留空时从第一页开始。返回值包含专辑和相邻页游标。
+// 参数 ctx 用于取消请求，limit 为单批最大项目数，未提供时默认 12；cursor 为上一批响应
+// 中返回的透明游标，留空时从第一批开始。返回值包含专辑和后续加载所需的下一批游标。
 func (s *Service) RecentAlbums(ctx context.Context, limit int, cursor string) (AlbumPage, error) {
 	if limit == 0 {
 		limit = 12
@@ -64,13 +70,19 @@ func (s *Service) AlbumDetail(ctx context.Context, albumID string) (catalog.Albu
 	return detail, err
 }
 
-// ArtistDetail 读取一个歌手及其包含可播放曲目的专辑。
-// 参数 ctx 用于传递请求取消信号，artistID 为音乐库中的歌手标识。
-// 返回值在歌手不存在或没有可播放曲目时返回 ErrArtistNotFound。
-func (s *Service) ArtistDetail(ctx context.Context, artistID string) (catalog.ArtistDetail, error) {
-	detail, err := s.repo.ArtistDetail(ctx, artistID)
+// ArtistDetail 读取歌手资料及其一批可播放专辑。
+// 参数 ctx 用于传递请求取消信号，artistID 为歌手标识，limit 为单批数量，cursor 为上一
+// 批响应返回的续页游标。返回值在歌手不存在或没有可播放曲目时返回 ErrArtistNotFound。
+func (s *Service) ArtistDetail(ctx context.Context, artistID string, limit int, cursor string) (ArtistDetailPage, error) {
+	if limit == 0 {
+		limit = 30
+	}
+	if limit < 1 || limit > 50 {
+		return ArtistDetailPage{}, ErrInvalidLimit
+	}
+	detail, err := s.repo.ArtistDetail(ctx, artistID, limit, cursor)
 	if errors.Is(err, sql.ErrNoRows) {
-		return catalog.ArtistDetail{}, ErrArtistNotFound
+		return ArtistDetailPage{}, ErrArtistNotFound
 	}
 	return detail, err
 }

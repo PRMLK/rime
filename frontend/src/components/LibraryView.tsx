@@ -1,5 +1,5 @@
 import { ArrowLeft, Heart, KeyRound, LibraryBig, ListMusic, LoaderCircle, LogOut, Pencil, Plus, Settings, Trash2 } from 'lucide-react';
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   createPlaylist,
   changePassword,
@@ -16,7 +16,9 @@ import {
   type User,
 } from '@/api/rime';
 import { AlbumArtwork } from '@/components/AlbumArtwork';
+import { InfiniteScrollSentinel } from '@/components/InfiniteScrollSentinel';
 import { UnifiedListFooterLogo, UnifiedListRow } from '@/components/UnifiedListRow';
+import { appendItemsWithoutDuplicates, useProgressiveDisplay } from '@/hooks/use-progressive-display';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -45,19 +47,43 @@ export function LibraryView({ user, onChooseTrack, onOpenSystemSettings, onSigne
   const [changingPassword, setChangingPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string>();
+  const [nextCursor, setNextCursor] = useState<string>();
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string>();
   const [refresh, setRefresh] = useState(0);
+  const requestGenerationRef = useRef(0);
+  const moreControllerRef = useRef<AbortController | undefined>(undefined);
+  const isLoadingMoreRef = useRef(false);
 
   useEffect(() => {
+    const generation = ++requestGenerationRef.current;
     const controller = new AbortController();
+    moreControllerRef.current?.abort();
+    moreControllerRef.current = undefined;
+    isLoadingMoreRef.current = false;
     setIsLoading(true);
-    getPlaylists(controller.signal)
-      .then((page) => setPlaylists(page.items))
+    setError(undefined);
+    setPlaylists([]);
+    setNextCursor(undefined);
+    setIsLoadingMore(false);
+    setLoadMoreError(undefined);
+    getPlaylists(10, undefined, controller.signal)
+      .then((page) => {
+        if (controller.signal.aborted || requestGenerationRef.current !== generation) return;
+        setPlaylists(page.items);
+        setNextCursor(page.nextCursor);
+      })
       .catch((loadError: unknown) => {
-        if (loadError instanceof DOMException && loadError.name === 'AbortError') return;
+        if (controller.signal.aborted || requestGenerationRef.current !== generation) return;
         setError(loadError instanceof Error ? loadError.message : '歌单加载失败');
       })
-      .finally(() => setIsLoading(false));
-    return () => controller.abort();
+      .finally(() => {
+        if (!controller.signal.aborted && requestGenerationRef.current === generation) setIsLoading(false);
+      });
+    return () => {
+      controller.abort();
+      moreControllerRef.current?.abort();
+    };
   }, [refresh]);
 
   const reload = useCallback(() => setRefresh((value) => value + 1), []);
@@ -65,6 +91,39 @@ export function LibraryView({ user, onChooseTrack, onOpenSystemSettings, onSigne
     window.addEventListener(playlistsChangedEvent, reload);
     return () => window.removeEventListener(playlistsChangedEvent, reload);
   }, [reload]);
+
+  /**
+   * 继续加载当前用户的下一批歌单。
+   * 同步加载锁与请求代次共同防止观察器重复触发，或旧响应在刷新后追加到新列表。
+   */
+  const loadMore = useCallback(() => {
+    if (!nextCursor || isLoading || isLoadingMoreRef.current) return;
+
+    const generation = requestGenerationRef.current;
+    const controller = new AbortController();
+    moreControllerRef.current?.abort();
+    moreControllerRef.current = controller;
+    isLoadingMoreRef.current = true;
+    setIsLoadingMore(true);
+    setLoadMoreError(undefined);
+
+    getPlaylists(10, nextCursor, controller.signal)
+      .then((page) => {
+        if (controller.signal.aborted || requestGenerationRef.current !== generation) return;
+        setPlaylists((currentPlaylists) => appendItemsWithoutDuplicates(currentPlaylists, page.items));
+        setNextCursor(page.nextCursor);
+      })
+      .catch((loadError: unknown) => {
+        if (controller.signal.aborted || requestGenerationRef.current !== generation) return;
+        setLoadMoreError(loadError instanceof Error ? loadError.message : '歌单加载失败');
+      })
+      .finally(() => {
+        if (controller.signal.aborted || requestGenerationRef.current !== generation) return;
+        if (moreControllerRef.current === controller) moreControllerRef.current = undefined;
+        isLoadingMoreRef.current = false;
+        setIsLoadingMore(false);
+      });
+  }, [isLoading, nextCursor]);
 
   if (selectedID) {
     return <PlaylistPanel playlistID={selectedID} onBack={() => { setSelectedID(undefined); reload(); }} onChooseTrack={onChooseTrack} />;
@@ -96,6 +155,15 @@ export function LibraryView({ user, onChooseTrack, onOpenSystemSettings, onSigne
             </UnifiedListRow>
           ))}
         </ItemGroup>
+      )}
+      {!error && !isLoading && playlists.length > 0 && (
+        <InfiniteScrollSentinel
+          hasMore={Boolean(nextCursor)}
+          isLoading={isLoadingMore}
+          error={loadMoreError}
+          observationKey={playlists.length}
+          onLoadMore={loadMore}
+        />
       )}
       <Separator className="my-8" />
       <h2 className="text-sm font-semibold">账户</h2>
@@ -175,6 +243,8 @@ function PlaylistPanel({ playlistID, onBack, onChooseTrack }: { playlistID: stri
   const [renaming, setRenaming] = useState(false);
   const [error, setError] = useState<string>();
   const [refresh, setRefresh] = useState(0);
+  // 歌单完整曲目保留给后续播放逻辑；这里只控制初始与每次续显的 50 条可见项目。
+  const displayedTracks = useProgressiveDisplay(playlist?.tracks ?? [], `${playlistID}:${refresh}`, 50);
   useEffect(() => {
     const controller = new AbortController();
     getPlaylist(playlistID, controller.signal)
@@ -211,17 +281,25 @@ function PlaylistPanel({ playlistID, onBack, onChooseTrack }: { playlistID: stri
       {playlist.tracks.length === 0 ? (
         <Empty className="mt-8 border"><EmptyHeader><EmptyMedia variant="icon"><ListMusic aria-hidden="true" /></EmptyMedia><EmptyTitle>歌单还是空的</EmptyTitle><EmptyDescription>播放歌曲时可从更多菜单添加到这里。</EmptyDescription></EmptyHeader></Empty>
       ) : (
-        <ItemGroup className="mt-5 gap-0">
-          {playlist.tracks.map((track) => (
-            <Item key={track.id} className="rounded-none border-b px-0 py-2 last:border-b-0">
-              <button type="button" className="flex min-w-0 flex-1 items-center gap-3 text-left disabled:opacity-50" disabled={!track.available} onClick={() => onChooseTrack(track)}>
-                <AlbumArtwork artwork={track} size="sm" />
-                <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{track.title}</span><span className="block truncate text-xs text-muted-foreground">{track.available ? artistNames(track) : '当前不可播放'}</span></span>
-              </button>
-              <ItemActions><Button variant="ghost" size="icon" aria-label={`从歌单移除《${track.title}》`} onClick={() => void removeTrackFromPlaylist(playlist.id, track.id).then(() => setRefresh((value) => value + 1)).catch((removeError: unknown) => setError(removeError instanceof Error ? removeError.message : '移除失败'))}><Trash2 aria-hidden="true" /></Button></ItemActions>
-            </Item>
-          ))}
-        </ItemGroup>
+        <>
+          <ItemGroup className="mt-5 gap-0">
+            {displayedTracks.visibleItems.map((track) => (
+              <Item key={track.id} className="rounded-none border-b px-0 py-2 last:border-b-0">
+                <button type="button" className="flex min-w-0 flex-1 items-center gap-3 text-left disabled:opacity-50" disabled={!track.available} onClick={() => onChooseTrack(track)}>
+                  <AlbumArtwork artwork={track} size="sm" />
+                  <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{track.title}</span><span className="block truncate text-xs text-muted-foreground">{track.available ? artistNames(track) : '当前不可播放'}</span></span>
+                </button>
+                <ItemActions><Button variant="ghost" size="icon" aria-label={`从歌单移除《${track.title}》`} onClick={() => void removeTrackFromPlaylist(playlist.id, track.id).then(() => setRefresh((value) => value + 1)).catch((removeError: unknown) => setError(removeError instanceof Error ? removeError.message : '移除失败'))}><Trash2 aria-hidden="true" /></ItemActions>
+              </Item>
+            ))}
+          </ItemGroup>
+          <InfiniteScrollSentinel
+            hasMore={displayedTracks.hasMore}
+            isLoading={false}
+            observationKey={displayedTracks.visibleCount}
+            onLoadMore={displayedTracks.showMore}
+          />
+        </>
       )}
       <PlaylistNameDrawer open={renaming} title="重命名歌单" submitLabel="保存" initialName={playlist.name} onOpenChange={setRenaming} onSubmit={async (name) => { await renamePlaylist(playlist.id, name); setRenaming(false); setRefresh((value) => value + 1); }} />
     </section>

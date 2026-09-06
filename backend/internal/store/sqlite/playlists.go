@@ -11,26 +11,41 @@ import (
 	"rime/backend/internal/playlists"
 )
 
-func (s *Store) ListPlaylists(ctx context.Context, userID string) ([]playlists.Playlist, error) {
+// ListPlaylists 按最近更新时间返回当前用户的一批歌单。
+// cursor 是由同一接口返回的内部偏移游标；额外查询一条记录来判断是否还有下一批。
+func (s *Store) ListPlaylists(ctx context.Context, userID string, limit int, cursor string) (playlists.Page, error) {
+	offset, err := decodeCursor(cursor)
+	if err != nil {
+		return playlists.Page{}, playlists.ErrInvalidCursor
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT p.id, p.name, p.kind, COUNT(pt.track_id), p.created_at, p.updated_at
 		FROM playlists p LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id
 		WHERE p.owner_user_id = ?
 		GROUP BY p.id
-		ORDER BY p.kind = 'favorites' DESC, p.updated_at DESC, p.name`, userID)
+		ORDER BY p.kind = 'favorites' DESC, p.updated_at DESC, p.name
+		LIMIT ? OFFSET ?`, userID, limit+1, offset)
 	if err != nil {
-		return nil, err
+		return playlists.Page{}, err
 	}
 	defer rows.Close()
-	result := []playlists.Playlist{}
+	result := make([]playlists.Playlist, 0, limit+1)
 	for rows.Next() {
 		playlist, err := scanPlaylist(rows)
 		if err != nil {
-			return nil, err
+			return playlists.Page{}, err
 		}
 		result = append(result, playlist)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return playlists.Page{}, err
+	}
+	page := playlists.Page{Items: result}
+	if len(page.Items) > limit {
+		page.Items = page.Items[:limit]
+		page.NextCursor = encodeCursor(offset + limit)
+	}
+	return page, nil
 }
 
 func (s *Store) GetPlaylist(ctx context.Context, playlistID, userID string) (playlists.Detail, error) {

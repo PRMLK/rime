@@ -174,12 +174,25 @@ func (h *Handler) albumDetail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, detail)
 }
 
-// artistDetail 返回一个歌手及其参与的可播放专辑。
-// 参数 w 写入 HTTP 响应，r 提供 artistID 路径参数及请求上下文。
-// 歌手不存在或没有可播放曲目时返回 404，其他存储错误返回 500。
+// artistDetail 返回一个歌手及其参与的可播放专辑批次。
+// 参数 w 写入 HTTP 响应，r 提供 artistID、limit 和 cursor；歌手不存在或没有可播放
+// 曲目时返回 404，无效分页参数返回 400，其他存储错误返回 500。
 func (h *Handler) artistDetail(w http.ResponseWriter, r *http.Request) {
-	detail, err := h.browse.ArtistDetail(r.Context(), r.PathValue("artistID"))
+	limit, err := optionalInt(r.URL.Query().Get("limit"))
 	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "invalid_limit", "Invalid limit", "Limit must be an integer.")
+		return
+	}
+	detail, err := h.browse.ArtistDetail(r.Context(), r.PathValue("artistID"), limit, r.URL.Query().Get("cursor"))
+	if err != nil {
+		if errors.Is(err, browse.ErrInvalidLimit) {
+			writeProblem(w, r, http.StatusBadRequest, "invalid_limit", "Invalid limit", err.Error())
+			return
+		}
+		if errors.Is(err, browse.ErrInvalidCursor) {
+			writeProblem(w, r, http.StatusBadRequest, "invalid_cursor", "Invalid cursor", "Cursor must be a value returned by this endpoint.")
+			return
+		}
 		if errors.Is(err, browse.ErrArtistNotFound) {
 			writeProblem(w, r, http.StatusNotFound, "artist_not_found", "Artist not found", "The requested artist is unavailable.")
 			return
