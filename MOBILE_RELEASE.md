@@ -9,8 +9,8 @@ Bearer session. The browser client keeps using its current same-origin cookie fl
 
 The `Mobile release` workflow supports two modes:
 
-- A manual run builds signed Android APK and AAB files and stores them as workflow artifacts.
-- Pushing a tag such as `v0.1.0` also creates a GitHub Release and attaches both packages.
+- A manual run builds signed per-ABI Android APK files and one universal AAB, then stores them as workflow artifacts.
+- Pushing a tag such as `v0.1.2` also creates a GitHub Release and attaches all packages.
 - Google Play internal testing is optional and runs only when `PUBLISH_GOOGLE_PLAY` is `true`.
 
 Set the optional `PUBLISH_GOOGLE_PLAY` repository Actions variable to `true` only
@@ -46,12 +46,14 @@ the service account access to the app and enable `PUBLISH_GOOGLE_PLAY`.
 Keep the version in `frontend/src-tauri/tauri.conf.json` aligned with the tag:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.2
+git push origin v0.1.2
 ```
 
-The workflow rejects a tag that does not match the Tauri version. APK is intended
-for direct installation and testing; AAB is the package uploaded to Google Play.
+The workflow rejects a tag that does not match the Tauri version. The direct-download
+APKs are split into `arm64`, `armv7`, `x86`, and `x86_64` packages so each contains
+only the native library required by that device. The universal AAB is uploaded to
+Google Play, which handles device-specific delivery automatically.
 
 ## Local Android build
 

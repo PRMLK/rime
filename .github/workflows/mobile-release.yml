@@ -86,7 +86,7 @@ jobs:
         shell: bash
         run: printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE_PATH"
 
-      - name: Build signed APK and AAB
+      - name: Build signed per-ABI APKs and universal AAB
         working-directory: frontend
         run: npm run tauri:android:release
 
