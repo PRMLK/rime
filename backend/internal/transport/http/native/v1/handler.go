@@ -53,6 +53,7 @@ func New(searchService *search.Service, browseService *browse.Service, lyricsSer
 	mux.HandleFunc("DELETE /api/v1/auth/session", handler.logout)
 	mux.HandleFunc("GET /api/v1/me", handler.me)
 	mux.HandleFunc("PATCH /api/v1/me/password", handler.changePassword)
+	mux.HandleFunc("GET /api/v1/me/playback-history", handler.recentPlaybackTracks)
 	mux.HandleFunc("GET /api/v1/me/playlists", handler.listPlaylists)
 	mux.HandleFunc("POST /api/v1/me/playlists", handler.createPlaylist)
 	mux.HandleFunc("GET /api/v1/me/playlists/{playlistID}", handler.getPlaylist)
@@ -60,6 +61,10 @@ func New(searchService *search.Service, browseService *browse.Service, lyricsSer
 	mux.HandleFunc("DELETE /api/v1/me/playlists/{playlistID}", handler.deletePlaylist)
 	mux.HandleFunc("POST /api/v1/me/playlists/{playlistID}/tracks", handler.addPlaylistTrack)
 	mux.HandleFunc("DELETE /api/v1/me/playlists/{playlistID}/tracks/{trackID}", handler.removePlaylistTrack)
+	mux.HandleFunc("GET /api/v1/me/favorites/albums", handler.favoriteAlbums)
+	mux.HandleFunc("GET /api/v1/me/favorites/albums/{albumID}", handler.favoriteAlbumStatus)
+	mux.HandleFunc("PUT /api/v1/me/favorites/albums/{albumID}", handler.addFavoriteAlbum)
+	mux.HandleFunc("DELETE /api/v1/me/favorites/albums/{albumID}", handler.removeFavoriteAlbum)
 	mux.HandleFunc("GET /api/v1/me/favorites/tracks/{trackID}", handler.favoriteStatus)
 	mux.HandleFunc("PUT /api/v1/me/favorites/tracks/{trackID}", handler.addFavorite)
 	mux.HandleFunc("DELETE /api/v1/me/favorites/tracks/{trackID}", handler.removeFavorite)
@@ -71,6 +76,7 @@ func New(searchService *search.Service, browseService *browse.Service, lyricsSer
 	mux.HandleFunc("GET /api/v1/system/tasks", handler.listTasks)
 	mux.HandleFunc("POST /api/v1/system/tasks/{taskID}/runs", handler.runTask)
 	mux.HandleFunc("GET /api/v1/search", handler.searchTracks)
+	mux.HandleFunc("GET /api/v1/albums", handler.albums)
 	mux.HandleFunc("GET /api/v1/albums/recent", handler.recentAlbums)
 	mux.HandleFunc("GET /api/v1/albums/{albumID}", handler.albumDetail)
 	mux.HandleFunc("GET /api/v1/artists/{artistID}", handler.artistDetail)
@@ -119,10 +125,13 @@ func (h *Handler) systemInfo(w http.ResponseWriter, _ *http.Request) {
 		"capabilities": []string{
 			"auth.bearer.v1",
 			"search.tracks.v1",
+			"browse.albums.v1",
 			"browse.recent-albums.v1",
 			"lyrics.timed.v1",
 			"playback.direct.v1",
 			"playback.events.v1",
+			"playback.history.v1",
+			"favorites.albums.v1",
 			"system.tasks.v1",
 		},
 	})
@@ -140,6 +149,32 @@ func (h *Handler) trackLyrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, document)
+}
+
+// albums 返回按标题排序的全部可播放专辑游标页。
+// 参数 w 写入 JSON 响应，r 提供 limit、cursor 查询参数及请求上下文；非法分页参数
+// 返回 400，游标不能由本接口续用时同样返回 400，其他读取错误返回 500。
+func (h *Handler) albums(w http.ResponseWriter, r *http.Request) {
+	limit, err := optionalInt(r.URL.Query().Get("limit"))
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "invalid_limit", "Invalid limit", "Limit must be an integer.")
+		return
+	}
+	page, err := h.browse.Albums(r.Context(), limit, r.URL.Query().Get("cursor"))
+	if err != nil {
+		if errors.Is(err, browse.ErrInvalidLimit) {
+			writeProblem(w, r, http.StatusBadRequest, "invalid_limit", "Invalid limit", err.Error())
+			return
+		}
+		if errors.Is(err, browse.ErrInvalidCursor) {
+			writeProblem(w, r, http.StatusBadRequest, "invalid_cursor", "Invalid cursor", "Cursor must be a value returned by this endpoint.")
+			return
+		}
+		h.logger.Error("list albums", "error", err)
+		writeProblem(w, r, http.StatusInternalServerError, "internal_error", "Internal error", "Albums could not be loaded.")
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
 }
 
 func (h *Handler) recentAlbums(w http.ResponseWriter, r *http.Request) {
@@ -258,6 +293,31 @@ func (h *Handler) searchTracks(w http.ResponseWriter, r *http.Request) {
 	page, err := h.search.Tracks(r.Context(), r.URL.Query().Get("query"), limit, r.URL.Query().Get("cursor"))
 	if err != nil {
 		writeProblem(w, r, http.StatusBadRequest, "invalid_search", "Invalid search", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
+}
+
+// recentPlaybackTracks 返回当前登录用户的继续聆听歌曲。
+//
+// 参数 w 用于写入 JSON 响应，r 提供可选 limit 查询参数和身份上下文。历史记录只在歌曲
+// 开始播放时持久化，服务端最多保留最近 300 条；本接口仅允许读取其中 1 至 50 条，且不返回
+// 播放进度。非法 limit 返回 400，读取失败返回 500。
+func (h *Handler) recentPlaybackTracks(w http.ResponseWriter, r *http.Request) {
+	limitValue := r.URL.Query().Get("limit")
+	limit, err := optionalInt(limitValue)
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "invalid_limit", "Invalid limit", "Limit must be an integer.")
+		return
+	}
+	if limitValue != "" && (limit < 1 || limit > 50) {
+		writeProblem(w, r, http.StatusBadRequest, "invalid_limit", "Invalid limit", "Limit must be between 1 and 50.")
+		return
+	}
+	page, err := h.playback.RecentTracks(r.Context(), currentUser(r).ID, limit)
+	if err != nil {
+		h.logger.Error("list playback history", "user_id", currentUser(r).ID, "error", err)
+		writeProblem(w, r, http.StatusInternalServerError, "internal_error", "Internal error", "Playback history could not be loaded.")
 		return
 	}
 	writeJSON(w, http.StatusOK, page)

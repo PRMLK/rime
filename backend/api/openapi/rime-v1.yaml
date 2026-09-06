@@ -122,6 +122,21 @@ paths:
         '204': { description: Password changed; all sessions revoked }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
+  /me/playback-history:
+    get:
+      operationId: listOwnPlaybackHistory
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 12 }
+      responses:
+        '200':
+          description: 当前用户最近开始播放的歌曲；同一首歌只返回最新记录，不包含播放进度
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlaybackHistoryPage' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
   /me/playlists:
     get:
       operationId: listOwnPlaylists
@@ -238,6 +253,47 @@ paths:
       operationId: removeFavorite
       responses:
         '204': { description: Track is not a favorite }
+  /me/favorites/albums:
+    get:
+      operationId: listFavoriteAlbums
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 12 }
+      responses:
+        '200':
+          description: 当前用户直接喜欢且仍可播放的专辑
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlbumPage' }
+        '400': { $ref: '#/components/responses/Problem' }
+  /me/favorites/albums/{albumId}:
+    parameters:
+      - name: albumId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getFavoriteAlbumStatus
+      responses:
+        '200':
+          description: 当前用户对专辑的直接喜欢状态
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [favorite]
+                properties:
+                  favorite: { type: boolean }
+    put:
+      operationId: addFavoriteAlbum
+      responses:
+        '204': { description: Album is a favorite }
+        '404': { $ref: '#/components/responses/Problem' }
+    delete:
+      operationId: removeFavoriteAlbum
+      responses:
+        '204': { description: Album is not a favorite }
   /admin/users:
     get:
       operationId: listUsers
@@ -367,6 +423,25 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SearchPage'
+        '400':
+          $ref: '#/components/responses/Problem'
+  /albums:
+    get:
+      operationId: listAlbums
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 24 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Albums ordered by normalized title
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlbumPage'
         '400':
           $ref: '#/components/responses/Problem'
   /albums/recent:
@@ -748,6 +823,14 @@ components:
           type: array
           items: { $ref: '#/components/schemas/Track' }
         nextCursor: { type: string }
+    PlaybackHistoryPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          description: 按最近开始播放顺序返回去重歌曲，服务端最多保留 300 条历史记录。
+          items: { $ref: '#/components/schemas/Track' }
     ScheduledTask:
       type: object
       required: [id, name, status]

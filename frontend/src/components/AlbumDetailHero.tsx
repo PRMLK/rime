@@ -26,11 +26,14 @@ const albumDetailHeroClassName =
  * 高度；当页面高度先达到 30% 时，画布按封面比例反推全部三列宽度并整体靠左。
  * 该组件保持在普通文档流中，不使用固定或粘性定位，因此会随着曲目列表一起滚动。
  *
- * @param props - 专辑头图所需的资料和打开歌手页的回调。
+ * @param props - 专辑头图所需的资料、喜欢状态和打开歌手页的回调。
  * @param props.album - 用于封面、标题、歌手与播放操作的专辑详情最小资料。
  * @param props.isPlaying - 当前是否正在播放该专辑的任一曲目；为真时黑胶盘面旋转。
+ * @param props.isFavorite - 当前用户是否直接喜欢该专辑。
+ * @param props.isUpdatingFavorite - 是否正在读取或写入专辑喜欢状态，用于暂时禁用重复点击。
  * @param props.onOpenArtist - 用户选择歌手文字后打开对应歌手详情的回调。
  * @param props.onPlayAll - 用户选择全部播放后，以当前专辑全部曲目建立播放队列的回调。
+ * @param props.onToggleFavorite - 用户切换专辑喜欢状态的回调。
  * @returns 不超过可滚动内容区 30%、横向按 60:5:35 分配的专辑详情头图。
  *
  * @example
@@ -39,13 +42,19 @@ const albumDetailHeroClassName =
 export function AlbumDetailHero({
   album,
   isPlaying = false,
+  isFavorite,
+  isUpdatingFavorite,
   onOpenArtist,
   onPlayAll,
+  onToggleFavorite,
 }: {
   album: AlbumDetailHeroAlbum;
   isPlaying?: boolean;
+  isFavorite: boolean;
+  isUpdatingFavorite: boolean;
   onOpenArtist: (artistId: string) => void;
   onPlayAll: (tracks: AlbumDetail['tracks']) => void;
+  onToggleFavorite: () => void;
 }) {
   return (
     <section className={albumDetailHeroClassName} aria-labelledby="album-title">
@@ -53,7 +62,14 @@ export function AlbumDetailHero({
         <AlbumVinylArtwork artwork={album} size="fluid" isPlaying={isPlaying} />
       </div>
       {/* 第二列由网格的 5fr 留白承担，名称组件从第三列开始，避免缩放时挤压左右内容。 */}
-      <AlbumDetailHeroInfo album={album} onOpenArtist={onOpenArtist} onPlayAll={onPlayAll} />
+      <AlbumDetailHeroInfo
+        album={album}
+        isFavorite={isFavorite}
+        isUpdatingFavorite={isUpdatingFavorite}
+        onOpenArtist={onOpenArtist}
+        onPlayAll={onPlayAll}
+        onToggleFavorite={onToggleFavorite}
+      />
     </section>
   );
 }

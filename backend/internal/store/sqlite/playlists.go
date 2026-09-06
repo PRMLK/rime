@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -181,6 +182,85 @@ func (s *Store) IsFavorite(ctx context.Context, userID, trackID string) (bool, e
 	err := s.db.QueryRowContext(ctx, `
 		SELECT 1 FROM playlist_tracks pt JOIN playlists p ON p.id = pt.playlist_id
 		WHERE p.owner_user_id = ? AND p.kind = 'favorites' AND pt.track_id = ?`, userID, trackID).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// FavoriteAlbums 返回当前用户直接喜欢且仍可播放的专辑。
+//
+// 参数 ctx 用于取消查询，userID 限制偏好归属，limit 已由服务层校验为 1 至 50。查询只
+// 返回仍至少包含一个可用媒体文件的专辑，避免首页展示无法进入详情或播放的卡片；专辑
+// 资料与常规专辑列表保持同一响应形状，方便前端复用 AlbumCard（专辑卡片）。
+func (s *Store) FavoriteAlbums(ctx context.Context, userID string, limit int) ([]catalog.Album, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT al.id, al.title, al.artwork_id, MAX(mf.indexed_at) AS library_added_at
+		FROM favorite_albums fa
+		JOIN albums al ON al.id = fa.album_id
+		JOIN tracks t ON t.album_id = al.id
+		JOIN media_files mf ON mf.track_id = t.id
+		WHERE fa.user_id = ? AND mf.available = 1 AND mf.indexed_at IS NOT NULL
+		GROUP BY fa.user_id, fa.album_id, fa.created_at, al.id, al.title, al.artwork_id
+		ORDER BY fa.created_at DESC, al.id DESC
+		LIMIT ?`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]catalog.Album, 0, limit)
+	for rows.Next() {
+		var album catalog.Album
+		var artworkID sql.NullString
+		var addedAt string
+		if err := rows.Scan(&album.ID, &album.Title, &artworkID, &addedAt); err != nil {
+			return nil, err
+		}
+		parsedAddedAt, err := time.Parse(time.RFC3339Nano, addedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse favorite album indexed time: %w", err)
+		}
+		album.AddedAt = parsedAddedAt
+		if artworkID.Valid {
+			album.ArtworkID = &artworkID.String
+		}
+		album.Artists, err = s.albumArtists(ctx, album.ID)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, album)
+	}
+	return items, rows.Err()
+}
+
+// SetFavoriteAlbum 新增或移除当前用户与专辑之间的直接喜欢关系。
+//
+// 参数 ctx 用于取消数据库写入，userID 与 albumID 确定关联记录，favorite 控制新增或移除，
+// now 作为新增时的稳定排序时间。添加前验证专辑存在，避免无效 ID 产生孤立偏好；移除则
+// 保持幂等，即未收藏时同样可安全返回成功。
+func (s *Store) SetFavoriteAlbum(ctx context.Context, userID, albumID string, favorite bool, now time.Time) error {
+	if favorite {
+		var exists int
+		if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM albums WHERE id = ?`, albumID).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
+			return playlists.ErrAlbumNotFound
+		} else if err != nil {
+			return err
+		}
+		_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO favorite_albums(user_id, album_id, created_at) VALUES(?, ?, ?)`, userID, albumID, now.Format(time.RFC3339Nano))
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM favorite_albums WHERE user_id = ? AND album_id = ?`, userID, albumID)
+	return err
+}
+
+// IsFavoriteAlbum 检查当前用户是否直接喜欢目标专辑。
+//
+// 参数 ctx 用于取消查询，userID 限制偏好归属，albumID 为目标专辑。未找到关联记录时返回
+// false 与 nil，使首次进入专辑详情的未收藏状态不被视为错误。
+func (s *Store) IsFavoriteAlbum(ctx context.Context, userID, albumID string) (bool, error) {
+	var exists int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM favorite_albums WHERE user_id = ? AND album_id = ?`, userID, albumID).Scan(&exists)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}

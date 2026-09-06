@@ -15,10 +15,11 @@ type AlbumDetailHeroInfoAlbum = Pick<AlbumDetail, 'artists' | 'description' | 't
  * 过大的空白。文字组采用极小的光学内缩，以补偿粗体中文字形的左侧外扩与圆角按钮
  * 透明角造成的视觉偏差；操作按钮仍以自身外框作为横向锚点。
  *
- * @param props - 名称区域所需的专辑资料与交互回调。
+ * @param props - 名称区域所需的专辑资料、喜欢状态与交互回调。
  * @param props.album - 提供标题、歌手与全部播放曲目列表的最小专辑资料。
  * @param props.onOpenArtist - 用户点击歌手文字后打开对应歌手详情的回调。
  * @param props.onPlayAll - 用户点击播放按钮后，以全部曲目建立播放队列的回调。
+ * @param props.onToggleFavorite - 用户点击心形按钮切换专辑喜欢状态的回调。
  * @returns 位于头图第三列、可随父级画布等比缩放的专辑名称区域。
  *
  * @example
@@ -26,12 +27,18 @@ type AlbumDetailHeroInfoAlbum = Pick<AlbumDetail, 'artists' | 'description' | 't
  */
 export function AlbumDetailHeroInfo({
   album,
+  isFavorite,
+  isUpdatingFavorite,
   onOpenArtist,
   onPlayAll,
+  onToggleFavorite,
 }: {
   album: AlbumDetailHeroInfoAlbum;
+  isFavorite: boolean;
+  isUpdatingFavorite: boolean;
   onOpenArtist: (artistId: string) => void;
   onPlayAll: (tracks: AlbumDetail['tracks']) => void;
+  onToggleFavorite: () => void;
 }) {
   return (
     <div className="col-start-3 flex h-full min-h-0 min-w-0 flex-col items-start pt-[6.25cqw] text-left">
@@ -64,7 +71,11 @@ export function AlbumDetailHeroInfo({
         >
           <Play className="size-[3.472cqw]" data-icon="inline-start" aria-hidden="true" />
         </Button>
-        <AlbumDetailHeroUnavailableAction icon={Heart} label="收藏专辑" />
+        <AlbumDetailHeroFavoriteAction
+          favorite={isFavorite}
+          isUpdating={isUpdatingFavorite}
+          onToggle={onToggleFavorite}
+        />
         <AlbumDetailHeroUnavailableAction icon={Ellipsis} label="更多操作" />
       </div>
     </div>
@@ -149,7 +160,7 @@ function AlbumDetailHeroArtistLinks({
 /**
  * 渲染当前版本尚未接入服务端能力的专辑操作。
  *
- * 收藏与更多操作保留完整的可点击外观和按压反馈，但当前没有可调用的业务接口；
+ * 更多操作保留完整的可点击外观和按压反馈，但当前没有可调用的业务接口；
  * 不可用的技术原因仅保留在代码内，界面不额外显示说明或提示气泡。
  *
  * @param props - 图标与操作名称。
@@ -181,13 +192,45 @@ function AlbumDetailHeroUnavailableAction({
 }
 
 /**
- * 接收尚未接入业务能力的专辑操作点击。
+ * 接收尚未接入业务能力的专辑更多操作点击。
  *
- * 用户需要这些按钮保持完整亮度与可点击状态，但收藏和更多操作尚无接口，因此此处
- * 故意不修改状态、不发送请求。后续接入对应能力时，应在此函数中调用明确的领域操作。
+ * 用户需要该按钮保持完整亮度与可点击状态，但更多操作尚无接口，因此此处故意不修改
+ * 状态、不发送请求。后续接入对应能力时，应在此函数中调用明确的领域操作。
  *
  * @returns 无返回值，也不产生任何副作用。
  */
 function handleReservedAlbumAction(): void {
   return;
+}
+
+/**
+ * 渲染可持久化的专辑喜欢操作。
+ *
+ * @param props.favorite - 当前用户是否直接喜欢该专辑。
+ * @param props.isUpdating - 读取或写入状态期间为 true，用于阻止错误操作与重复提交。
+ * @param props.onToggle - 切换喜欢状态的回调。
+ * @returns 带语义化状态与辅助技术标签的心形图标按钮。
+ */
+function AlbumDetailHeroFavoriteAction({
+  favorite,
+  isUpdating,
+  onToggle,
+}: {
+  favorite: boolean;
+  isUpdating: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <Button
+      variant="album-secondary"
+      size="icon"
+      className="size-[6.944cqw] shrink-0 rounded-full"
+      aria-label={favorite ? '取消喜欢专辑' : '喜欢专辑'}
+      aria-pressed={favorite}
+      disabled={isUpdating}
+      onClick={onToggle}
+    >
+      <Heart fill={favorite ? 'currentColor' : 'none'} className="size-[2.778cqw]" data-icon="inline-start" aria-hidden="true" />
+    </Button>
+  );
 }

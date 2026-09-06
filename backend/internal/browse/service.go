@@ -28,6 +28,7 @@ type ArtistDetailPage struct {
 }
 
 type Repository interface {
+	Albums(context.Context, int, string) (AlbumPage, error)
 	RecentAlbums(context.Context, int, string) (AlbumPage, error)
 	AlbumDetail(context.Context, string) (catalog.AlbumDetail, error)
 	ArtistDetail(context.Context, string, int, string) (ArtistDetailPage, error)
@@ -39,6 +40,25 @@ type Service struct {
 
 func New(repo Repository) *Service {
 	return &Service{repo: repo}
+}
+
+// Albums 返回全部可播放专辑的一个游标页。
+//
+// 参数 ctx 用于取消请求，limit 为单批最大项目数，未提供时默认 24；cursor 为上一批响应
+// 中返回的透明游标，留空时从第一批开始。专辑按规范化标题稳定排序，以便用户在“全部专辑”
+// 视图中按名称浏览；返回值同时包含后续加载所需的下一批游标。
+func (s *Service) Albums(ctx context.Context, limit int, cursor string) (AlbumPage, error) {
+	if limit == 0 {
+		limit = 24
+	}
+	if limit < 1 || limit > 50 {
+		return AlbumPage{}, ErrInvalidLimit
+	}
+	page, err := s.repo.Albums(ctx, limit, cursor)
+	if err != nil {
+		return AlbumPage{}, err
+	}
+	return page, nil
 }
 
 // RecentAlbums 返回最近入库专辑的一个游标页。

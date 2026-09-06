@@ -258,12 +258,40 @@ func (s *Store) UpdateArtworkFocus(ctx context.Context, artworkID string, focus 
 	return nil
 }
 
+// albumSortOrder 表示专辑游标列表的固定排序方式。
+// 枚举值仅在本包内使用，避免将未经验证的排序字段拼接到 SQL 语句中。
+type albumSortOrder uint8
+
+const (
+	albumSortByTitle albumSortOrder = iota
+	albumSortByRecentIngestion
+)
+
+// Albums 以规范化标题的稳定顺序返回全部可播放专辑的一页。
+// cursor 是内部偏移游标；它只能由同一接口返回的 nextCursor 提供。
+func (s *Store) Albums(ctx context.Context, limit int, cursor string) (browse.AlbumPage, error) {
+	return s.albumPage(ctx, limit, cursor, albumSortByTitle)
+}
+
 // RecentAlbums 以稳定排序返回最近入库专辑的一页。
 // cursor 是内部偏移游标；它只能由同一接口返回的 nextCursor 提供。
 func (s *Store) RecentAlbums(ctx context.Context, limit int, cursor string) (browse.AlbumPage, error) {
+	return s.albumPage(ctx, limit, cursor, albumSortByRecentIngestion)
+}
+
+// albumPage 按指定的内部排序规则读取可播放专辑。
+//
+// 参数 order 仅接受本文件的 albumSortOrder（专辑排序方式）枚举。所有模式都保留
+// added_at（入库时间），因此“最近入库”与“全部专辑”可复用同一响应模型；标题排序
+// 以专辑 ID 收尾，确保游标偏移在同名专辑存在时仍保持确定性。
+func (s *Store) albumPage(ctx context.Context, limit int, cursor string, order albumSortOrder) (browse.AlbumPage, error) {
 	offset, err := decodeCursor(cursor)
 	if err != nil {
 		return browse.AlbumPage{}, browse.ErrInvalidCursor
+	}
+	orderBy := "al.normalized_title, al.id"
+	if order == albumSortByRecentIngestion {
+		orderBy = "added_at DESC, al.normalized_title, al.id"
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT al.id, al.title, al.artwork_id, MAX(mf.indexed_at) AS added_at
@@ -272,7 +300,7 @@ func (s *Store) RecentAlbums(ctx context.Context, limit int, cursor string) (bro
 		JOIN media_files mf ON mf.track_id = t.id
 		WHERE mf.available = 1 AND mf.indexed_at IS NOT NULL
 		GROUP BY al.id, al.title, al.artwork_id
-		ORDER BY added_at DESC, al.normalized_title, al.id
+		ORDER BY `+orderBy+`
 		LIMIT ? OFFSET ?`, limit+1, offset)
 	if err != nil {
 		return browse.AlbumPage{}, err
@@ -856,16 +884,115 @@ func (s *Store) PlaybackSessionMedia(ctx context.Context, sessionID string, now 
 	return track, media, err
 }
 
-func (s *Store) RecordPlaybackEvent(ctx context.Context, userID, sessionID string, event playback.Event) error {
-	var exists int
-	if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM playback_sessions WHERE id = ? AND user_id = ?`, sessionID, userID).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
+// RecordPlaybackEvent 保存一次播放器事件，并在歌曲首次开始播放时更新继续聆听历史。
+//
+// 参数 ctx 用于取消数据库操作，userID 限定会话与历史的归属用户，sessionID 标识本次临时
+// 播放会话，event 包含客户端上报的事件类型、位置和发生时间，now 是服务端当前时间，用于
+// 拒绝已过期会话和记录可信的历史排序时间。播放事件和历史项在同一事务中写入：仅新插入的
+// started（开始播放）事件可更新历史，防止网络重试或同一会话恢复播放产生重复项。客户端的
+// occurredAt（发生时间）仅保存在事件审计记录中；继续聆听按服务端收到事件的时间排序，避免
+// 错误时钟或伪造的未来时间戳永久污染首页顺序。每位用户的同一首歌只保留最近一次记录，写入
+// 后再裁剪为最新 300 首；历史不保存进度。
+func (s *Store) RecordPlaybackEvent(ctx context.Context, userID, sessionID string, event playback.Event, now time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var trackID string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT track_id
+		FROM playback_sessions
+		WHERE id = ? AND user_id = ? AND expires_at > ?`, sessionID, userID, now.UTC().Format(time.RFC3339Nano)).Scan(&trackID); errors.Is(err, sql.ErrNoRows) {
 		return playback.ErrSessionNotFound
 	} else if err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO playback_events(event_id, session_id, event_type, position_ms, occurred_at) VALUES(?, ?, ?, ?, ?)`,
+	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO playback_events(event_id, session_id, event_type, position_ms, occurred_at) VALUES(?, ?, ?, ?, ?)`,
 		event.EventID, sessionID, event.Type, event.PositionMs, event.OccurredAt.UTC().Format(time.RFC3339Nano))
-	return err
+	if err != nil {
+		return err
+	}
+
+	/*
+	 * 同一个 eventId（事件 ID）可能因网络重试而再次到达。只有 playback_events（播放事件表）
+	 * 真正插入了 started（开始播放）事件，才更新历史项；同一首歌由用户和曲目唯一约束
+	 * 去重。continue listening（继续聆听）的排序必须由服务端接收时间决定，不能直接信任
+	 * 客户端上报的 occurredAt（发生时间）；否则设备时钟错误或手工构造的未来时间会让歌曲
+	 * 长期置顶，并在裁剪时挤掉真实记录。暂停后恢复、请求重试不会生成额外历史。历史不引用
+	 * 会话，因此会话回收后仍可保留。
+	 */
+	if event.Type == "started" {
+		inserted, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if inserted == 1 {
+			// 使用固定精度的毫秒时间戳排序，避免 RFC3339Nano（RFC3339 纳秒格式）小数位长度不同
+			// 时，在同一秒内按文本排序出现先后颠倒。
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO playback_history(user_id, track_id, session_id, played_at)
+				VALUES(?, ?, ?, ?)
+				ON CONFLICT(user_id, track_id) DO UPDATE SET
+					session_id = excluded.session_id,
+					played_at = excluded.played_at
+				WHERE playback_history.session_id <> excluded.session_id
+				  AND excluded.played_at >= playback_history.played_at`,
+				userID, trackID, sessionID, now.UTC().UnixMilli()); err != nil {
+				return err
+			}
+			// 只裁剪当前用户的旧记录；id 作为同一时间戳下的稳定次级排序键。
+			if _, err := tx.ExecContext(ctx, `
+				DELETE FROM playback_history
+				WHERE user_id = ?
+				  AND id NOT IN (
+					SELECT id FROM playback_history
+					WHERE user_id = ?
+					ORDER BY played_at DESC, id DESC
+					LIMIT 300
+				  )`, userID, userID); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
+}
+
+// RecentPlaybackTracks 返回当前用户最近播放且仍可用的歌曲。
+//
+// 参数 limit 由播放服务校验为 1 至 50。查询先过滤不可播放曲目，避免历史记录引用的
+// 媒体文件已经被扫描器标记为缺失时让整个首页失败；随后复用 GetTrack（读取曲目）补全
+// 专辑、歌手和封面资料。
+func (s *Store) RecentPlaybackTracks(ctx context.Context, userID string, limit int) ([]catalog.Track, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT history.track_id
+		FROM playback_history history
+		WHERE history.user_id = ?
+		  AND EXISTS (
+			SELECT 1 FROM media_files media
+			WHERE media.track_id = history.track_id AND media.available = 1
+		  )
+		ORDER BY history.played_at DESC, history.id DESC
+		LIMIT ?`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]catalog.Track, 0, limit)
+	for rows.Next() {
+		var trackID string
+		if err := rows.Scan(&trackID); err != nil {
+			return nil, err
+		}
+		track, err := s.GetTrack(ctx, trackID)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, track)
+	}
+	return items, rows.Err()
 }
 
 func (s *Store) DeletePlaybackSession(ctx context.Context, userID, sessionID string) error {

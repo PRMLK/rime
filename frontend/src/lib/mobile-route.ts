@@ -14,6 +14,7 @@ export type MobileTab = 'home' | 'search' | 'library';
 export type MobileRoute =
   | { kind: 'tab'; tab: MobileTab }
   | { kind: 'search'; query: string }
+  | { kind: 'albums' }
   | { kind: 'recent-albums' }
   | { kind: 'album'; albumId: string; sourceTab: MobileTab }
   | { kind: 'artist'; artistId: string; sourceTab: MobileTab };
@@ -54,6 +55,7 @@ export function parseMobileRoute(hash: string): MobileRoute {
   if (path === '/search') {
     return { kind: 'search', query: parameters.get('q') ?? '' };
   }
+  if (path === '/albums') return { kind: 'albums' };
   if (path === '/albums/recent') return { kind: 'recent-albums' };
 
   const albumMatch = /^\/albums\/([^/]+)$/.exec(path);
@@ -82,6 +84,8 @@ export function formatMobileRoute(route: MobileRoute): string {
       const query = parameters.toString();
       return `#/search${query ? `?${query}` : ''}`;
     }
+    case 'albums':
+      return '#/albums';
     case 'recent-albums':
       return '#/albums/recent';
     case 'album':

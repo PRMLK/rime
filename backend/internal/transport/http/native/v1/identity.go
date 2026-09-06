@@ -423,6 +423,62 @@ func (h *Handler) removePlaylistTrack(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// favoriteAlbums 返回当前用户直接喜欢的可播放专辑。
+//
+// 参数 w 用于写入 JSON 响应，r 提供可选 limit 和认证后的用户身份。歌曲喜欢推导出的专辑
+// 由首页额外读取收藏歌单后合并；本接口只描述用户显式喜欢的专辑。非法 limit 返回 400，
+// 其余错误遵循歌单与收藏领域的统一错误映射。
+func (h *Handler) favoriteAlbums(w http.ResponseWriter, r *http.Request) {
+	limit, err := optionalInt(r.URL.Query().Get("limit"))
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "invalid_limit", "Invalid limit", "Limit must be an integer.")
+		return
+	}
+	items, err := h.playlists.FavoriteAlbums(r.Context(), currentUser(r).ID, limit)
+	if err != nil {
+		h.playlistError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+// favoriteAlbumStatus 返回当前用户对目标专辑的直接喜欢状态。
+//
+// 参数 w 写入 JSON 响应，r 提供 albumID 路径参数与认证用户。返回值只反映专辑本身的
+// 喜欢状态，不会因为其中任何歌曲被喜欢而变化。
+func (h *Handler) favoriteAlbumStatus(w http.ResponseWriter, r *http.Request) {
+	favorite, err := h.playlists.IsAlbumFavorite(r.Context(), currentUser(r).ID, r.PathValue("albumID"))
+	if err != nil {
+		h.playlistError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"favorite": favorite})
+}
+
+// addFavoriteAlbum 将目标专辑加入当前用户的直接喜欢列表。
+//
+// 参数 w 写入无内容成功响应，r 提供 albumID 和认证用户。重复添加是幂等操作；目标专辑
+// 不存在时返回 404，其他领域错误由 playlistError（歌单错误映射）转换为问题响应。
+func (h *Handler) addFavoriteAlbum(w http.ResponseWriter, r *http.Request) {
+	if err := h.playlists.SetAlbumFavorite(r.Context(), currentUser(r).ID, r.PathValue("albumID"), true); err != nil {
+		h.playlistError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// removeFavoriteAlbum 从当前用户的直接喜欢列表移除目标专辑。
+//
+// 参数 w 写入无内容成功响应，r 提供 albumID 和认证用户。未收藏的专辑同样返回成功，使
+// 客户端在重试或多端同步时不需要额外读取状态。
+func (h *Handler) removeFavoriteAlbum(w http.ResponseWriter, r *http.Request) {
+	if err := h.playlists.SetAlbumFavorite(r.Context(), currentUser(r).ID, r.PathValue("albumID"), false); err != nil {
+		h.playlistError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *Handler) favoriteStatus(w http.ResponseWriter, r *http.Request) {
 	favorite, err := h.playlists.IsFavorite(r.Context(), currentUser(r).ID, r.PathValue("trackID"))
 	if err != nil {
@@ -454,6 +510,10 @@ func (h *Handler) playlistError(w http.ResponseWriter, r *http.Request, err erro
 		writeProblem(w, r, http.StatusBadRequest, "invalid_playlist_name", "Invalid playlist name", err.Error())
 	case errors.Is(err, playlists.ErrNotFound):
 		writeProblem(w, r, http.StatusNotFound, "playlist_not_found", "Playlist not found", "The requested playlist or track does not exist.")
+	case errors.Is(err, playlists.ErrAlbumNotFound):
+		writeProblem(w, r, http.StatusNotFound, "favorite_album_not_found", "Favorite album not found", "The requested album does not exist.")
+	case errors.Is(err, playlists.ErrInvalidLimit):
+		writeProblem(w, r, http.StatusBadRequest, "invalid_limit", "Invalid limit", err.Error())
 	case errors.Is(err, playlists.ErrProtected):
 		writeProblem(w, r, http.StatusConflict, "favorites_protected", "Playlist protected", "The favorites playlist cannot be renamed or deleted.")
 	case errors.Is(err, playlists.ErrDuplicate):

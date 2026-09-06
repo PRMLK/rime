@@ -58,12 +58,19 @@ type Event struct {
 	OccurredAt time.Time `json:"occurredAt"`
 }
 
+// HistoryPage 表示当前用户近期播放过的歌曲。
+// Items 中同一首歌曲至多出现一次，并按该歌曲最近一次开始播放的时间倒序排列。
+type HistoryPage struct {
+	Items []catalog.Track `json:"items"`
+}
+
 type Repository interface {
 	GetTrack(context.Context, string) (catalog.Track, error)
 	AvailableMedia(context.Context, string) ([]catalog.MediaFile, error)
 	CreatePlaybackSession(context.Context, string, string, string, string, string, time.Time, time.Time) error
 	PlaybackSessionMedia(context.Context, string, time.Time) (catalog.Track, catalog.MediaFile, error)
-	RecordPlaybackEvent(context.Context, string, string, Event) error
+	RecordPlaybackEvent(context.Context, string, string, Event, time.Time) error
+	RecentPlaybackTracks(context.Context, string, int) ([]catalog.Track, error)
 	DeletePlaybackSession(context.Context, string, string) error
 }
 
@@ -134,10 +141,32 @@ func (s *Service) Record(ctx context.Context, userID, sessionID string, event Ev
 	if event.EventID == "" {
 		return fmt.Errorf("eventId is required")
 	}
+	now := s.now().UTC()
 	if event.OccurredAt.IsZero() {
-		event.OccurredAt = s.now().UTC()
+		event.OccurredAt = now
 	}
-	return s.repo.RecordPlaybackEvent(ctx, userID, sessionID, event)
+	// 会话是否仍有效必须由服务端时间判断，不能信任客户端上报的 occurredAt（发生时间）。
+	// 这样延迟重试的事件也无法让已过期、且已不能串流的会话写入继续聆听历史。
+	return s.repo.RecordPlaybackEvent(ctx, userID, sessionID, event, now)
+}
+
+// RecentTracks 返回当前用户近期实际开始播放过的歌曲。
+//
+// 参数 ctx 用于取消请求，userID 标识历史归属用户，limit 为首页需要展示的条数；留空时
+// 默认返回 12 条，范围限制在 1 到 50。底层已将每位用户的历史永久裁剪至最近 300 条，
+// 因此读取接口不需要暴露播放进度或分页游标。
+func (s *Service) RecentTracks(ctx context.Context, userID string, limit int) (HistoryPage, error) {
+	if limit == 0 {
+		limit = 12
+	}
+	if limit < 1 || limit > 50 {
+		return HistoryPage{}, fmt.Errorf("limit must be between 1 and 50")
+	}
+	items, err := s.repo.RecentPlaybackTracks(ctx, userID, limit)
+	if err != nil {
+		return HistoryPage{}, err
+	}
+	return HistoryPage{Items: items}, nil
 }
 
 func (s *Service) Delete(ctx context.Context, userID, sessionID string) error {

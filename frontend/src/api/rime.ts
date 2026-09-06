@@ -104,6 +104,11 @@ export type SearchPage = {
   nextCursor?: string;
 };
 
+/** 当前用户的继续聆听歌曲，不包含播放进度。 */
+export type PlaybackHistoryPage = {
+  items: Track[];
+};
+
 export type LyricsLine = {
   startMs?: number;
   endMs?: number;
@@ -161,6 +166,10 @@ const artworkObjectUrls = new Map<string, string>();
 
 export const authChangedEvent = 'rime:auth-changed';
 export const playlistsChangedEvent = 'rime:playlists-changed';
+/** 专辑喜欢状态变更后触发，用于刷新首页的“我的喜欢”。 */
+export const favoriteAlbumsChangedEvent = 'rime:favorite-albums-changed';
+/** 播放器成功记录歌曲开始播放后触发，用于刷新首页继续聆听。 */
+export const playbackHistoryChangedEvent = 'rime:playback-history-changed';
 
 export class ApiError extends Error {
   constructor(
@@ -304,6 +313,43 @@ export async function setFavorite(trackId: string, favorite: boolean): Promise<v
   window.dispatchEvent(new Event(playlistsChangedEvent));
 }
 
+/**
+ * 获取当前用户直接喜欢的专辑。
+ *
+ * 歌曲喜欢所关联的专辑不在此接口返回，首页会将它们与本结果合并后去重。
+ *
+ * @param limit 需要返回的专辑数量，后端允许范围为 1 至 50。
+ * @param signal 用于取消请求的 AbortSignal（中止信号）。
+ * @returns 可直接展示为专辑卡片的异步专辑页。
+ */
+export function getFavoriteAlbums(limit = 12, signal?: AbortSignal): Promise<AlbumPage> {
+  const parameters = new URLSearchParams({ limit: String(limit) });
+  return request<AlbumPage>(`/api/v1/me/favorites/albums?${parameters}`, { signal });
+}
+
+/**
+ * 查询当前用户是否直接喜欢目标专辑。
+ *
+ * @param albumId 专辑的唯一标识。
+ * @param signal 用于在离开专辑详情时取消请求的 AbortSignal（中止信号）。
+ * @returns 包含专辑喜欢状态的 Promise（异步结果）。
+ */
+export function getFavoriteAlbumStatus(albumId: string, signal?: AbortSignal): Promise<{ favorite: boolean }> {
+  return request<{ favorite: boolean }>(`/api/v1/me/favorites/albums/${encodeURIComponent(albumId)}`, { signal });
+}
+
+/**
+ * 设置当前用户对目标专辑的直接喜欢状态。
+ *
+ * @param albumId 专辑的唯一标识。
+ * @param favorite true 表示喜欢，false 表示取消喜欢。
+ * @returns 服务端完成写入后的 Promise（异步结果）。
+ */
+export async function setFavoriteAlbum(albumId: string, favorite: boolean): Promise<void> {
+  await request<void>(`/api/v1/me/favorites/albums/${encodeURIComponent(albumId)}`, { method: favorite ? 'PUT' : 'DELETE' });
+  window.dispatchEvent(new Event(favoriteAlbumsChangedEvent));
+}
+
 export function getUsers(signal?: AbortSignal): Promise<{ items: User[] }> {
   return request<{ items: User[] }>('/api/v1/admin/users', { signal });
 }
@@ -335,6 +381,20 @@ export function searchTracks(query: string, cursor?: string, signal?: AbortSigna
 }
 
 /**
+ * 获取按专辑标题排序的全部专辑。
+ *
+ * @param limit 需要返回的专辑数量，后端当前允许的范围为 1 至 50。
+ * @param cursor 服务端返回的下一批游标；未提供时请求第一批。
+ * @param signal 用于在离开页面时取消未完成请求的 AbortSignal（中止信号）。
+ * @returns 包含专辑与后续加载游标的 Promise（异步结果）。
+ */
+export function getAlbums(limit = 24, cursor?: string, signal?: AbortSignal): Promise<AlbumPage> {
+  const parameters = new URLSearchParams({ limit: String(limit) });
+  if (cursor) parameters.set('cursor', cursor);
+  return request<AlbumPage>(`/api/v1/albums?${parameters}`, { signal });
+}
+
+/**
  * 获取按入库时间倒序排列的专辑。
  * @param limit 需要返回的专辑数量，后端当前允许的范围为 1 至 50。
  * @param cursor 服务端返回的下一批游标；未提供时请求第一批。
@@ -345,6 +405,21 @@ export function getRecentAlbums(limit = 12, cursor?: string, signal?: AbortSigna
   const parameters = new URLSearchParams({ limit: String(limit) });
   if (cursor) parameters.set('cursor', cursor);
   return request<AlbumPage>(`/api/v1/albums/recent?${parameters}`, { signal });
+}
+
+/**
+ * 获取当前用户最近开始播放过的歌曲。
+ *
+ * 服务端持续保存每位用户最近 300 条播放历史；此接口仅请求首页展示所需的一小批歌曲，
+ * 不返回任何播放进度。
+ *
+ * @param limit 需要返回的歌曲数量，后端允许范围为 1 至 50。
+ * @param signal 用于在离开首页时取消未完成请求的 AbortSignal（中止信号）。
+ * @returns 按最近播放顺序排列的歌曲 Promise（异步结果）。
+ */
+export function getRecentPlaybackTracks(limit = 12, signal?: AbortSignal): Promise<PlaybackHistoryPage> {
+  const parameters = new URLSearchParams({ limit: String(limit) });
+  return request<PlaybackHistoryPage>(`/api/v1/me/playback-history?${parameters}`, { signal });
 }
 
 /**
@@ -431,12 +506,20 @@ export async function createPlaybackSession(trackId: string, playerId: string): 
   };
 }
 
-export function recordPlaybackEvent(
+/**
+ * 上报播放器事件，并在歌曲开始播放成功持久化后通知首页刷新继续聆听。
+ *
+ * @param sessionId 当前播放会话的唯一标识。
+ * @param type 播放器事件类型；只有 started（开始播放）会影响继续聆听历史。
+ * @param positionMs 当前播放位置的毫秒值，继续聆听历史不会保存或展示该值。
+ * @returns 服务端接受事件后的 Promise（异步结果）。
+ */
+export async function recordPlaybackEvent(
   sessionId: string,
   type: 'started' | 'progress' | 'paused' | 'ended',
   positionMs: number,
 ): Promise<void> {
-  return request<void>(`/api/v1/playback/sessions/${sessionId}/events`, {
+  await request<void>(`/api/v1/playback/sessions/${sessionId}/events`, {
     method: 'POST',
     body: JSON.stringify({
       eventId: crypto.randomUUID(),
@@ -445,6 +528,7 @@ export function recordPlaybackEvent(
       occurredAt: new Date().toISOString(),
     }),
   });
+  if (type === 'started') window.dispatchEvent(new Event(playbackHistoryChangedEvent));
 }
 
 export function deletePlaybackSession(sessionId: string): Promise<void> {

@@ -14,6 +14,7 @@ const (
 
 var (
 	ErrNotFound      = errors.New("playlist not found")
+	ErrAlbumNotFound = errors.New("favorite album not found")
 	ErrProtected     = errors.New("favorites playlist cannot be changed")
 	ErrDuplicate     = errors.New("track is already in playlist")
 	ErrInvalidName   = errors.New("playlist name must contain 1 to 80 characters")

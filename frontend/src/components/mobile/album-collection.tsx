@@ -11,6 +11,9 @@ const albumGridCardMaximumSizeInRem = 14;
 /** 专辑网格在任何宽度下都至少保留两列。 */
 const albumGridMinimumColumns = 2;
 
+/** 专辑卡片实际需要的最小资料；列表接口可额外提供入库时间等信息。 */
+export type AlbumCardAlbum = Pick<Album, 'id' | 'title' | 'artists' | 'artworkId'>;
+
 /**
  * 将歌手引用格式化为页面上展示的一行名称。
  *
@@ -27,7 +30,7 @@ export function formatArtistNames(artists: ArtistRef[]): string {
  * @param props - 专辑资料与打开对应详情页的回调。
  * @returns 使用现有 Button（按钮）组件呈现的专辑入口。
  */
-export function AlbumCard({ album, onOpenAlbum }: { album: Album; onOpenAlbum: (albumId: string) => void }) {
+export function AlbumCard({ album, onOpenAlbum }: { album: AlbumCardAlbum; onOpenAlbum: (albumId: string) => void }) {
   /*
    * 轮播使用 -ml-3 / pl-3 抵消项目间距，使首项刚好落在页面内容轨上。
    * 卡片不能再额外添加 p-1，否则首页首张封面、专辑网格首列和加载骨架

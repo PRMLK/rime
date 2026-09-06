@@ -19,7 +19,7 @@ import { AppScrollArea } from '@/components/AppScrollArea';
 import { LibraryView } from '@/components/LibraryView';
 import { AlbumDetailView } from '@/components/mobile/album-detail-view';
 import { ArtistDetailView } from '@/components/mobile/artist-detail-view';
-import { HomeView, RecentAlbumsView } from '@/components/mobile/home-view';
+import { AllAlbumsView, HomeView, RecentAlbumsView } from '@/components/mobile/home-view';
 import { NowPlayingDrawer } from '@/components/mobile/now-playing-drawer';
 import { SearchView } from '@/components/mobile/search-view';
 import { SystemSettingsDrawer } from '@/components/mobile/system-settings-drawer';
@@ -45,6 +45,7 @@ type PlaybackMode = 'sequence' | 'repeat';
 type DetailView =
   | { kind: 'album'; id: string }
   | { kind: 'artist'; id: string }
+  | { kind: 'albums' }
   | { kind: 'recent-albums' };
 
 const navigationItems = [
@@ -91,7 +92,10 @@ export function MobilePlayer({
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isLiked, setIsLiked] = useState(false);
-  const [isUpdatingLike, setIsUpdatingLike] = useState(false);
+  const [isLoadingLike, setIsLoadingLike] = useState(false);
+  const [updatingLikeTrackID, setUpdatingLikeTrackID] = useState<string>();
+  const activeTrackIDRef = useRef<string>();
+  activeTrackIDRef.current = playback.track?.id;
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>('sequence');
   const [playbackQueue, setPlaybackQueue] = useState<Track[]>([]);
   const [albumBackgroundColor, setAlbumBackgroundColor] = useState<string>();
@@ -99,6 +103,8 @@ export function MobilePlayer({
     ? route.tab
     : route.kind === 'search'
       ? 'search'
+      : route.kind === 'albums'
+        ? 'home'
       : route.kind === 'recent-albums'
         ? 'home'
         : route.sourceTab;
@@ -120,6 +126,8 @@ export function MobilePlayer({
     ? { kind: 'album', id: route.albumId }
     : route.kind === 'artist'
       ? { kind: 'artist', id: route.artistId }
+      : route.kind === 'albums'
+        ? { kind: 'albums' }
       : route.kind === 'recent-albums'
         ? { kind: 'recent-albums' }
         : undefined;
@@ -127,6 +135,8 @@ export function MobilePlayer({
     ? '专辑'
     : activeDetail?.kind === 'artist'
       ? '歌手'
+      : activeDetail?.kind === 'albums'
+        ? '全部专辑'
       : activeDetail?.kind === 'recent-albums'
         ? '最近入库'
         : activeLabel;
@@ -165,36 +175,58 @@ export function MobilePlayer({
   const activePlaybackQueue = playbackQueue.length > 0 ? playbackQueue : results;
   const currentIndex = playback.track ? activePlaybackQueue.findIndex((track) => track.id === playback.track?.id) : -1;
   const queue = currentIndex >= 0 ? activePlaybackQueue.slice(currentIndex + 1) : activePlaybackQueue.slice(0, 3);
+  const isUpdatingLike = isLoadingLike || (playback.track !== undefined && updatingLikeTrackID === playback.track.id);
 
   useEffect(() => () => player.dispose(), [player]);
 
   useEffect(() => {
     if (!playback.track) {
       setIsLiked(false);
+      setIsLoadingLike(false);
       return;
     }
+    const trackID = playback.track.id;
     const controller = new AbortController();
-    getFavoriteStatus(playback.track.id, controller.signal)
-      .then((status) => setIsLiked(status.favorite))
+    // 切歌后先清空旧状态并禁用操作，避免旧曲目的喜欢状态被误写到新曲目。
+    setIsLiked(false);
+    setIsLoadingLike(true);
+    getFavoriteStatus(trackID, controller.signal)
+      .then((status) => {
+        if (!controller.signal.aborted && activeTrackIDRef.current === trackID) setIsLiked(status.favorite);
+      })
       .catch((error: unknown) => {
-        if (!(error instanceof DOMException && error.name === 'AbortError')) setIsLiked(false);
+        if (!controller.signal.aborted && activeTrackIDRef.current === trackID && !(error instanceof DOMException && error.name === 'AbortError')) setIsLiked(false);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted && activeTrackIDRef.current === trackID) setIsLoadingLike(false);
       });
     return () => controller.abort();
   }, [playback.track?.id]);
 
+  /**
+   * 乐观切换当前歌曲的喜欢状态，并将异步结果绑定到发起请求时的曲目。
+   *
+   * 曲目切换后，旧请求无论成功或失败都不能回写新曲目的状态；写入标识同样按曲目 ID
+   * 清理，避免旧请求完成时解除新曲目的禁用状态。
+   *
+   * @returns 无返回值；服务端写入失败时仅回滚仍处于当前播放器中的原曲目。
+   */
   const toggleLike = useCallback(async () => {
-    if (!playback.track || isUpdatingLike) return;
+    const trackID = playback.track?.id;
+    if (!trackID || isUpdatingLike) return;
     const next = !isLiked;
     setIsLiked(next);
-    setIsUpdatingLike(true);
+    setUpdatingLikeTrackID(trackID);
     try {
-      await setFavorite(playback.track.id, next);
+      await setFavorite(trackID, next);
     } catch {
-      setIsLiked(!next);
+      // 请求失败时只回滚仍在播放的原曲目，切歌后的状态由新曲目的查询决定。
+      if (activeTrackIDRef.current === trackID) setIsLiked(!next);
     } finally {
-      setIsUpdatingLike(false);
+      // 不能清除另一首曲目的写入状态；请求可能在切歌后才完成。
+      setUpdatingLikeTrackID((currentTrackID) => currentTrackID === trackID ? undefined : currentTrackID);
     }
-  }, [isLiked, isUpdatingLike, playback.track]);
+  }, [isLiked, isUpdatingLike, playback.track?.id]);
 
   const chooseTrack = useCallback(async (track: Track) => {
     try {
@@ -265,7 +297,21 @@ export function MobilePlayer({
   }, [activeTab, navigate]);
 
   /**
+   * 打开全部专辑完整列表。
+   *
+   * 列表按专辑标题稳定排序，供用户从曲库完整浏览或定位目标专辑。
+   *
+   * @returns 无返回值；地址栏更新为全部专辑路由。
+   */
+  const openAllAlbums = useCallback(() => {
+    navigate({ kind: 'albums' });
+  }, [navigate]);
+
+  /**
    * 打开最近入库完整列表。
+   *
+   * 该路由保留原有地址和按入库时间倒序的内容，使已有链接与用户预期保持不变。
+   *
    * @returns 无返回值；地址栏更新为最近入库路由。
    */
   const openRecentAlbums = useCallback(() => {
@@ -343,6 +389,7 @@ export function MobilePlayer({
                 <TabsContent value={activeTab}>
                   {activeDetail.kind === 'album' && (
                     <AlbumDetailView
+                      key={activeDetail.id}
                       albumId={activeDetail.id}
                       activeTrackId={playback.track?.id}
                       isPlaying={isPlaying && playback.track?.album.id === activeDetail.id}
@@ -353,13 +400,22 @@ export function MobilePlayer({
                     />
                   )}
                   {activeDetail.kind === 'artist' && <ArtistDetailView artistId={activeDetail.id} onOpenAlbum={openAlbum} />}
+                  {activeDetail.kind === 'albums' && <AllAlbumsView onOpenAlbum={openAlbum} />}
                   {activeDetail.kind === 'recent-albums' && (
                     <RecentAlbumsView onOpenAlbum={openAlbum} />
                   )}
                 </TabsContent>
               ) : (
                 <>
-                  <TabsContent value="home"><HomeView onOpenAlbum={openAlbum} onOpenRecentAlbums={openRecentAlbums} /></TabsContent>
+                  <TabsContent value="home">
+                    <HomeView
+                      onOpenAlbum={openAlbum}
+                      onOpenAllAlbums={openAllAlbums}
+                      onOpenRecentAlbums={openRecentAlbums}
+                      activeTrackId={playback.track?.id}
+                      onChooseTrack={chooseStandaloneTrack}
+                    />
+                  </TabsContent>
                   <TabsContent value="search">
                     <SearchView
                       query={query}
@@ -442,8 +498,8 @@ export function MobilePlayer({
                       className={cn(miniPlayerControlClassName, 'z-10')}
                       aria-label={isLiked ? '取消喜欢' : '喜欢这首歌'}
                       aria-pressed={isLiked}
-                      disabled={!playback.track}
-                      onClick={() => setIsLiked((liked) => !liked)}
+                      disabled={!playback.track || isUpdatingLike}
+                      onClick={() => void toggleLike()}
                     >
                       <Heart fill={isLiked ? 'currentColor' : 'none'} aria-hidden="true" />
                     </Button>

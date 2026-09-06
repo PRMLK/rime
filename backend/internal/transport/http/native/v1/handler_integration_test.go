@@ -131,7 +131,7 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	serverInfoResponse.Body.Close()
-	if serverInfoResponse.StatusCode != http.StatusOK || serverInfo.Name != "Rime" || serverInfo.APIVersion != "v1" || !slices.Contains(serverInfo.Capabilities, "auth.bearer.v1") {
+	if serverInfoResponse.StatusCode != http.StatusOK || serverInfo.Name != "Rime" || serverInfo.APIVersion != "v1" || !slices.Contains(serverInfo.Capabilities, "auth.bearer.v1") || !slices.Contains(serverInfo.Capabilities, "playback.history.v1") {
 		t.Fatalf("unexpected public server info: status=%s info=%+v", serverInfoResponse.Status, serverInfo)
 	}
 	jar, err := cookiejar.New(nil)
@@ -157,6 +157,7 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 		t.Fatalf("second setup status: %s", response.Status)
 	}
 	assertRecentAlbums(t, client, server.URL)
+	assertAlbums(t, client, server.URL)
 	assertScheduledTaskRun(t, client, server.URL)
 
 	response, err = client.Get(server.URL + "/api/v1/search?query=Morning")
@@ -176,7 +177,7 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 	if len(page.Items) != 1 || page.Items[0].Title != "Morning Bell" {
 		t.Fatalf("unexpected search page: %+v", page)
 	}
-	assertIdentityAndPlaylists(t, client, server.URL, page.Items[0].ID)
+	assertIdentityAndPlaylists(t, client, server.URL, page.Items[0].ID, page.Items[0].Album.ID)
 	assertBearerAuthentication(t, server.URL)
 	assertAlbumAndArtistDetails(t, client, server.URL, page.Items[0])
 	if page.Items[0].ArtworkID == nil {
@@ -233,6 +234,71 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 	}
 	if session.Source.Container != "wav" || session.Source.BitrateKbps != 128 {
 		t.Fatalf("unexpected playback source: %+v", session.Source)
+	}
+	playbackEvent, err := json.Marshal(playback.Event{
+		EventID:    "integration-history-started",
+		Type:       "started",
+		PositionMs: 0,
+		OccurredAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err = client.Post(server.URL+"/api/v1/playback/sessions/"+session.SessionID+"/events", "application/json", bytes.NewReader(playbackEvent))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("record playback event status: %s", response.Status)
+	}
+	response, err = client.Post(server.URL+"/api/v1/playback/sessions", "application/json", bytes.NewReader(requestBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		t.Fatalf("create duplicate-track session status: %s: %s", response.Status, body)
+	}
+	var duplicateTrackSession playback.Session
+	if err := json.NewDecoder(response.Body).Decode(&duplicateTrackSession); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	duplicatePlaybackEvent, err := json.Marshal(playback.Event{
+		EventID:    "integration-history-latest-started",
+		Type:       "started",
+		PositionMs: 0,
+		OccurredAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err = client.Post(server.URL+"/api/v1/playback/sessions/"+duplicateTrackSession.SessionID+"/events", "application/json", bytes.NewReader(duplicatePlaybackEvent))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("record duplicate-track playback event status: %s", response.Status)
+	}
+
+	response, err = client.Get(server.URL + "/api/v1/me/playback-history?limit=12")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var playbackHistory struct {
+		Items []catalog.Track `json:"items"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&playbackHistory); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || len(playbackHistory.Items) != 1 || playbackHistory.Items[0].ID != page.Items[0].ID {
+		t.Fatalf("unexpected playback history: status=%s page=%+v", response.Status, playbackHistory)
 	}
 
 	request, err := http.NewRequest(http.MethodGet, server.URL+session.Source.Href, nil)
@@ -350,7 +416,7 @@ func assertBearerAuthentication(t *testing.T, serverURL string) {
 	}
 }
 
-func assertIdentityAndPlaylists(t *testing.T, adminClient *http.Client, serverURL, trackID string) {
+func assertIdentityAndPlaylists(t *testing.T, adminClient *http.Client, serverURL, trackID, albumID string) {
 	t.Helper()
 
 	response, err := adminClient.Get(serverURL + "/api/v1/me/playlists")
@@ -391,6 +457,46 @@ func assertIdentityAndPlaylists(t *testing.T, adminClient *http.Client, serverUR
 	response.Body.Close()
 	if len(favorite.Tracks) != 1 || favorite.Tracks[0].ID != trackID {
 		t.Fatalf("favorites detail = %+v", favorite)
+	}
+
+	request, _ = http.NewRequest(http.MethodPut, serverURL+"/api/v1/me/favorites/albums/"+albumID, nil)
+	response, err = adminClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("favorite album status: %s", response.Status)
+	}
+	response, err = adminClient.Get(serverURL + "/api/v1/me/favorites/albums?limit=12")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var favoriteAlbums struct {
+		Items []catalog.Album `json:"items"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&favoriteAlbums); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || len(favoriteAlbums.Items) != 1 || favoriteAlbums.Items[0].ID != albumID {
+		t.Fatalf("favorite albums = %+v, status = %s", favoriteAlbums, response.Status)
+	}
+	response, err = adminClient.Get(serverURL + "/api/v1/me/favorites/albums/" + albumID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var favoriteAlbumStatus struct {
+		Favorite bool `json:"favorite"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&favoriteAlbumStatus); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || !favoriteAlbumStatus.Favorite {
+		t.Fatalf("favorite album state = %+v, status = %s", favoriteAlbumStatus, response.Status)
 	}
 
 	response, err = adminClient.Post(serverURL+"/api/v1/me/playlists", "application/json", bytes.NewBufferString(`{"name":"夜间播放"}`))
@@ -590,6 +696,28 @@ func assertRecentAlbums(t *testing.T, client *http.Client, serverURL string) {
 	}
 	if len(page.Items[0].Artists) != 1 || page.Items[0].Artists[0].Name != "Unknown Artist" {
 		t.Fatalf("unexpected recent album artists: %+v", page.Items[0].Artists)
+	}
+}
+
+// assertAlbums 验证全部专辑端点能返回同一份可播放目录资料。
+// 测试夹具只有一张专辑，因此这里重点覆盖路由注册、鉴权链路和响应模型；标题排序
+// 的稳定性由 Store 层使用 normalized_title（规范化标题）、id（唯一标识）的固定 ORDER BY 条件保证。
+func assertAlbums(t *testing.T, client *http.Client, serverURL string) {
+	t.Helper()
+	response, err := client.Get(serverURL + "/api/v1/albums?limit=10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("albums status: %s", response.Status)
+	}
+	var page browse.AlbumPage
+	if err := json.NewDecoder(response.Body).Decode(&page); err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0].Title != "Unknown Album" || page.Items[0].AddedAt.IsZero() {
+		t.Fatalf("unexpected albums: %+v", page.Items)
 	}
 }
 
