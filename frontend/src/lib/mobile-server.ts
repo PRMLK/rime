@@ -24,6 +24,7 @@ type MobileServerState = {
 };
 
 const storageKey = 'rime.mobile.servers.v1';
+const nativeClientHeader = 'X-Rime-Client';
 let state = readState();
 
 export function isTauriClient(): boolean {
@@ -140,6 +141,7 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
   if (!server) throw new Error('尚未选择服务器');
 
   const headers = new Headers(init?.headers);
+  headers.set(nativeClientHeader, 'tauri');
   const session = state.sessions[server.id];
   if (session && new Date(session.expiresAt).getTime() > Date.now()) {
     headers.set('Authorization', `Bearer ${session.accessToken}`);

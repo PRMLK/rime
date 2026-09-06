@@ -57,6 +57,8 @@ paths:
     post:
       operationId: setupInitialAdminToken
       security: []
+      parameters:
+        - $ref: '#/components/parameters/NativeClient'
       requestBody:
         required: true
         content:
@@ -74,6 +76,8 @@ paths:
     post:
       operationId: createTokenSession
       security: []
+      parameters:
+        - $ref: '#/components/parameters/NativeClient'
       requestBody:
         required: true
         content:
@@ -531,6 +535,11 @@ components:
       type: http
       scheme: bearer
   parameters:
+    NativeClient:
+      name: X-Rime-Client
+      in: header
+      required: true
+      schema: { type: string, enum: [tauri] }
     SessionId:
       name: sessionId
       in: path

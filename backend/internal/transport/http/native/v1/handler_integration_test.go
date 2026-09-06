@@ -259,9 +259,25 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 
 func assertBearerAuthentication(t *testing.T, serverURL string) {
 	t.Helper()
+	blockedRequest, _ := http.NewRequest(http.MethodPost, serverURL+"/api/v1/auth/token", bytes.NewBufferString(`{"username":"admin","password":"correct-horse-battery"}`))
+	blockedRequest.Header.Set("Content-Type", "application/json")
+	blockedRequest.Header.Set("Origin", "http://tauri.localhost")
+	blockedRequest.Header.Set("Sec-Fetch-Site", "cross-site")
+	response, err := http.DefaultClient.Do(blockedRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("unmarked cross-origin token login status: %s", response.Status)
+	}
+
 	loginRequest, _ := http.NewRequest(http.MethodPost, serverURL+"/api/v1/auth/token", bytes.NewBufferString(`{"username":"admin","password":"correct-horse-battery"}`))
 	loginRequest.Header.Set("Content-Type", "application/json")
-	response, err := http.DefaultClient.Do(loginRequest)
+	loginRequest.Header.Set("Origin", "http://tauri.localhost")
+	loginRequest.Header.Set("Sec-Fetch-Site", "cross-site")
+	loginRequest.Header.Set("X-Rime-Client", "tauri")
+	response, err = http.DefaultClient.Do(loginRequest)
 	if err != nil {
 		t.Fatal(err)
 	}

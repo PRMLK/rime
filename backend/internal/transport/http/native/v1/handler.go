@@ -25,6 +25,11 @@ import (
 	"rime/backend/internal/tasks"
 )
 
+const (
+	nativeClientHeader = "X-Rime-Client"
+	nativeClientTauri  = "tauri"
+)
+
 type Handler struct {
 	search    *search.Service
 	browse    *browse.Service
@@ -399,13 +404,20 @@ func requestMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 		w.Header().Set("X-Request-ID", requestID)
 		w.Header().Set("Rime-API-Version", "v1")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		if isUnsafeMethod(r.Method) && !hasBearerToken(r) && !isSameOriginRequest(r) {
+		if isUnsafeMethod(r.Method) && !hasBearerToken(r) && !isNativeTokenRequest(r) && !isSameOriginRequest(r) {
 			writeProblem(w, r, http.StatusForbidden, "cross_origin_request", "Request blocked", "State-changing requests must originate from this Rime server.")
 			return
 		}
 		next.ServeHTTP(w, r)
 		logger.Debug("http request", "method", r.Method, "path", r.URL.Path, "duration", time.Since(started), "request_id", requestID)
 	})
+}
+
+func isNativeTokenRequest(r *http.Request) bool {
+	if r.Method != http.MethodPost || !strings.EqualFold(strings.TrimSpace(r.Header.Get(nativeClientHeader)), nativeClientTauri) {
+		return false
+	}
+	return r.URL.Path == "/api/v1/auth/token" || r.URL.Path == "/api/v1/auth/token/setup"
 }
 
 func isUnsafeMethod(method string) bool {
