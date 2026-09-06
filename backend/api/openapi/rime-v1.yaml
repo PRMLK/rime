@@ -7,6 +7,7 @@ servers:
   - url: /api/v1
 security:
   - cookieAuth: []
+  - bearerAuth: []
 paths:
   /auth/status:
     get:
@@ -50,6 +51,40 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
+  /auth/token/setup:
+    post:
+      operationId: setupInitialAdminToken
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetupRequest' }
+      responses:
+        '201':
+          description: Initial administrator and native client session created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenSession' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /auth/token:
+    post:
+      operationId: createTokenSession
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Native client session created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenSession' }
         '401': { $ref: '#/components/responses/Problem' }
         '429': { $ref: '#/components/responses/Problem' }
   /auth/session:
@@ -271,6 +306,7 @@ paths:
   /system/info:
     get:
       operationId: getSystemInfo
+      security: []
       responses:
         '200':
           description: Server information and capabilities
@@ -452,6 +488,7 @@ paths:
   /playback/sessions/{sessionId}/stream:
     get:
       operationId: streamPlaybackSession
+      security: []
       parameters:
         - $ref: '#/components/parameters/SessionId'
         - name: Range
@@ -490,6 +527,9 @@ components:
       type: apiKey
       in: cookie
       name: rime_session
+    bearerAuth:
+      type: http
+      scheme: bearer
   parameters:
     SessionId:
       name: sessionId
@@ -537,6 +577,13 @@ components:
       properties:
         setupRequired: { type: boolean }
         authenticated: { type: boolean }
+        user: { $ref: '#/components/schemas/User' }
+    TokenSession:
+      type: object
+      required: [accessToken, expiresAt, user]
+      properties:
+        accessToken: { type: string }
+        expiresAt: { type: string, format: date-time }
         user: { $ref: '#/components/schemas/User' }
     SetupRequest:
       type: object

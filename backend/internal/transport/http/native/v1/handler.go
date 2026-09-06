@@ -43,6 +43,8 @@ func New(searchService *search.Service, browseService *browse.Service, lyricsSer
 	mux.HandleFunc("GET /api/v1/auth/status", handler.authStatus)
 	mux.HandleFunc("POST /api/v1/auth/setup", handler.setupAdmin)
 	mux.HandleFunc("POST /api/v1/auth/login", handler.login)
+	mux.HandleFunc("POST /api/v1/auth/token/setup", handler.setupAdminToken)
+	mux.HandleFunc("POST /api/v1/auth/token", handler.loginToken)
 	mux.HandleFunc("DELETE /api/v1/auth/session", handler.logout)
 	mux.HandleFunc("GET /api/v1/me", handler.me)
 	mux.HandleFunc("PATCH /api/v1/me/password", handler.changePassword)
@@ -110,6 +112,7 @@ func (h *Handler) systemInfo(w http.ResponseWriter, _ *http.Request) {
 		"name":       "Rime",
 		"apiVersion": "v1",
 		"capabilities": []string{
+			"auth.bearer.v1",
 			"search.tracks.v1",
 			"browse.recent-albums.v1",
 			"lyrics.timed.v1",
@@ -279,7 +282,7 @@ func (h *Handler) createPlaybackSession(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
-	track, mediaFile, err := h.playback.Stream(r.Context(), currentUser(r).ID, r.PathValue("sessionID"))
+	track, mediaFile, err := h.playback.Stream(r.Context(), r.PathValue("sessionID"))
 	if err != nil {
 		if errors.Is(err, playback.ErrSessionNotFound) {
 			writeProblem(w, r, http.StatusNotFound, "session_not_found", "Playback session not found", "The playback session is missing or expired.")
@@ -396,7 +399,7 @@ func requestMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 		w.Header().Set("X-Request-ID", requestID)
 		w.Header().Set("Rime-API-Version", "v1")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		if isUnsafeMethod(r.Method) && !isSameOriginRequest(r) {
+		if isUnsafeMethod(r.Method) && !hasBearerToken(r) && !isSameOriginRequest(r) {
 			writeProblem(w, r, http.StatusForbidden, "cross_origin_request", "Request blocked", "State-changing requests must originate from this Rime server.")
 			return
 		}

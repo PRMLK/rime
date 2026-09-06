@@ -1,4 +1,4 @@
-import { ArrowLeft, Heart, KeyRound, LibraryBig, ListMusic, LoaderCircle, LogOut, Pencil, Plus, Settings, Trash2 } from 'lucide-react';
+import { ArrowLeft, Heart, KeyRound, LibraryBig, ListMusic, LoaderCircle, LogOut, Pencil, Plus, Server, Settings, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   createPlaylist,
@@ -32,15 +32,18 @@ import { Input } from '@/components/ui/input';
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from '@/components/ui/item';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import type { SavedServer } from '@/lib/mobile-server';
 
 type Props = {
   user: User;
   onChooseTrack: (track: Track) => void;
   onOpenSystemSettings: () => void;
   onSignedOut: () => void;
+  server?: SavedServer;
+  onSwitchServer?: () => void;
 };
 
-export function LibraryView({ user, onChooseTrack, onOpenSystemSettings, onSignedOut }: Props) {
+export function LibraryView({ user, onChooseTrack, onOpenSystemSettings, onSignedOut, server, onSwitchServer }: Props) {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [selectedID, setSelectedID] = useState<string>();
   const [creating, setCreating] = useState(false);
@@ -183,6 +186,12 @@ export function LibraryView({ user, onChooseTrack, onOpenSystemSettings, onSigne
           <ItemMedia variant="icon"><KeyRound aria-hidden="true" /></ItemMedia>
           <ItemContent><ItemTitle>修改密码</ItemTitle></ItemContent>
         </UnifiedListRow>
+        {server && onSwitchServer && (
+          <UnifiedListRow render={<button type="button" onClick={onSwitchServer} />} className="cursor-pointer px-5 py-3" separated>
+            <ItemMedia variant="icon"><Server aria-hidden="true" /></ItemMedia>
+            <ItemContent><ItemTitle>切换服务器</ItemTitle><ItemDescription>{server.url}</ItemDescription></ItemContent>
+          </UnifiedListRow>
+        )}
         <UnifiedListRow
           render={<button type="button" onClick={() => void logout().finally(onSignedOut)} />}
           className="cursor-pointer px-5 py-3"

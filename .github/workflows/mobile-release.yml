@@ -1,0 +1,132 @@
+name: Mobile release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mobile-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  android:
+    name: Build signed Android packages
+    runs-on: ubuntu-24.04
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      ANDROID_KEYSTORE_PATH: /tmp/rime-upload.jks
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build dependencies
+        shell: bash
+        run: |
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.0.12077973"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> "$GITHUB_ENV"
+
+      - name: Set up Rust targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Validate release configuration
+        working-directory: frontend
+        shell: bash
+        run: |
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "Actions secret $name is required." >&2
+              exit 1
+            fi
+          done
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            app_version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+            if [[ "$GITHUB_REF_NAME" != "v$app_version" ]]; then
+              echo "Tag $GITHUB_REF_NAME does not match Tauri version v$app_version." >&2
+              exit 1
+            fi
+          fi
+
+      - name: Restore Android signing key
+        shell: bash
+        run: printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE_PATH"
+
+      - name: Build signed APK and AAB
+        working-directory: frontend
+        run: npm run tauri:android:release
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rime-android-${{ github.run_id }}
+          if-no-files-found: error
+          path: |
+            frontend/src-tauri/gen/android/app/build/outputs/**/*.apk
+            frontend/src-tauri/gen/android/app/build/outputs/**/*.aab
+
+      - name: Publish GitHub release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            frontend/src-tauri/gen/android/app/build/outputs/**/*.apk
+            frontend/src-tauri/gen/android/app/build/outputs/**/*.aab
+
+  google-play:
+    name: Publish to Google Play internal testing
+    needs: android
+    if: github.ref_type == 'tag' && vars.PUBLISH_GOOGLE_PLAY == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download Android packages
+        uses: actions/download-artifact@v5
+        with:
+          name: rime-android-${{ github.run_id }}
+          path: android-packages
+
+      - name: Upload AAB to Google Play
+        uses: r0adkll/upload-google-play@v1.1.5
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.prmlk.rime
+          releaseFiles: android-packages/**/*.aab
+          releaseName: ${{ github.ref_name }}
+          tracks: internal
+          status: completed

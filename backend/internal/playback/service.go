@@ -62,7 +62,7 @@ type Repository interface {
 	GetTrack(context.Context, string) (catalog.Track, error)
 	AvailableMedia(context.Context, string) ([]catalog.MediaFile, error)
 	CreatePlaybackSession(context.Context, string, string, string, string, string, time.Time, time.Time) error
-	PlaybackSessionMedia(context.Context, string, string, time.Time) (catalog.Track, catalog.MediaFile, error)
+	PlaybackSessionMedia(context.Context, string, time.Time) (catalog.Track, catalog.MediaFile, error)
 	RecordPlaybackEvent(context.Context, string, string, Event) error
 	DeletePlaybackSession(context.Context, string, string) error
 }
@@ -121,8 +121,8 @@ func (s *Service) Create(ctx context.Context, userID string, request CreateReque
 	}, nil
 }
 
-func (s *Service) Stream(ctx context.Context, userID, sessionID string) (catalog.Track, catalog.MediaFile, error) {
-	return s.repo.PlaybackSessionMedia(ctx, userID, sessionID, s.now().UTC())
+func (s *Service) Stream(ctx context.Context, sessionID string) (catalog.Track, catalog.MediaFile, error) {
+	return s.repo.PlaybackSessionMedia(ctx, sessionID, s.now().UTC())
 }
 
 func (s *Service) Record(ctx context.Context, userID, sessionID string, event Event) error {

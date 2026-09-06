@@ -838,13 +838,13 @@ func (s *Store) CreatePlaybackSession(ctx context.Context, sessionID, userID, tr
 	return err
 }
 
-func (s *Store) PlaybackSessionMedia(ctx context.Context, userID, sessionID string, now time.Time) (catalog.Track, catalog.MediaFile, error) {
+func (s *Store) PlaybackSessionMedia(ctx context.Context, sessionID string, now time.Time) (catalog.Track, catalog.MediaFile, error) {
 	var trackID string
 	var media catalog.MediaFile
 	err := s.db.QueryRowContext(ctx, `
 		SELECT ps.track_id, mf.id, mf.track_id, mf.path, mf.container, mf.codec, mf.content_type, mf.bitrate_kbps, mf.size, mf.modified_unix_ms, mf.content_version
 		FROM playback_sessions ps JOIN media_files mf ON mf.id = ps.media_file_id
-		WHERE ps.id = ? AND ps.user_id = ? AND ps.expires_at > ? AND mf.available = 1`, sessionID, userID, now.Format(time.RFC3339Nano)).
+		WHERE ps.id = ? AND ps.expires_at > ? AND mf.available = 1`, sessionID, now.Format(time.RFC3339Nano)).
 		Scan(&trackID, &media.ID, &media.TrackID, &media.Path, &media.Container, &media.Codec, &media.ContentType, &media.BitrateKbps, &media.Size, &media.ModifiedUnixMs, &media.ContentVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return catalog.Track{}, catalog.MediaFile{}, playback.ErrSessionNotFound

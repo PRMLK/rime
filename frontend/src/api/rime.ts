@@ -1,3 +1,11 @@
+import {
+  apiFetch,
+  clearMobileSession,
+  isTauriClient,
+  resolveServerPath,
+  saveMobileSession,
+} from '@/lib/mobile-server';
+
 export type ArtistRef = {
   id: string;
   name: string;
@@ -143,6 +151,14 @@ type Problem = {
   code?: string;
 };
 
+type TokenSession = {
+  accessToken: string;
+  expiresAt: string;
+  user: User;
+};
+
+const artworkObjectUrls = new Map<string, string>();
+
 export const authChangedEvent = 'rime:auth-changed';
 export const playlistsChangedEvent = 'rime:playlists-changed';
 
@@ -157,7 +173,7 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
+  const response = await apiFetch(path, {
     ...init,
     headers: {
       Accept: 'application/json',
@@ -168,6 +184,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const problem = (await response.json().catch(() => ({}))) as Problem;
     if (response.status === 401) {
+      if (isTauriClient()) clearMobileSession();
       window.dispatchEvent(new Event(authChangedEvent));
     }
     throw new ApiError(problem.detail || problem.title || `请求失败 (${response.status})`, response.status, problem.code);
@@ -182,20 +199,36 @@ export function getAuthStatus(signal?: AbortSignal): Promise<AuthStatus> {
   return request<AuthStatus>('/api/v1/auth/status', { signal });
 }
 
-export function setupAdmin(input: { username: string; displayName: string; password: string }): Promise<User> {
-  return request<User>('/api/v1/auth/setup', { method: 'POST', body: JSON.stringify(input) });
+export async function setupAdmin(input: { username: string; displayName: string; password: string }): Promise<User> {
+  if (!isTauriClient()) {
+    return request<User>('/api/v1/auth/setup', { method: 'POST', body: JSON.stringify(input) });
+  }
+  const session = await request<TokenSession>('/api/v1/auth/token/setup', { method: 'POST', body: JSON.stringify(input) });
+  saveMobileSession(session.accessToken, session.expiresAt);
+  return session.user;
 }
 
-export function login(username: string, password: string): Promise<User> {
-  return request<User>('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+export async function login(username: string, password: string): Promise<User> {
+  const body = JSON.stringify({ username, password });
+  if (!isTauriClient()) {
+    return request<User>('/api/v1/auth/login', { method: 'POST', body });
+  }
+  const session = await request<TokenSession>('/api/v1/auth/token', { method: 'POST', body });
+  saveMobileSession(session.accessToken, session.expiresAt);
+  return session.user;
 }
 
-export function logout(): Promise<void> {
-  return request<void>('/api/v1/auth/session', { method: 'DELETE' });
+export async function logout(): Promise<void> {
+  try {
+    await request<void>('/api/v1/auth/session', { method: 'DELETE' });
+  } finally {
+    if (isTauriClient()) clearMobileSession();
+  }
 }
 
-export function changePassword(currentPassword: string, newPassword: string): Promise<void> {
-  return request<void>('/api/v1/me/password', { method: 'PATCH', body: JSON.stringify({ currentPassword, newPassword }) });
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  await request<void>('/api/v1/me/password', { method: 'PATCH', body: JSON.stringify({ currentPassword, newPassword }) });
+  if (isTauriClient()) clearMobileSession();
 }
 
 /**
@@ -351,11 +384,27 @@ export function runScheduledTask(taskId: string): Promise<ScheduledTask> {
 }
 
 export function artworkUrl(artworkId: string | undefined, size: 128 | 256 | 512 | 1024): string | undefined {
-  return artworkId ? `/api/v1/artworks/${encodeURIComponent(artworkId)}?size=${size}` : undefined;
+  return artworkId && !isTauriClient() ? `/api/v1/artworks/${encodeURIComponent(artworkId)}?size=${size}` : undefined;
 }
 
-export function createPlaybackSession(trackId: string, playerId: string): Promise<PlaybackSession> {
-  return request<PlaybackSession>('/api/v1/playback/sessions', {
+export async function getArtworkSource(artworkId: string | undefined, size: 128 | 256 | 512 | 1024): Promise<string | undefined> {
+  if (!artworkId) return undefined;
+  const browserSource = artworkUrl(artworkId, size);
+  if (browserSource) return browserSource;
+
+  const cacheKey = resolveServerPath(`/api/v1/artworks/${encodeURIComponent(artworkId)}?size=${size}`);
+  const cached = artworkObjectUrls.get(cacheKey);
+  if (cached) return cached;
+
+  const response = await apiFetch(`/api/v1/artworks/${encodeURIComponent(artworkId)}?size=${size}`);
+  if (!response.ok) throw new ApiError(`封面加载失败 (${response.status})`, response.status);
+  const objectUrl = URL.createObjectURL(await response.blob());
+  artworkObjectUrls.set(cacheKey, objectUrl);
+  return objectUrl;
+}
+
+export async function createPlaybackSession(trackId: string, playerId: string): Promise<PlaybackSession> {
+  const session = await request<PlaybackSession>('/api/v1/playback/sessions', {
     method: 'POST',
     body: JSON.stringify({
       trackId,
@@ -376,6 +425,10 @@ export function createPlaybackSession(trackId: string, playerId: string): Promis
       },
     }),
   });
+  return {
+    ...session,
+    source: { ...session.source, href: resolveServerPath(session.source.href) },
+  };
 }
 
 export function recordPlaybackEvent(

@@ -21,14 +21,16 @@ func authenticationMiddleware(handler *Handler, next http.Handler) http.Handler 
 			next.ServeHTTP(w, r)
 			return
 		}
-		cookie, err := r.Cookie(sessionCookieName)
-		if err != nil {
+		token, fromCookie := authenticationToken(r)
+		if token == "" {
 			writeProblem(w, r, http.StatusUnauthorized, "authentication_required", "Authentication required", "Please sign in to continue.")
 			return
 		}
-		user, err := handler.identity.Authenticate(r.Context(), cookie.Value)
+		user, err := handler.identity.Authenticate(r.Context(), token)
 		if err != nil {
-			clearSessionCookie(w, r)
+			if fromCookie {
+				clearSessionCookie(w, r)
+			}
 			writeProblem(w, r, http.StatusUnauthorized, "session_invalid", "Session expired", "Please sign in again.")
 			return
 		}
@@ -42,9 +44,36 @@ func authenticationMiddleware(handler *Handler, next http.Handler) http.Handler 
 
 func isPublicRoute(r *http.Request) bool {
 	return r.URL.Path == "/healthz" ||
+		(r.Method == http.MethodGet && r.URL.Path == "/api/v1/system/info") ||
+		((r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.HasPrefix(r.URL.Path, "/api/v1/playback/sessions/") && strings.HasSuffix(r.URL.Path, "/stream")) ||
 		(r.Method == http.MethodGet && r.URL.Path == "/api/v1/auth/status") ||
 		(r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/setup") ||
-		(r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/login")
+		(r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/login") ||
+		(r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/token/setup") ||
+		(r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/token")
+}
+
+func bearerToken(r *http.Request) string {
+	scheme, token, ok := strings.Cut(strings.TrimSpace(r.Header.Get("Authorization")), " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
+		return ""
+	}
+	return strings.TrimSpace(token)
+}
+
+func hasBearerToken(r *http.Request) bool {
+	return bearerToken(r) != ""
+}
+
+func authenticationToken(r *http.Request) (string, bool) {
+	if token := bearerToken(r); token != "" {
+		return token, false
+	}
+	cookie, err := r.Cookie(sessionCookieName)
+	if err != nil {
+		return "", false
+	}
+	return cookie.Value, true
 }
 
 func currentUser(r *http.Request) identity.User {
@@ -69,8 +98,8 @@ func (h *Handler) authStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	response := map[string]any{"setupRequired": required, "authenticated": false}
 	if !required {
-		if cookie, err := r.Cookie(sessionCookieName); err == nil {
-			if user, err := h.identity.Authenticate(r.Context(), cookie.Value); err == nil {
+		if token, _ := authenticationToken(r); token != "" {
+			if user, err := h.identity.Authenticate(r.Context(), token); err == nil {
 				response["authenticated"] = true
 				response["user"] = user
 			}
@@ -120,9 +149,59 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, session.User)
 }
 
+type tokenSessionResponse struct {
+	AccessToken string        `json:"accessToken"`
+	ExpiresAt   time.Time     `json:"expiresAt"`
+	User        identity.User `json:"user"`
+}
+
+func newTokenSessionResponse(session identity.Session) tokenSessionResponse {
+	return tokenSessionResponse{AccessToken: session.Token, ExpiresAt: session.ExpiresAt, User: session.User}
+}
+
+func (h *Handler) setupAdminToken(w http.ResponseWriter, r *http.Request) {
+	var request identity.SetupRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "invalid_request", "Invalid request", err.Error())
+		return
+	}
+	session, err := h.identity.Setup(r.Context(), request)
+	if err != nil {
+		handleIdentityError(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusCreated, newTokenSessionResponse(session))
+}
+
+func (h *Handler) loginToken(w http.ResponseWriter, r *http.Request) {
+	var request identity.LoginRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "invalid_request", "Invalid request", err.Error())
+		return
+	}
+	session, err := h.identity.Login(r.Context(), request)
+	if err != nil {
+		if errors.Is(err, identity.ErrRateLimited) {
+			w.Header().Set("Retry-After", "60")
+			writeProblem(w, r, http.StatusTooManyRequests, "login_rate_limited", "Try again later", "Too many sign-in attempts. Wait one minute and try again.")
+			return
+		}
+		if errors.Is(err, identity.ErrInvalidCredentials) {
+			writeProblem(w, r, http.StatusUnauthorized, "invalid_credentials", "Sign in failed", "The username or password is incorrect.")
+			return
+		}
+		h.logger.Error("token login", "error", err)
+		writeProblem(w, r, http.StatusInternalServerError, "internal_error", "Internal error", "Sign in could not be completed.")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, newTokenSessionResponse(session))
+}
+
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
-	if cookie, err := r.Cookie(sessionCookieName); err == nil {
-		_ = h.identity.Logout(r.Context(), cookie.Value)
+	if token, _ := authenticationToken(r); token != "" {
+		_ = h.identity.Logout(r.Context(), token)
 	}
 	clearSessionCookie(w, r)
 	w.WriteHeader(http.StatusNoContent)

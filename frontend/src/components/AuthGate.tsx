@@ -1,4 +1,4 @@
-import { LoaderCircle, LogIn, ShieldCheck } from 'lucide-react';
+import { LoaderCircle, LogIn, Server, ShieldCheck } from 'lucide-react';
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import {
   authChangedEvent,
@@ -14,8 +14,18 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
+import type { SavedServer } from '@/lib/mobile-server';
 
-export function AuthGate({ children }: { children: (user: User, refreshAuth: () => void) => ReactNode }) {
+type ConnectionProps = {
+  server?: SavedServer;
+  onSwitchServer?: () => void;
+};
+
+export function AuthGate({
+  children,
+  server,
+  onSwitchServer,
+}: ConnectionProps & { children: (user: User, refreshAuth: () => void) => ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>();
   const [loadError, setLoadError] = useState<string>();
 
@@ -36,16 +46,16 @@ export function AuthGate({ children }: { children: (user: User, refreshAuth: () 
   }, [refreshAuth]);
 
   if (!status) {
-    return <AuthFrame>{loadError ? <AuthError message={loadError} onRetry={refreshAuth} /> : <LoaderCircle className="size-6 animate-spin text-muted-foreground" aria-label="正在加载" />}</AuthFrame>;
+    return <AuthFrame server={server} onSwitchServer={onSwitchServer}>{loadError ? <AuthError message={loadError} onRetry={refreshAuth} /> : <LoaderCircle className="size-6 animate-spin text-muted-foreground" aria-label="正在加载" />}</AuthFrame>;
   }
   if (status.setupRequired) {
-    return <SetupForm onComplete={(user) => setStatus({ setupRequired: false, authenticated: true, user })} />;
+    return <SetupForm server={server} onSwitchServer={onSwitchServer} onComplete={(user) => setStatus({ setupRequired: false, authenticated: true, user })} />;
   }
   if (!status.authenticated || !status.user) {
-    return <LoginForm onComplete={(user) => setStatus({ setupRequired: false, authenticated: true, user })} />;
+    return <LoginForm server={server} onSwitchServer={onSwitchServer} onComplete={(user) => setStatus({ setupRequired: false, authenticated: true, user })} />;
   }
   if (status.user.mustChangePassword) {
-    return <PasswordChangeForm user={status.user} onComplete={() => setStatus({ setupRequired: false, authenticated: false })} />;
+    return <PasswordChangeForm server={server} onSwitchServer={onSwitchServer} user={status.user} onComplete={() => setStatus({ setupRequired: false, authenticated: false })} />;
   }
   return children(status.user, () => {
     setStatus(undefined);
@@ -53,7 +63,7 @@ export function AuthGate({ children }: { children: (user: User, refreshAuth: () 
   });
 }
 
-function AuthFrame({ children }: { children: ReactNode }) {
+function AuthFrame({ children, server, onSwitchServer }: ConnectionProps & { children: ReactNode }) {
   return (
     <main className="flex h-[100dvh] items-center justify-center overflow-auto bg-muted/30 px-5 py-8">
       <div className="flex w-full max-w-sm flex-col gap-6">
@@ -65,12 +75,18 @@ function AuthFrame({ children }: { children: ReactNode }) {
           <RimeLogo />
         </div>
         {children}
+        {server && onSwitchServer && (
+          <Button variant="ghost" onClick={onSwitchServer}>
+            <Server data-icon="inline-start" />
+            {server.name} · 切换服务器
+          </Button>
+        )}
       </div>
     </main>
   );
 }
 
-function SetupForm({ onComplete }: { onComplete: (user: User) => void }) {
+function SetupForm({ onComplete, ...connection }: ConnectionProps & { onComplete: (user: User) => void }) {
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -96,7 +112,7 @@ function SetupForm({ onComplete }: { onComplete: (user: User) => void }) {
     }
   };
   return (
-    <AuthFrame>
+    <AuthFrame {...connection}>
       <Card>
         <CardHeader>
           <CardTitle>注册首位管理员</CardTitle>
@@ -122,7 +138,7 @@ function SetupForm({ onComplete }: { onComplete: (user: User) => void }) {
   );
 }
 
-function LoginForm({ onComplete }: { onComplete: (user: User) => void }) {
+function LoginForm({ onComplete, ...connection }: ConnectionProps & { onComplete: (user: User) => void }) {
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -139,7 +155,7 @@ function LoginForm({ onComplete }: { onComplete: (user: User) => void }) {
     }
   };
   return (
-    <AuthFrame>
+    <AuthFrame {...connection}>
       <Card>
         <CardHeader><CardTitle>登录</CardTitle><CardDescription>继续进入你的音乐库。</CardDescription></CardHeader>
         <CardContent>
@@ -160,7 +176,7 @@ function LoginForm({ onComplete }: { onComplete: (user: User) => void }) {
   );
 }
 
-function PasswordChangeForm({ user, onComplete }: { user: User; onComplete: () => void }) {
+function PasswordChangeForm({ user, onComplete, ...connection }: ConnectionProps & { user: User; onComplete: () => void }) {
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -183,7 +199,7 @@ function PasswordChangeForm({ user, onComplete }: { user: User; onComplete: () =
     }
   };
   return (
-    <AuthFrame>
+    <AuthFrame {...connection}>
       <Card>
         <CardHeader><CardTitle>设置新密码</CardTitle><CardDescription>{user.displayName}，首次登录需要更换临时密码。</CardDescription></CardHeader>
         <CardContent>

@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -116,6 +117,23 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 	if unauthorized.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("anonymous search status: %s", unauthorized.Status)
 	}
+	serverInfoResponse, err := http.Get(server.URL + "/api/v1/system/info")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var serverInfo struct {
+		Name         string   `json:"name"`
+		APIVersion   string   `json:"apiVersion"`
+		Capabilities []string `json:"capabilities"`
+	}
+	if err := json.NewDecoder(serverInfoResponse.Body).Decode(&serverInfo); err != nil {
+		serverInfoResponse.Body.Close()
+		t.Fatal(err)
+	}
+	serverInfoResponse.Body.Close()
+	if serverInfoResponse.StatusCode != http.StatusOK || serverInfo.Name != "Rime" || serverInfo.APIVersion != "v1" || !slices.Contains(serverInfo.Capabilities, "auth.bearer.v1") {
+		t.Fatalf("unexpected public server info: status=%s info=%+v", serverInfoResponse.Status, serverInfo)
+	}
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -138,7 +156,6 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 	if response.StatusCode != http.StatusConflict {
 		t.Fatalf("second setup status: %s", response.Status)
 	}
-
 	assertRecentAlbums(t, client, server.URL)
 	assertScheduledTaskRun(t, client, server.URL)
 
@@ -160,6 +177,7 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 		t.Fatalf("unexpected search page: %+v", page)
 	}
 	assertIdentityAndPlaylists(t, client, server.URL, page.Items[0].ID)
+	assertBearerAuthentication(t, server.URL)
 	assertAlbumAndArtistDetails(t, client, server.URL, page.Items[0])
 	if page.Items[0].ArtworkID == nil {
 		t.Fatal("search result has no artwork ID")
@@ -222,7 +240,7 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	request.Header.Set("Range", "bytes=8-15")
-	response, err = client.Do(request)
+	response, err = http.DefaultClient.Do(request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,6 +254,83 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 	}
 	if !bytes.Equal(got, audio[8:16]) {
 		t.Fatalf("range body = %v, want %v", got, audio[8:16])
+	}
+}
+
+func assertBearerAuthentication(t *testing.T, serverURL string) {
+	t.Helper()
+	loginRequest, _ := http.NewRequest(http.MethodPost, serverURL+"/api/v1/auth/token", bytes.NewBufferString(`{"username":"admin","password":"correct-horse-battery"}`))
+	loginRequest.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(loginRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var session struct {
+		AccessToken string        `json:"accessToken"`
+		ExpiresAt   time.Time     `json:"expiresAt"`
+		User        identity.User `json:"user"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&session); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || session.AccessToken == "" || session.ExpiresAt.IsZero() || session.User.Username != "admin" {
+		t.Fatalf("unexpected token login: status=%s session=%+v", response.Status, session)
+	}
+
+	statusRequest, _ := http.NewRequest(http.MethodGet, serverURL+"/api/v1/auth/status", nil)
+	statusRequest.Header.Set("Authorization", "Bearer "+session.AccessToken)
+	response, err = http.DefaultClient.Do(statusRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status struct {
+		Authenticated bool `json:"authenticated"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&status); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || !status.Authenticated {
+		t.Fatalf("bearer auth status: status=%s body=%+v", response.Status, status)
+	}
+
+	createRequest, _ := http.NewRequest(http.MethodPost, serverURL+"/api/v1/me/playlists", bytes.NewBufferString(`{"name":"Mobile playlist"}`))
+	createRequest.Header.Set("Authorization", "Bearer "+session.AccessToken)
+	createRequest.Header.Set("Content-Type", "application/json")
+	createRequest.Header.Set("Origin", "http://tauri.localhost")
+	response, err = http.DefaultClient.Do(createRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("bearer cross-origin mutation status: %s", response.Status)
+	}
+
+	logoutRequest, _ := http.NewRequest(http.MethodDelete, serverURL+"/api/v1/auth/session", nil)
+	logoutRequest.Header.Set("Authorization", "Bearer "+session.AccessToken)
+	logoutRequest.Header.Set("Origin", "http://tauri.localhost")
+	response, err = http.DefaultClient.Do(logoutRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("bearer logout status: %s", response.Status)
+	}
+
+	meRequest, _ := http.NewRequest(http.MethodGet, serverURL+"/api/v1/me", nil)
+	meRequest.Header.Set("Authorization", "Bearer "+session.AccessToken)
+	response, err = http.DefaultClient.Do(meRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("revoked bearer status: %s", response.Status)
 	}
 }
 

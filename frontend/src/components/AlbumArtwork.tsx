@@ -1,5 +1,5 @@
-import { useState, type ComponentProps } from 'react';
-import { artworkUrl, type Album, type Track } from '@/api/rime';
+import { useEffect, useState, type ComponentProps } from 'react';
+import { artworkUrl, getArtworkSource, type Album, type Track } from '@/api/rime';
 import nowPlayingCover from '@/assets/now-playing.jpg';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
@@ -87,8 +87,25 @@ export function AlbumArtwork({
   className?: string;
 }) {
   const config = artworkSizeConfig[size];
-  const source = artworkUrl(artwork?.artworkId, config.imageSize);
+  const immediateSource = artworkUrl(artwork?.artworkId, config.imageSize);
+  const [source, setSource] = useState(immediateSource);
   const [failedSource, setFailedSource] = useState<string>();
+
+  useEffect(() => {
+    let isCurrent = true;
+    setSource(immediateSource);
+    setFailedSource(undefined);
+    if (!artwork?.artworkId) return () => { isCurrent = false; };
+
+    void getArtworkSource(artwork.artworkId, config.imageSize)
+      .then((nextSource) => {
+        if (isCurrent) setSource(nextSource);
+      })
+      .catch(() => {
+        if (isCurrent) setSource(undefined);
+      });
+    return () => { isCurrent = false; };
+  }, [artwork?.artworkId, config.imageSize, immediateSource]);
 
   return (
     <img

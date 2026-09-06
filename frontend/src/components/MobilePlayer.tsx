@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import {
-  ApiError, addTrackToPlaylist, artworkUrl, createUser as createUserApi, getAlbumDetail, getAllPlaylists, getArtistDetail, getFavoriteStatus, getRecentAlbums, getScheduledTasks, getTrackLyrics, getUsers, resetUserPassword, runScheduledTask, searchTracks, setFavorite, updateUser as updateUserApi,
+  ApiError, addTrackToPlaylist, createUser as createUserApi, getAlbumDetail, getAllPlaylists, getArtistDetail, getArtworkSource, getFavoriteStatus, getRecentAlbums, getScheduledTasks, getTrackLyrics, getUsers, resetUserPassword, runScheduledTask, searchTracks, setFavorite, updateUser as updateUserApi,
   type Album, type AlbumDetail, type ArtistRef, type LyricsDocument, type ScheduledTask, type Track, type User,
 } from '@/api/rime';
 import { AlbumArtwork, AlbumArtworkFrame, AlbumArtworkSkeleton } from '@/components/AlbumArtwork';
@@ -64,6 +64,7 @@ import {
   prefersLightArtworkForegroundForPixels,
 } from '@/lib/artwork-color';
 import { cn } from '@/lib/utils';
+import type { SavedServer } from '@/lib/mobile-server';
 import { formatMobileRoute, useMobileRoute } from '@/lib/mobile-route';
 import { appendItemsWithoutDuplicates, useProgressiveDisplay } from '@/hooks/use-progressive-display';
 import { HtmlAudioPlayer, type PlayerSnapshot } from '@/services/player/HtmlAudioPlayer';
@@ -119,7 +120,17 @@ const artistAlbumCardMaximumSizeInRem = 14;
 /** 歌手专辑网格在任何宽度下都至少保留两列。 */
 const artistAlbumGridMinimumColumns = 2;
 
-export function MobilePlayer({ user, onAuthChanged }: { user: User; onAuthChanged: () => void }) {
+export function MobilePlayer({
+  user,
+  onAuthChanged,
+  server,
+  onSwitchServer,
+}: {
+  user: User;
+  onAuthChanged: () => void;
+  server?: SavedServer;
+  onSwitchServer?: () => void;
+}) {
   const player = useMemo(() => new HtmlAudioPlayer(), []);
   const playback = useSyncExternalStore(player.subscribe, player.getSnapshot);
   const miniPlayerSurfaceRef = useRef<HTMLElement>(null);
@@ -410,7 +421,14 @@ export function MobilePlayer({ user, onAuthChanged }: { user: User; onAuthChange
                     />
                   </TabsContent>
                   <TabsContent value="library">
-                    <LibraryView user={user} onChooseTrack={chooseTrack} onOpenSystemSettings={() => setIsSettingsOpen(true)} onSignedOut={onAuthChanged} />
+                    <LibraryView
+                      user={user}
+                      onChooseTrack={chooseTrack}
+                      onOpenSystemSettings={() => setIsSettingsOpen(true)}
+                      onSignedOut={onAuthChanged}
+                      server={server}
+                      onSwitchServer={onSwitchServer}
+                    />
                   </TabsContent>
                 </>
               )}
@@ -803,19 +821,20 @@ function useAlbumArtworkAccentColor(artworkId?: string) {
   const [accentColor, setAccentColor] = useState<string>();
 
   useEffect(() => {
-    const source = artworkUrl(artworkId, 128);
     let isCurrent = true;
     setAccentColor(undefined);
 
-    if (!source) {
+    if (!artworkId) {
       return () => {
         isCurrent = false;
       };
     }
 
-    void getArtworkAccentColor(source).then((color) => {
-      if (isCurrent) setAccentColor(color);
-    });
+    void getArtworkSource(artworkId, 128)
+      .then((source) => source ? getArtworkAccentColor(source) : undefined)
+      .then((color) => {
+        if (isCurrent) setAccentColor(color);
+      });
 
     return () => {
       isCurrent = false;

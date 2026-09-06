@@ -1,6 +1,6 @@
 # Rime Music 交接说明
 
-更新日期：2026-09-02
+更新日期：2026-09-06
 
 ## 1. 项目定位
 
@@ -21,9 +21,9 @@ Rime Music 是一个面向 Web、Windows、macOS 与 Android 的音乐播放器�
 | 图标 | Lucide React | 播放控制与底部导航图标 |
 | 字体 | Geist Variable | 当前界面的默认无衬线字体 |
 
-### 跨端客户端建议
+### 跨端客户端
 
-建议在当前 React/Vite 前端稳定后接入 **Tauri 2 + Rust** 作为 Windows、macOS 与 Android 的原生壳层。
+当前已接入 **Tauri 2 + Rust** 作为 Windows、macOS、Android 与 iOS 的原生壳层。Android 原生工程已经初始化，移动端发布与 CI/CD 细节见仓库根目录 `MOBILE_RELEASE.md`。
 
 * Tauri 不需要搭配 Go。Go 只在未来确实需要独立媒体服务、P2P、复杂下载器等单独进程时再评估。
 * Vite 是当前前端构建工具；Tauri 通过其 `devUrl` 和 `frontendDist` 配置加载 Vite 的开发服务与构建产物。
@@ -168,14 +168,13 @@ VITE_VIEWBOX_SRC=/rime/mobile.html npm run build
 
 同时需要为 Vite 配置匹配的 `base`，并确认静态托管平台将 `mobile.html` 与 `assets/` 发布到该子路径。完成这一调整后再部署，避免 iframe 请求根路径导致 404。
 
-## 6. Tauri 接入与原生发布（后续）
+## 6. Tauri 接入与原生发布
 
 开始原生客户端开发时，建议采用以下顺序：
 
-1. 安装 Rust、平台原生构建工具与 Android SDK；Android 开发可在 macOS 上使用 Android Studio 模拟器。
-2. 在本项目中初始化 Tauri 2，配置开发地址为 Vite 服务、生产前端目录为 `dist`。
-3. 保持 `mobile.html`/`MobilePlayer` 的页面层不依赖 Viewbox；原生壳加载正式用户入口，Viewbox 仅保留给开发环境。
-4. 通过平台适配层实现播放、媒体会话、通知、文件缓存、SQLite 和权限处理。
-5. 在 CI 中分别构建 Web、Windows、macOS 与 Android，并分别配置签名、证书与商店发布流程。
-
-Tauri 的初始化、Android 构建与签名尚未在本仓库执行，因此不能将当前代码直接视为 Windows、macOS 或 Android 安装包项目。
+1. Tauri 开发模式直接加载 Vite 的 `/mobile.html`，不会显示 Viewbox。
+2. Android 工程位于 `frontend/src-tauri/gen/android`，应用 ID 为 `com.prmlk.rime`。
+3. 发布构建内置本地移动界面，首次启动选择并验证 Rime 服务器；不会把某个服务器地址编译进安装包。
+4. 移动客户端使用 Bearer 会话访问所选服务器，网页端继续使用同源 Cookie，两种入口相互独立。
+5. GitHub Actions 在手动触发时保存 APK/AAB 构建产物，在推送匹配版本的 `v*` 标签时创建 GitHub Release。
+6. Google Play 内测发布可通过仓库变量启用；iOS 自动发布仍需 Apple 开发者身份、签名材料和完整 Xcode 环境。
