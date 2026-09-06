@@ -114,11 +114,11 @@ const miniPlayerTextToneCache = new Map<string, boolean>();
 const homeRecentAlbumCardSizeVariableClassName =
   '[--home-recent-album-card-size:clamp(8rem,min(40%,30cqh),20rem)]';
 
-/** 单张歌手专辑封面允许达到的最大边长，超过后才增加一列。 */
-const artistAlbumCardMaximumSizeInRem = 14;
+/** 单张专辑封面允许达到的最大边长，超过后才增加一列。 */
+const albumGridCardMaximumSizeInRem = 14;
 
-/** 歌手专辑网格在任何宽度下都至少保留两列。 */
-const artistAlbumGridMinimumColumns = 2;
+/** 专辑网格在任何宽度下都至少保留两列。 */
+const albumGridMinimumColumns = 2;
 
 export function MobilePlayer({
   user,
@@ -658,7 +658,7 @@ function RecentAlbumsView({ onOpenAlbum }: { onOpenAlbum: (albumId: string) => v
   if (albumsFeed.isInitialLoading) {
     return (
       <section className="mt-8" aria-label="正在加载最近入库的专辑" role="status">
-        <div className="grid grid-cols-2 gap-3">
+        <AlbumGrid>
           {[0, 1, 2, 3, 4, 5].map((item) => (
             <div key={item}>
               <AlbumArtworkSkeleton className="aspect-square w-full" />
@@ -666,7 +666,7 @@ function RecentAlbumsView({ onOpenAlbum }: { onOpenAlbum: (albumId: string) => v
               <Skeleton className="mt-2 h-3 w-3/5" />
             </div>
           ))}
-        </div>
+        </AlbumGrid>
       </section>
     );
   }
@@ -677,9 +677,9 @@ function RecentAlbumsView({ onOpenAlbum }: { onOpenAlbum: (albumId: string) => v
 
   return (
     <section className="mt-8" aria-label="最近入库专辑">
-      <div className="grid grid-cols-2 gap-3">
+      <AlbumGrid>
         {albumsFeed.items.map((album) => <AlbumCard key={album.id} album={album} onOpenAlbum={onOpenAlbum} />)}
-      </div>
+      </AlbumGrid>
       <InfiniteScrollSentinel
         hasMore={albumsFeed.hasMore}
         isLoading={albumsFeed.isLoadingMore}
@@ -1089,9 +1089,9 @@ function ArtistDetailView({ artistId, onOpenAlbum }: { artistId: string; onOpenA
 
       <Separator className="my-6" />
       <h3 className="text-sm font-semibold">专辑</h3>
-      <ArtistAlbumGrid>
+      <AlbumGrid>
         {albums.map((album) => <AlbumCard key={album.id} album={album} onOpenAlbum={onOpenAlbum} />)}
-      </ArtistAlbumGrid>
+      </AlbumGrid>
       <InfiniteScrollSentinel
         hasMore={Boolean(nextCursor)}
         isLoading={isLoadingMore}
@@ -1107,7 +1107,7 @@ function ArtistDetailView({ artistId, onOpenAlbum }: { artistId: string; onOpenA
  * 渲染歌手详情请求期间的自适应骨架屏。
  *
  * 骨架中的头像、歌手资料和专辑网格与 ArtistDetailView（歌手详情视图）的正式
- * 结构一一对应。专辑占位复用与正式列表相同的 ArtistAlbumGrid（歌手专辑网格）
+ * 结构一一对应。专辑占位复用与正式列表相同的 AlbumGrid（专辑网格）
  * 布局，横竖屏切换或异步数据返回都不会改变网格项的尺寸。
  *
  * @returns 带有歌手资料和响应式专辑网格的加载状态元素。
@@ -1125,7 +1125,7 @@ function ArtistDetailLoading() {
       </div>
       <Separator className="my-6" />
       <Skeleton className="h-3 w-12" />
-      <ArtistAlbumGrid>
+      <AlbumGrid>
         {[0, 1, 2, 3].map((item) => (
           <div key={item}>
             <AlbumArtworkSkeleton className="aspect-square w-full" />
@@ -1133,7 +1133,7 @@ function ArtistDetailLoading() {
             <Skeleton className="mt-1 h-3 w-3/5" />
           </div>
         ))}
-      </ArtistAlbumGrid>
+      </AlbumGrid>
     </section>
   );
 }
@@ -1150,8 +1150,8 @@ function ArtistDetailLoading() {
  * @param gridRef 指向专辑网格根元素的 React 引用。
  * @returns 当前容器宽度下满足封面最大边长的最少列数，至少为两列。
  */
-function useArtistAlbumGridColumns(gridRef: RefObject<HTMLDivElement | null>): number {
-  const [columns, setColumns] = useState(artistAlbumGridMinimumColumns);
+function useAlbumGridColumns(gridRef: RefObject<HTMLDivElement | null>): number {
+  const [columns, setColumns] = useState(albumGridMinimumColumns);
 
   useEffect(() => {
     const grid = gridRef.current;
@@ -1161,12 +1161,12 @@ function useArtistAlbumGridColumns(gridRef: RefObject<HTMLDivElement | null>): n
     const updateColumns = () => {
       const rootFontSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
       const gridGap = Number.parseFloat(getComputedStyle(grid).columnGap);
-      const maximumArtworkSize = rootFontSize * artistAlbumCardMaximumSizeInRem;
+      const maximumArtworkSize = rootFontSize * albumGridCardMaximumSizeInRem;
 
       if (grid.clientWidth <= 0 || !Number.isFinite(gridGap) || !Number.isFinite(maximumArtworkSize)) return;
 
       const nextColumns = Math.max(
-        artistAlbumGridMinimumColumns,
+        albumGridMinimumColumns,
         Math.ceil((grid.clientWidth + gridGap) / (maximumArtworkSize + gridGap)),
       );
       setColumns((currentColumns) => currentColumns === nextColumns ? currentColumns : nextColumns);
@@ -1182,24 +1182,25 @@ function useArtistAlbumGridColumns(gridRef: RefObject<HTMLDivElement | null>): n
 }
 
 /**
- * 渲染列数由实际容器宽度决定的歌手专辑网格。
+ * 渲染列数由实际容器宽度决定的专辑网格。
  *
- * 该组件把测得的列数写入局部 CSS 自定义属性，由 `artist-album-grid`（歌手专辑
- * 网格）类以等份轨道布局。业务层只提供专辑卡片或加载骨架，避免正式态与加载态
- * 各自实现不同的断点规则。
+ * 该组件将测得的列数直接写入 `gridTemplateColumns`（网格列模板），避免 CSS
+ * 自定义属性在某些 WebView（网页视图）中嵌套进 `repeat()` 后被整体忽略。最近入库
+ * 与歌手详情都只提供专辑卡片或加载骨架，避免两页的正式态与加载态各自实现不同的
+ * 断点规则。即使 ResizeObserver（尺寸观察器）尚未回调，初始的两列也会立即生效。
  *
  * @param children 要排入网格的专辑卡片或骨架元素。
  * @returns 填满当前宽度、每张封面不超过上限的专辑网格。
  */
-function ArtistAlbumGrid({ children }: { children: ReactNode }) {
+function AlbumGrid({ children }: { children: ReactNode }) {
   const gridRef = useRef<HTMLDivElement>(null);
-  const columns = useArtistAlbumGridColumns(gridRef);
+  const columns = useAlbumGridColumns(gridRef);
 
   return (
     <div
       ref={gridRef}
-      className="artist-album-grid mt-3 gap-3"
-      style={{ '--artist-album-grid-columns': columns } as CSSProperties}
+      className="mt-3 grid gap-3"
+      style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
     >
       {children}
     </div>
