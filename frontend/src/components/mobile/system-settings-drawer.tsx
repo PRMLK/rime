@@ -88,7 +88,12 @@ export function SystemSettingsDrawer({ open, onOpenChange }: { open: boolean; on
     <Drawer open={open} onOpenChange={changeOpen} swipeDirection="down">
       <DrawerContent className="h-[calc(100dvh-0.5rem)] max-h-[calc(100dvh-0.5rem)]">
         <div className="mobile-content-frame">
-          <DrawerHeader className="flex-row items-center gap-2 p-0 pb-2 pt-3 text-left">
+          {/*
+           * 全屏设置卡片的背景仍可延展到圆角顶部；仅将可操作的页头避开系统状态栏。
+           * 该令牌与正在播放抽屉共用，避免不同设置页面在刘海或挖孔设备上出现
+           * 不一致的标题高度。
+           */}
+          <DrawerHeader className="flex-row items-center gap-2 p-0 pb-2 pt-[var(--mobile-drawer-header-safe-top)] text-left">
             {view === 'root' ? (
               <DrawerClose render={<Button variant="ghost" size="icon" aria-label="退出系统设置"><ChevronDown aria-hidden="true" /></Button>} />
             ) : (

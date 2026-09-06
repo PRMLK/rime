@@ -124,6 +124,13 @@
      * 因而引用此变量不会额外制造顶部空白。
      */
     --mobile-safe-area-top: env(safe-area-inset-top, 0px);
+    /*
+     * 全屏 Drawer（抽屉）卡片的页头不能沿用普通页面的顶部节奏：卡片自身会在
+     * 视口顶部保留圆角露出的间隙，因此这里只取安全区和 12px 基础间距中的较大值。
+     * 这样刘海、挖孔和灵动岛设备的标题会落在安全范围内，普通设备也不会因
+     * safe-area-inset-top 为 0px 而让关闭按钮贴近卡片顶部。
+     */
+    --mobile-drawer-header-safe-top: max(var(--mobile-safe-area-top), 0.75rem);
     --mobile-content-gutter-start: max(var(--mobile-content-gutter), env(safe-area-inset-left, 0px));
     --mobile-content-gutter-end: max(var(--mobile-content-gutter), env(safe-area-inset-right, 0px));
     /*

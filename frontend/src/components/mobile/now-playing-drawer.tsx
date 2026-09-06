@@ -74,7 +74,11 @@ export function NowPlayingDrawer({
   return (
     <DrawerContent className="h-[calc(100dvh-0.5rem)] max-h-[calc(100dvh-0.5rem)]">
       <div className="mobile-content-frame">
-        <DrawerHeader className="flex-row items-center gap-2 p-0 pb-2 pt-[max(env(safe-area-inset-top),0.75rem)] text-left">
+        {/*
+         * 全屏播放卡片与设置卡片共用顶部避让令牌：安全区由 App 壳统一提供，
+         * 非异形屏仍保留最小页头间距，避免关闭按钮贴近卡片圆角。
+         */}
+        <DrawerHeader className="flex-row items-center gap-2 p-0 pb-2 pt-[var(--mobile-drawer-header-safe-top)] text-left">
           <DrawerClose
             render={
               <Button variant="ghost" size="icon" aria-label="收起播放器">
