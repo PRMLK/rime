@@ -289,7 +289,7 @@ function PlaylistPanel({ playlistID, onBack, onChooseTrack }: { playlistID: stri
                   <AlbumArtwork artwork={track} size="sm" />
                   <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{track.title}</span><span className="block truncate text-xs text-muted-foreground">{track.available ? artistNames(track) : '当前不可播放'}</span></span>
                 </button>
-                <ItemActions><Button variant="ghost" size="icon" aria-label={`从歌单移除《${track.title}》`} onClick={() => void removeTrackFromPlaylist(playlist.id, track.id).then(() => setRefresh((value) => value + 1)).catch((removeError: unknown) => setError(removeError instanceof Error ? removeError.message : '移除失败'))}><Trash2 aria-hidden="true" /></ItemActions>
+                <ItemActions><Button variant="ghost" size="icon" aria-label={`从歌单移除《${track.title}》`} onClick={() => void removeTrackFromPlaylist(playlist.id, track.id).then(() => setRefresh((value) => value + 1)).catch((removeError: unknown) => setError(removeError instanceof Error ? removeError.message : '移除失败'))}><Trash2 aria-hidden="true" /></Button></ItemActions>
               </Item>
             ))}
           </ItemGroup>

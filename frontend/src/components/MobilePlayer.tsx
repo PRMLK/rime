@@ -358,7 +358,8 @@ export function MobilePlayer({ user, onAuthChanged }: { user: User; onAuthChange
             />
           )}
 
-          <div className="mobile-content-frame relative z-10 shrink-0 pt-6">
+          {/* 页头下方保留 8px 间距，避免首个内容元素紧贴顶部栏。 */}
+          <div className="mobile-content-frame relative z-10 shrink-0 pt-4 pb-2">
             <PageHeader
               title={pageLabel}
               showBackButton={Boolean(activeDetail)}
