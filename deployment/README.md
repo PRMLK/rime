@@ -3,6 +3,7 @@
 Rime runs as two Docker Compose services:
 
 - `backend` scans the read-only `runtime/music` directory and stores SQLite data under `runtime/data`.
+- The backend image includes FFmpeg for negotiated audio transcoding and keeps derived files under `runtime/data/cache/transcodes`.
 - `web` serves the built frontend and proxies `/api` and `/healthz` to the backend.
 
 The public container port binds to `127.0.0.1:18081` by default so it can only be reached through a local reverse proxy or Cloudflare Tunnel.

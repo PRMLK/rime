@@ -1,0 +1,11 @@
+ALTER TABLE playback_sessions ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'direct';
+ALTER TABLE playback_sessions ADD COLUMN source_path TEXT NOT NULL DEFAULT '';
+ALTER TABLE playback_sessions ADD COLUMN source_container TEXT NOT NULL DEFAULT '';
+ALTER TABLE playback_sessions ADD COLUMN source_codec TEXT NOT NULL DEFAULT '';
+ALTER TABLE playback_sessions ADD COLUMN source_content_type TEXT NOT NULL DEFAULT '';
+ALTER TABLE playback_sessions ADD COLUMN source_bitrate_kbps INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE playback_sessions ADD COLUMN source_size INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE playback_sessions ADD COLUMN source_modified_unix_ms INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE playback_sessions ADD COLUMN source_content_version TEXT NOT NULL DEFAULT '';
+ALTER TABLE playback_sessions ADD COLUMN content_key TEXT NOT NULL DEFAULT '';
+ALTER TABLE playback_sessions ADD COLUMN profile_id TEXT NOT NULL DEFAULT '';

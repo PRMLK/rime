@@ -1,4 +1,4 @@
-import { ArrowLeft, Heart, KeyRound, LibraryBig, ListMusic, LoaderCircle, LogOut, Pencil, Plus, Server, Settings, Trash2 } from 'lucide-react';
+import { ArrowLeft, Heart, KeyRound, LibraryBig, ListMusic, LoaderCircle, LogOut, Pencil, Plus, Server, Settings, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   createPlaylist,
@@ -37,13 +37,14 @@ import type { SavedServer } from '@/lib/mobile-server';
 type Props = {
   user: User;
   onChooseTrack: (track: Track) => void;
+  onOpenClientSettings: () => void;
   onOpenSystemSettings: () => void;
   onSignedOut: () => void;
   server?: SavedServer;
   onSwitchServer?: () => void;
 };
 
-export function LibraryView({ user, onChooseTrack, onOpenSystemSettings, onSignedOut, server, onSwitchServer }: Props) {
+export function LibraryView({ user, onChooseTrack, onOpenClientSettings, onOpenSystemSettings, onSignedOut, server, onSwitchServer }: Props) {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [selectedID, setSelectedID] = useState<string>();
   const [creating, setCreating] = useState(false);
@@ -176,6 +177,10 @@ export function LibraryView({ user, onChooseTrack, onOpenSystemSettings, onSigne
           <ItemContent><ItemTitle>{user.displayName}</ItemTitle><ItemDescription>@{user.username}</ItemDescription></ItemContent>
           <ItemActions><Badge variant="secondary">{user.role === 'admin' ? '管理员' : '用户'}</Badge></ItemActions>
         </Item>
+        <UnifiedListRow render={<button type="button" onClick={onOpenClientSettings} />} className="cursor-pointer px-5 py-3" separated>
+          <ItemMedia variant="icon"><SlidersHorizontal aria-hidden="true" /></ItemMedia>
+          <ItemContent><ItemTitle>客户端设置</ItemTitle></ItemContent>
+        </UnifiedListRow>
         {user.role === 'admin' && (
           <UnifiedListRow render={<button type="button" onClick={onOpenSystemSettings} />} className="cursor-pointer px-5 py-3" separated>
             <ItemMedia variant="icon"><Settings aria-hidden="true" /></ItemMedia>

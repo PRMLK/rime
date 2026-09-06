@@ -1,6 +1,6 @@
 [package]
 name = "rime"
-version = "0.1.0"
+version = "0.1.2"
 description = "Rime private music client"
 authors = ["PRMLK"]
 license = ""
@@ -21,6 +21,10 @@ tauri-build = { version = "2.6.3", features = [] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-tauri = { version = "2.11.3", features = [] }
+tauri = { version = "2.11.3", features = ["protocol-asset"] }
 tauri-plugin-log = "2"
 tauri-plugin-http = "2"
+filetime = "0.2"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+sha2 = "0.10"
+tokio = { version = "1", features = ["fs", "io-util"] }

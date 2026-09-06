@@ -119,21 +119,25 @@ func (h *Handler) serveArtwork(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) systemInfo(w http.ResponseWriter, _ *http.Request) {
+	capabilities := []string{
+		"auth.bearer.v1",
+		"search.tracks.v1",
+		"browse.albums.v1",
+		"browse.recent-albums.v1",
+		"lyrics.timed.v1",
+		"playback.direct.v1",
+		"playback.events.v1",
+		"playback.history.v1",
+		"favorites.albums.v1",
+		"system.tasks.v1",
+	}
+	if h.playback.SupportsTranscoding() {
+		capabilities = append(capabilities, "playback.transcode.v1")
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"name":       "Rime",
-		"apiVersion": "v1",
-		"capabilities": []string{
-			"auth.bearer.v1",
-			"search.tracks.v1",
-			"browse.albums.v1",
-			"browse.recent-albums.v1",
-			"lyrics.timed.v1",
-			"playback.direct.v1",
-			"playback.events.v1",
-			"playback.history.v1",
-			"favorites.albums.v1",
-			"system.tasks.v1",
-		},
+		"name":         "Rime",
+		"apiVersion":   "v1",
+		"capabilities": capabilities,
 	})
 }
 
@@ -336,6 +340,8 @@ func (h *Handler) createPlaybackSession(w http.ResponseWriter, r *http.Request) 
 			writeProblem(w, r, http.StatusNotFound, "track_not_found", "Track not found", "The requested track is unavailable.")
 		case errors.Is(err, playback.ErrUnsupportedFormat):
 			writeProblem(w, r, http.StatusConflict, "playback_format_unsupported", "Playback format unsupported", "No direct-play source matches this player.")
+		case errors.Is(err, playback.ErrInvalidCapabilities):
+			writeProblem(w, r, http.StatusBadRequest, "invalid_playback_capabilities", "Invalid playback capabilities", err.Error())
 		default:
 			h.logger.Error("create playback session", "error", err)
 			writeProblem(w, r, http.StatusInternalServerError, "internal_error", "Internal error", "The playback session could not be created.")
@@ -347,7 +353,7 @@ func (h *Handler) createPlaybackSession(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
-	track, mediaFile, err := h.playback.Stream(r.Context(), r.PathValue("sessionID"))
+	track, source, err := h.playback.Stream(r.Context(), r.PathValue("sessionID"))
 	if err != nil {
 		if errors.Is(err, playback.ErrSessionNotFound) {
 			writeProblem(w, r, http.StatusNotFound, "session_not_found", "Playback session not found", "The playback session is missing or expired.")
@@ -357,6 +363,7 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, http.StatusInternalServerError, "internal_error", "Internal error", "The media source could not be resolved.")
 		return
 	}
+	mediaFile := source.Media
 	file, err := os.Open(mediaFile.Path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

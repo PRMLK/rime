@@ -235,6 +235,10 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 	if session.Source.Container != "wav" || session.Source.BitrateKbps != 128 {
 		t.Fatalf("unexpected playback source: %+v", session.Source)
 	}
+	if session.Source.ContentKey == "" || session.Source.ContentLength != int64(len(audio)) || session.Source.ETag == "" || !session.Source.Cacheable {
+		t.Fatalf("missing client cache metadata: %+v", session.Source)
+	}
+
 	playbackEvent, err := json.Marshal(playback.Event{
 		EventID:    "integration-history-started",
 		Type:       "started",
