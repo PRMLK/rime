@@ -832,28 +832,51 @@ func (s *Store) AvailableMedia(ctx context.Context, trackID string) ([]catalog.M
 	return result, rows.Err()
 }
 
-func (s *Store) CreatePlaybackSession(ctx context.Context, sessionID, userID, trackID, mediaID, playerID string, createdAt, expiresAt time.Time) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO playback_sessions(id, user_id, track_id, media_file_id, player_id, created_at, expires_at) VALUES(?, ?, ?, ?, ?, ?, ?)`,
-		sessionID, userID, trackID, mediaID, playerID, createdAt.Format(time.RFC3339Nano), expiresAt.Format(time.RFC3339Nano))
+func (s *Store) CreatePlaybackSession(ctx context.Context, record playback.SessionRecord) error {
+	source := record.Source.Media
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO playback_sessions(
+			id, user_id, track_id, media_file_id, player_id, created_at, expires_at,
+			source_kind, source_path, source_container, source_codec, source_content_type,
+			source_bitrate_kbps, source_size, source_modified_unix_ms, source_content_version,
+			content_key, profile_id
+		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		record.ID, record.UserID, record.TrackID, record.MediaID, record.PlayerID,
+		record.CreatedAt.Format(time.RFC3339Nano), record.ExpiresAt.Format(time.RFC3339Nano),
+		record.Source.Kind, source.Path, source.Container, source.Codec, source.ContentType,
+		source.BitrateKbps, source.Size, source.ModifiedUnixMs, source.ContentVersion,
+		record.Source.ContentKey, record.Source.ProfileID)
 	return err
 }
 
-func (s *Store) PlaybackSessionMedia(ctx context.Context, sessionID string, now time.Time) (catalog.Track, catalog.MediaFile, error) {
+func (s *Store) PlaybackSessionMedia(ctx context.Context, sessionID string, now time.Time) (catalog.Track, playback.ResolvedMedia, error) {
 	var trackID string
-	var media catalog.MediaFile
+	var source playback.ResolvedMedia
 	err := s.db.QueryRowContext(ctx, `
-		SELECT ps.track_id, mf.id, mf.track_id, mf.path, mf.container, mf.codec, mf.content_type, mf.bitrate_kbps, mf.size, mf.modified_unix_ms, mf.content_version
+		SELECT ps.track_id, ps.source_kind, ps.content_key, ps.profile_id,
+			mf.id, mf.track_id,
+			COALESCE(NULLIF(ps.source_path, ''), mf.path),
+			COALESCE(NULLIF(ps.source_container, ''), mf.container),
+			COALESCE(NULLIF(ps.source_codec, ''), mf.codec),
+			COALESCE(NULLIF(ps.source_content_type, ''), mf.content_type),
+			CASE WHEN ps.source_bitrate_kbps > 0 THEN ps.source_bitrate_kbps ELSE mf.bitrate_kbps END,
+			CASE WHEN ps.source_size > 0 THEN ps.source_size ELSE mf.size END,
+			CASE WHEN ps.source_modified_unix_ms > 0 THEN ps.source_modified_unix_ms ELSE mf.modified_unix_ms END,
+			COALESCE(NULLIF(ps.source_content_version, ''), mf.content_version)
 		FROM playback_sessions ps JOIN media_files mf ON mf.id = ps.media_file_id
 		WHERE ps.id = ? AND ps.expires_at > ? AND mf.available = 1`, sessionID, now.Format(time.RFC3339Nano)).
-		Scan(&trackID, &media.ID, &media.TrackID, &media.Path, &media.Container, &media.Codec, &media.ContentType, &media.BitrateKbps, &media.Size, &media.ModifiedUnixMs, &media.ContentVersion)
+		Scan(&trackID, &source.Kind, &source.ContentKey, &source.ProfileID,
+			&source.Media.ID, &source.Media.TrackID, &source.Media.Path, &source.Media.Container,
+			&source.Media.Codec, &source.Media.ContentType, &source.Media.BitrateKbps, &source.Media.Size,
+			&source.Media.ModifiedUnixMs, &source.Media.ContentVersion)
 	if errors.Is(err, sql.ErrNoRows) {
-		return catalog.Track{}, catalog.MediaFile{}, playback.ErrSessionNotFound
+		return catalog.Track{}, playback.ResolvedMedia{}, playback.ErrSessionNotFound
 	}
 	if err != nil {
-		return catalog.Track{}, catalog.MediaFile{}, err
+		return catalog.Track{}, playback.ResolvedMedia{}, err
 	}
 	track, err := s.GetTrack(ctx, trackID)
-	return track, media, err
+	return track, source, err
 }
 
 func (s *Store) RecordPlaybackEvent(ctx context.Context, userID, sessionID string, event playback.Event) error {

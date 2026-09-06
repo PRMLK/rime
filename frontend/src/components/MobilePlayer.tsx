@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { getFavoriteStatus, searchTracks, setFavorite, type ArtistRef, type Track, type User } from '@/api/rime';
 import { AlbumArtwork } from '@/components/AlbumArtwork';
 import { AppScrollArea } from '@/components/AppScrollArea';
+import { ClientSettingsDrawer } from '@/components/ClientSettingsDrawer';
 import { LibraryView } from '@/components/LibraryView';
 import { AlbumDetailView } from '@/components/mobile/album-detail-view';
 import { ArtistDetailView } from '@/components/mobile/artist-detail-view';
@@ -33,6 +34,7 @@ import {
   prefersLightArtworkForegroundForPixels,
 } from '@/lib/artwork-color';
 import { cn } from '@/lib/utils';
+import { clientSettingsScope } from '@/lib/client-settings';
 import type { SavedServer } from '@/lib/mobile-server';
 import { formatMobileRoute, useMobileRoute } from '@/lib/mobile-route';
 import { useAlbumArtworkAccentColor } from '@/hooks/use-album-artwork-accent-color';
@@ -82,7 +84,8 @@ export function MobilePlayer({
   server?: SavedServer;
   onSwitchServer?: () => void;
 }) {
-  const player = useMemo(() => new HtmlAudioPlayer(), []);
+  const settingsScope = clientSettingsScope(server?.id, user.id);
+  const player = useMemo(() => new HtmlAudioPlayer(settingsScope), [settingsScope]);
   const playback = useSyncExternalStore(player.subscribe, player.getSnapshot);
   const miniPlayerSurfaceRef = useRef<HTMLElement>(null);
   const miniPlayerTitleRef = useRef<HTMLSpanElement>(null);
@@ -90,6 +93,7 @@ export function MobilePlayer({
   const [route, navigate] = useMobileRoute();
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isClientSettingsOpen, setIsClientSettingsOpen] = useState(false);
   const [isLiked, setIsLiked] = useState(false);
   const [isUpdatingLike, setIsUpdatingLike] = useState(false);
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>('sequence');
@@ -379,6 +383,7 @@ export function MobilePlayer({
                     <LibraryView
                       user={user}
                       onChooseTrack={chooseTrack}
+                      onOpenClientSettings={() => setIsClientSettingsOpen(true)}
                       onOpenSystemSettings={() => setIsSettingsOpen(true)}
                       onSignedOut={onAuthChanged}
                       server={server}
@@ -510,6 +515,7 @@ export function MobilePlayer({
           onChooseTrack={chooseTrack}
         />
       </Drawer>
+      <ClientSettingsDrawer open={isClientSettingsOpen} onOpenChange={setIsClientSettingsOpen} scope={settingsScope} />
       {user.role === 'admin' && <SystemSettingsDrawer open={isSettingsOpen} onOpenChange={setIsSettingsOpen} />}
     </TooltipProvider>
   );

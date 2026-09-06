@@ -5,6 +5,8 @@ import {
   type PlaybackSession,
   type Track,
 } from '@/api/rime';
+import { playbackQualityRequest, readClientSettings } from '@/lib/client-settings';
+import { cacheMedia, releaseCachedMedia, resolveCachedMedia } from '@/services/media-cache';
 
 export type PlayerStatus = 'idle' | 'loading' | 'playing' | 'paused' | 'error';
 
@@ -26,10 +28,11 @@ export class HtmlAudioPlayer {
   private readonly playerId = getPlayerId();
   private snapshot: PlayerSnapshot = { status: 'idle', positionMs: 0, durationMs: 0 };
   private session?: PlaybackSession;
+  private cachedSession?: PlaybackSession;
   private loadGeneration = 0;
   private lastProgressEventAt = 0;
 
-  constructor() {
+  constructor(private readonly cacheScope: string) {
     this.audio.preload = 'metadata';
     this.audio.addEventListener('playing', this.handlePlaying);
     this.audio.addEventListener('pause', this.handlePause);
@@ -55,7 +58,8 @@ export class HtmlAudioPlayer {
     const generation = ++this.loadGeneration;
     this.publish({ track, status: 'loading', positionMs: 0, durationMs: track.durationMs, source: undefined, error: undefined });
     try {
-      const nextSession = await createPlaybackSession(track.id, this.playerId);
+      const settings = readClientSettings(this.cacheScope);
+      const nextSession = await createPlaybackSession(track.id, this.playerId, playbackQualityRequest(settings.playbackQuality));
       if (generation !== this.loadGeneration) {
         void deletePlaybackSession(nextSession.sessionId);
         return;
@@ -64,12 +68,26 @@ export class HtmlAudioPlayer {
       this.audio.pause();
       this.session = nextSession;
       this.publish({ source: nextSession.source });
-      this.audio.src = nextSession.source.href;
+      const cachedSource = await resolveCachedMedia(this.cacheScope, nextSession.source).catch(() => undefined);
+      if (generation !== this.loadGeneration) {
+        if (cachedSource) void releaseCachedMedia(this.cacheScope, nextSession.source);
+        void deletePlaybackSession(nextSession.sessionId);
+        return;
+      }
+      const previousCachedSession = this.cachedSession;
+      this.cachedSession = cachedSource ? nextSession : undefined;
+      this.audio.src = cachedSource ?? nextSession.source.href;
       this.audio.load();
+      if (previousCachedSession) {
+        void releaseCachedMedia(this.cacheScope, previousCachedSession.source);
+      }
       if (previousSession) {
         void deletePlaybackSession(previousSession.sessionId);
       }
       await this.audio.play();
+      if (!cachedSource) {
+        void cacheMedia(this.cacheScope, nextSession.source, settings.maxCacheBytes).catch(() => undefined);
+      }
     } catch (error) {
       if (generation === this.loadGeneration) {
         this.publish({ status: 'error', error: messageFrom(error) });
@@ -102,10 +120,14 @@ export class HtmlAudioPlayer {
     this.audio.pause();
     this.audio.removeAttribute('src');
     this.audio.load();
+    if (this.cachedSession) {
+      void releaseCachedMedia(this.cacheScope, this.cachedSession.source);
+    }
     if (this.session) {
       void deletePlaybackSession(this.session.sessionId);
     }
     this.session = undefined;
+    this.cachedSession = undefined;
     this.listeners.clear();
     this.endedListeners.clear();
   }

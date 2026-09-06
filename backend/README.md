@@ -6,7 +6,8 @@ HTTP range support.
 
 Go 1.23 or newer is required. SQLite and metadata parsing are embedded in the
 binary, so the direct-play path does not require CGO, a system database, or
-FFmpeg. Transcoding is intentionally outside the first milestone.
+FFmpeg. When FFmpeg is available, unsupported or bitrate-limited sources are
+transcoded on demand and reused from a content-addressed cache.
 
 ## Run
 
@@ -25,6 +26,9 @@ through environment variables:
 | `RIME_DATA_DIR` | `./data` | SQLite data directory |
 | `RIME_LRCLIB_URL` | `https://lrclib.net` | LRCLIB-compatible lyrics provider |
 | `RIME_SCAN_ON_STARTUP` | `true` | Scan the library before serving |
+| `RIME_FFMPEG_PATH` | `ffmpeg` | FFmpeg executable used for optional playback transcoding |
+| `RIME_TRANSCODE_CACHE_MAX_BYTES` | `10737418240` | Maximum server-side transcode cache size; `0` keeps all artifacts |
+| `RIME_TRANSCODE_CONCURRENCY` | `1` | Maximum concurrent FFmpeg processes |
 
 The native API contract is documented in `api/openapi/rime-v1.yaml`.
 
@@ -61,19 +65,21 @@ Derived resources are stored below the data directory:
 data/
 ├── rime.db
 ├── cache/
-│   └── artwork/
-│       ├── original/
-│       ├── 128/
-│       ├── 256/
-│       ├── 512/
-│       └── 1024/
+│   ├── artwork/
+│   │   ├── original/
+│   │   ├── 128/
+│   │   ├── 256/
+│   │   ├── 512/
+│   │   └── 1024/
+│   └── transcodes/
 └── library/
     └── lyrics/
 ```
 
 Artwork files are content-addressed and may be deleted safely; the next scan
 rebuilds originals from the music library and thumbnails are generated on
-demand. The lyrics directory is reserved for persistent downloaded or edited
+demand. Transcoded audio is also derived and evictable. The lyrics directory
+is reserved for persistent downloaded or edited
 lyrics and must not be managed as an evictable cache.
 
 The `lyrics.scan` task resolves lyrics in this order:

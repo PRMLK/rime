@@ -112,6 +112,13 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	transcoder, err := playback.NewFileTranscoder(filepath.Join(cfg.CacheDir, "transcodes"), cfg.FFmpegPath, cfg.TranscodeCacheBytes, cfg.TranscodeConcurrency)
+	if err != nil {
+		return err
+	}
+	if !transcoder.Available() {
+		logger.Warn("FFmpeg not found; transcoding is disabled", "path", cfg.FFmpegPath)
+	}
 	libraryScanner := scanner.New(cfg.MusicDir, artworkCache, store, logger)
 	lyricsScanner := lyrics.NewScanner(
 		cfg.LyricsDir,
@@ -154,7 +161,7 @@ func run(logger *slog.Logger) error {
 	}
 	defer taskService.Close()
 
-	handler := v1.New(search.New(store), browse.New(store), lyrics.NewService(store), playback.New(store), artwork.NewService(store, artworkCache), taskService, identityService, playlists.New(store), logger)
+	handler := v1.New(search.New(store), browse.New(store), lyrics.NewService(store), playback.New(store, transcoder), artwork.NewService(store, artworkCache), taskService, identityService, playlists.New(store), logger)
 	server := &http.Server{
 		Addr:              cfg.Address,
 		Handler:           handler,

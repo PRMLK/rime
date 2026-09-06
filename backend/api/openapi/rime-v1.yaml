@@ -786,9 +786,16 @@ components:
               type: array
               items: { $ref: '#/components/schemas/MediaFormat' }
             supportsByteRange: { type: boolean }
+            quality:
+              type: string
+              enum: [auto, original, limited]
+            maxBitrateKbps:
+              type: integer
+              minimum: 32
+              maximum: 320
     PlaybackSource:
       type: object
-      required: [kind, href, contentType, container, seekMethod]
+      required: [kind, href, contentType, container, seekMethod, contentKey, contentLength, etag, cacheable]
       properties:
         kind: { type: string, enum: [direct, transcode] }
         href: { type: string }
@@ -800,6 +807,18 @@ components:
           minimum: 1
           description: Effective stream bitrate; for direct playback this is the source file bitrate.
         seekMethod: { type: string, enum: [byteRange, timeOffset, none] }
+        contentKey:
+          type: string
+          description: Stable opaque identity for client cache lookup.
+        contentLength:
+          type: integer
+          format: int64
+          minimum: 0
+        etag: { type: string }
+        profileId:
+          type: string
+          description: Versioned encoder profile for transcoded media.
+        cacheable: { type: boolean }
     PlaybackSession:
       type: object
       required: [sessionId, track, source, expiresAt]

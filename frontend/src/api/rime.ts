@@ -141,6 +141,11 @@ export type PlaybackSession = {
     codec?: string;
     bitrateKbps?: number;
     seekMethod: 'byteRange' | 'time';
+    contentKey: string;
+    contentLength: number;
+    etag: string;
+    profileId?: string;
+    cacheable: boolean;
   };
   expiresAt: string;
 };
@@ -403,7 +408,11 @@ export async function getArtworkSource(artworkId: string | undefined, size: 128 
   return objectUrl;
 }
 
-export async function createPlaybackSession(trackId: string, playerId: string): Promise<PlaybackSession> {
+export async function createPlaybackSession(
+  trackId: string,
+  playerId: string,
+  quality: { quality: 'auto' | 'original' | 'limited'; maxBitrateKbps?: number },
+): Promise<PlaybackSession> {
   const session = await request<PlaybackSession>('/api/v1/playback/sessions', {
     method: 'POST',
     body: JSON.stringify({
@@ -411,17 +420,8 @@ export async function createPlaybackSession(trackId: string, playerId: string): 
       playerId,
       capabilities: {
         supportsByteRange: true,
-        formats: [
-          { container: 'mp3', codec: 'mp3' },
-          { container: 'm4a', codec: 'aac' },
-          { container: 'mp4', codec: 'aac' },
-          { container: 'aac', codec: 'aac' },
-          { container: 'flac', codec: 'flac' },
-          { container: 'ogg', codec: 'vorbis' },
-          { container: 'opus', codec: 'opus' },
-          { container: 'wav', codec: 'pcm' },
-          { container: 'wave', codec: 'pcm' },
-        ],
+        formats: supportedAudioFormats(),
+        ...quality,
       },
     }),
   });
@@ -429,6 +429,23 @@ export async function createPlaybackSession(trackId: string, playerId: string): 
     ...session,
     source: { ...session.source, href: resolveServerPath(session.source.href) },
   };
+}
+
+function supportedAudioFormats(): Array<{ container: string; codec: string }> {
+  const audio = document.createElement('audio');
+  const candidates = [
+    { container: 'm4a', codec: 'aac', mime: 'audio/mp4; codecs="mp4a.40.2"' },
+    { container: 'mp4', codec: 'aac', mime: 'audio/mp4; codecs="mp4a.40.2"' },
+    { container: 'mp3', codec: 'mp3', mime: 'audio/mpeg' },
+    { container: 'opus', codec: 'opus', mime: 'audio/ogg; codecs="opus"' },
+    { container: 'ogg', codec: 'vorbis', mime: 'audio/ogg; codecs="vorbis"' },
+    { container: 'flac', codec: 'flac', mime: 'audio/flac' },
+    { container: 'wav', codec: 'pcm', mime: 'audio/wav; codecs="1"' },
+    { container: 'wave', codec: 'pcm', mime: 'audio/wav; codecs="1"' },
+  ];
+  const supported = candidates.filter((candidate) => audio.canPlayType(candidate.mime) !== '')
+    .map(({ container, codec }) => ({ container, codec }));
+  return supported.length > 0 ? supported : [{ container: 'mp3', codec: 'mp3' }];
 }
 
 export function recordPlaybackEvent(
