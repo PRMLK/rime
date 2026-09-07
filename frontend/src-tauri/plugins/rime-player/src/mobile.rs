@@ -4,7 +4,10 @@ use tauri::{
     AppHandle, Runtime,
 };
 
-use crate::{models::{LoadRequest, NativePlaybackStatus, SeekRequest}, Error, Result};
+use crate::{
+    models::{DesktopMediaUpdate, LoadRequest, NativePlaybackStatus, SeekRequest},
+    Error, Result,
+};
 
 #[cfg(target_os = "android")]
 const PLUGIN_IDENTIFIER: &str = "com.prmlk.rime.player";
@@ -96,5 +99,24 @@ impl<R: Runtime> RimePlayer<R> {
     /** 停止并释放当前原生播放项。 */
     pub fn stop(&self) -> Result<()> {
         self.invoke("stop", ())
+    }
+
+    /**
+     * 移动端由 Media3 或 AVFoundation 直接维护系统媒体会话，不能再注册桌面桥接层。
+     *
+     * @returns 始终返回 false，使前端保留移动端原生播放服务的唯一所有权。
+     */
+    pub fn desktop_media_controls_available(&self) -> bool {
+        false
+    }
+
+    /**
+     * 拒绝桌面媒体面板同步请求。
+     *
+     * @param _update - 仅供跨平台命令签名一致性使用的桌面媒体状态。
+     * @returns 始终返回 Unavailable（当前平台不可用），调用方会安静忽略该路径。
+     */
+    pub fn update_desktop_media_controls(&self, _update: DesktopMediaUpdate) -> Result<()> {
+        Err(Error::Unavailable)
     }
 }

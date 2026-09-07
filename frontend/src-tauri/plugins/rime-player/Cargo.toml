@@ -15,5 +15,15 @@ serde = { version = "1", features = ["derive"] }
 tauri = { version = "=2.11.5" }
 thiserror = "=2.0.20"
 
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+# 桌面端仅负责操作系统的媒体面板；实际音频仍由 WebView 播放，避免改变现有缓存、
+# 认证和解码链路。
+base64 = "=0.22.1"
+souvlaki = { version = "=0.8.3", default-features = false }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# Windows 的 SMTC（系统媒体传输控件）要求关联一个原生窗口句柄。
+raw-window-handle = "=0.6.2"
+
 [target.'cfg(target_os = "ios")'.dependencies]
 tauri = { version = "=2.11.5", features = ["wry"] }

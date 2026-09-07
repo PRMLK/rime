@@ -1,4 +1,13 @@
-const COMMANDS: &[&str] = &["status", "load", "play", "pause", "seek", "stop"];
+const COMMANDS: &[&str] = &[
+    "status",
+    "load",
+    "play",
+    "pause",
+    "seek",
+    "stop",
+    "desktop_media_controls_available",
+    "update_desktop_media_controls",
+];
 
 /**
  * 将本地 Android Library 与 iOS Swift Package 注册为 Tauri 插件工件。

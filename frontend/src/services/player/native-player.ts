@@ -1,4 +1,5 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { PlaybackFormat, PlaybackSession, Track } from '@/api/rime';
 
 /** 原生播放服务能返回的状态；`ended` 用于让前端延续既有队列策略。 */
@@ -29,6 +30,35 @@ export type NativePlayerLoadRequest = {
 };
 
 const pluginCommandPrefix = 'plugin:rime-player|';
+const desktopMediaCommandEvent = 'rime-player://desktop-media-command';
+
+/** Windows/macOS 原生媒体面板所需的曲目元数据。 */
+export type DesktopMediaMetadata = {
+  title?: string;
+  artist?: string;
+  album?: string;
+  /** 已由 WebView 完成鉴权读取的封面 data URL（数据 URL）。 */
+  artworkDataUrl?: string;
+  durationMs: number;
+};
+
+/** 网页音频播放器向 Windows/macOS 原生媒体面板同步的状态。 */
+export type DesktopMediaUpdate = {
+  /** 仅在切歌、封面就绪或清空系统面板时提供，普通进度更新保持 undefined。 */
+  metadata?: DesktopMediaMetadata;
+  state: NativePlayerState;
+  positionMs: number;
+  durationMs: number;
+};
+
+/** 原生 Windows/macOS 媒体键发回网页播放器的指令。 */
+export type DesktopMediaCommand =
+  | { type: 'play' }
+  | { type: 'pause' }
+  | { type: 'toggle' }
+  | { type: 'next' }
+  | { type: 'previous' }
+  | { type: 'seek'; positionMs: number };
 
 /**
  * Tauri 原生播放器插件的 TypeScript 门面。
@@ -113,6 +143,67 @@ export class NativePlayerBridge {
 }
 
 /**
+ * Windows/macOS 系统媒体面板的 TypeScript 门面。
+ *
+ * 这不是原生音频播放器，不能影响 `NativePlayerBridge`（原生播放器桥）的可用性判断。
+ * 音频仍由 HTMLAudioElement（网页音频元素）输出，桥接层只负责将同一份播放快照发布
+ * 给 Windows SMTC（系统媒体传输控件）或 macOS Now Playing（正在播放），并收回媒体键。
+ */
+export class DesktopMediaControlsBridge {
+  private unlisten?: UnlistenFn;
+
+  /**
+   * 注册原生媒体键事件并尝试创建桌面系统媒体面板。
+   *
+   * 先安装前端监听器，再请求 Rust（Rust 编程语言）侧创建控制器，保证初始化完成瞬间
+   * 按下媒体键也不会丢失。浏览器、移动端和不支持的桌面系统都会安静返回 false。
+   *
+   * @param listener 接收播放、暂停、切歌或绝对定位命令的回调函数。
+   * @returns 原生系统媒体面板创建成功时为 true，否则为 false。
+   */
+  async initialize(listener: (command: DesktopMediaCommand) => void): Promise<boolean> {
+    if (!isTauri() || this.unlisten) return Boolean(this.unlisten);
+    let unlisten: UnlistenFn | undefined;
+    try {
+      unlisten = await listen<unknown>(desktopMediaCommandEvent, (event) => {
+        const command = parseDesktopMediaCommand(event.payload);
+        if (command) listener(command);
+      });
+      const available = await invoke<boolean>(`${pluginCommandPrefix}desktop_media_controls_available`);
+      if (!available) {
+        unlisten();
+        return false;
+      }
+      this.unlisten = unlisten;
+      return true;
+    } catch {
+      unlisten?.();
+      return false;
+    }
+  }
+
+  /**
+   * 把网页音频的当前曲目、播放状态和进度发布给原生系统媒体面板。
+   *
+   * @param update 不包含播放 URL 或令牌的桌面媒体快照。
+   * @returns 原生 IPC（进程间通信）完成后的 Promise；调用方应在失败时回退到 Web Media Session。
+   */
+  async update(update: DesktopMediaUpdate): Promise<void> {
+    await invoke(`${pluginCommandPrefix}update_desktop_media_controls`, { update });
+  }
+
+  /**
+   * 取消对 Tauri 原生媒体键事件的监听。
+   *
+   * @returns 无返回值；应用退出时 Rust 侧控制器会随进程释放。
+   */
+  dispose(): void {
+    this.unlisten?.();
+    this.unlisten = undefined;
+  }
+}
+
+/**
  * 根据现有 API（应用程序接口）对象构建原生加载请求。
  *
  * @param track 当前要播放的曲目。
@@ -148,4 +239,22 @@ function supportsAndroidNativeFlac(): boolean {
   const major = Number(version[1]);
   const minor = Number(version[2] ?? '0');
   return major > 8 || (major === 8 && minor >= 1);
+}
+
+/**
+ * 校验并转换 Tauri 事件负载，避免未知原生事件影响播放器队列。
+ *
+ * @param payload Tauri 事件总线传来的未知 JSON（JavaScript 对象表示法）数据。
+ * @returns 合法的桌面媒体命令；字段缺失、类型错误或越界时返回 undefined。
+ */
+function parseDesktopMediaCommand(payload: unknown): DesktopMediaCommand | undefined {
+  if (!payload || typeof payload !== 'object') return undefined;
+  const { type, positionMs } = payload as { type?: unknown; positionMs?: unknown };
+  if (type === 'play' || type === 'pause' || type === 'toggle' || type === 'next' || type === 'previous') {
+    return { type };
+  }
+  if (type === 'seek' && typeof positionMs === 'number' && Number.isFinite(positionMs) && positionMs >= 0) {
+    return { type, positionMs };
+  }
+  return undefined;
 }

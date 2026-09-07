@@ -9,7 +9,13 @@ import {
 } from '@/api/rime';
 import { playbackQualityRequest, readClientSettings } from '@/lib/client-settings';
 import { cacheMedia, releaseCachedMedia, resolveCachedMedia } from '@/services/media-cache';
-import { NativePlayerBridge, nativeLoadRequest, type NativePlayerStatus } from '@/services/player/native-player';
+import {
+  DesktopMediaControlsBridge,
+  NativePlayerBridge,
+  nativeLoadRequest,
+  type DesktopMediaMetadata,
+  type NativePlayerStatus,
+} from '@/services/player/native-player';
 
 export type PlayerStatus = 'idle' | 'loading' | 'playing' | 'paused' | 'error';
 
@@ -47,6 +53,7 @@ export class HtmlAudioPlayer {
   private readonly systemMediaCommandListeners = new Set<SystemMediaCommandListener>();
   private readonly playerId = getPlayerId();
   private readonly nativePlayer = new NativePlayerBridge();
+  private readonly desktopMediaControls = new DesktopMediaControlsBridge();
   private snapshot: PlayerSnapshot = { status: 'idle', positionMs: 0, durationMs: 0 };
   private session?: PlaybackSession;
   private cachedSession?: PlaybackSession;
@@ -55,6 +62,9 @@ export class HtmlAudioPlayer {
   private publishedMediaTrackId?: string;
   private mediaMetadataGeneration = 0;
   private isUsingNativePlayer = false;
+  private isUsingDesktopMediaControls = false;
+  private publishedDesktopMediaTrackId?: string;
+  private desktopMediaMetadataGeneration = 0;
   private nativeProgressTimer?: ReturnType<typeof setInterval>;
   private nativeEndedNotified = false;
 
@@ -67,6 +77,7 @@ export class HtmlAudioPlayer {
     this.audio.addEventListener('durationchange', this.handleDurationChange);
     this.audio.addEventListener('error', this.handleError);
     this.configureSystemMediaSession();
+    void this.initializeDesktopMediaControls();
   }
 
   getSnapshot = (): PlayerSnapshot => this.snapshot;
@@ -296,6 +307,16 @@ export class HtmlAudioPlayer {
     this.listeners.clear();
     this.endedListeners.clear();
     this.systemMediaCommandListeners.clear();
+    if (this.isUsingDesktopMediaControls) {
+      void this.desktopMediaControls.update({
+        metadata: { durationMs: 0 },
+        state: 'idle',
+        positionMs: 0,
+        durationMs: 0,
+      }).catch(() => undefined);
+    }
+    this.isUsingDesktopMediaControls = false;
+    this.desktopMediaControls.dispose();
     this.clearSystemMediaSession();
   }
 
@@ -303,6 +324,21 @@ export class HtmlAudioPlayer {
     this.snapshot = { ...this.snapshot, ...update };
     this.synchronizeSystemMediaSession();
     this.listeners.forEach((listener) => listener());
+  }
+
+  /**
+   * 初始化 Windows/macOS 原生系统媒体面板，并把媒体键转回统一的播放器命令分发器。
+   *
+   * 桌面桥接层只发布网页音频播放器的快照，不能将 `isUsingNativePlayer`（使用原生播放
+   * 器）设为 true；否则会错误跳过 HTMLAudioElement（网页音频元素）实际播放路径。
+   *
+   * @returns 无返回值；浏览器、移动端和初始化失败的桌面端继续使用 Web Media Session。
+   */
+  private async initializeDesktopMediaControls(): Promise<void> {
+    const available = await this.desktopMediaControls.initialize((command) => this.emitSystemMediaCommand(command));
+    if (!available) return;
+    this.isUsingDesktopMediaControls = true;
+    this.synchronizeSystemMediaSession();
   }
 
   /**
@@ -333,13 +369,20 @@ export class HtmlAudioPlayer {
    * 图片；进度和播放状态则需要持续更新，使锁屏和桌面系统控件显示正确时间。
    */
   private synchronizeSystemMediaSession(): void {
-    const mediaSession = getSystemMediaSession();
-    if (!mediaSession) return;
     if (this.isUsingNativePlayer) {
       // Android/iOS 已由原生 MediaSession/Now Playing 展示控件，不能同时保留 WebView 会话。
       this.clearSystemMediaPresentation();
       return;
     }
+    if (this.isUsingDesktopMediaControls) {
+      // Windows/macOS 改由原生 SMTC/Now Playing 展示，避免 WebView 与系统桥接层争夺媒体键。
+      this.clearSystemMediaPresentation();
+      this.synchronizeDesktopMediaControls();
+      return;
+    }
+
+    const mediaSession = getSystemMediaSession();
+    if (!mediaSession) return;
 
     const track = this.snapshot.track;
     if (!track) {
@@ -371,6 +414,84 @@ export class HtmlAudioPlayer {
         ? 'none'
         : 'paused';
     synchronizeMediaSessionPosition(mediaSession, this.snapshot.positionMs, this.snapshot.durationMs);
+  }
+
+  /**
+   * 将网页音频播放器的快照发布给 Windows SMTC（系统媒体传输控件）或 macOS Now Playing。
+   *
+   * 元数据仅在切歌、封面读取完成和清理时提交，进度则随播放事件更新。这个分离避免
+   * macOS 每个 `timeupdate`（进度更新）都重新读取封面，同时保证系统时间轴持续移动。
+   *
+   * @returns 无返回值；底层 IPC（进程间通信）失败会恢复网页 Media Session 回退路径。
+   */
+  private synchronizeDesktopMediaControls(): void {
+    const track = this.snapshot.track;
+    if (!track) {
+      if (this.publishedDesktopMediaTrackId !== undefined) {
+        this.publishedDesktopMediaTrackId = undefined;
+        this.desktopMediaMetadataGeneration++;
+        this.publishDesktopMediaUpdate({ durationMs: 0 });
+      } else {
+        this.publishDesktopMediaUpdate();
+      }
+      return;
+    }
+
+    const isNewTrack = this.publishedDesktopMediaTrackId !== track.id;
+    if (isNewTrack) {
+      this.publishedDesktopMediaTrackId = track.id;
+      const generation = ++this.desktopMediaMetadataGeneration;
+      this.publishDesktopMediaUpdate(this.desktopMediaMetadata(track));
+      void getArtworkSource(track.artworkId, 512)
+        .then((source) => artworkDataUrl(source))
+        .then((dataUrl) => {
+          // 封面读取是异步的；只允许仍属于当前曲目的结果覆盖系统媒体面板。
+          if (dataUrl && generation === this.desktopMediaMetadataGeneration && this.snapshot.track?.id === track.id) {
+            this.publishDesktopMediaUpdate(this.desktopMediaMetadata(track, dataUrl));
+          }
+        })
+        .catch(() => undefined);
+      return;
+    }
+
+    this.publishDesktopMediaUpdate();
+  }
+
+  /**
+   * 构建一次原生桌面媒体面板的曲目元数据。
+   *
+   * @param track 当前网页音频播放器的曲目。
+   * @param artworkDataUrl 已转换为 data URL（数据 URL）的封面；未就绪时可省略。
+   * @returns 不含播放源和鉴权令牌的安全系统媒体元数据。
+   */
+  private desktopMediaMetadata(track: Track, artworkDataUrl?: string): DesktopMediaMetadata {
+    return {
+      title: track.title,
+      artist: track.artists.map((artist) => artist.name).join(' / '),
+      album: track.album.title,
+      artworkDataUrl,
+      durationMs: track.durationMs,
+    };
+  }
+
+  /**
+   * 异步发布桌面媒体面板更新，并在桥接层失效时回退到网页 Media Session。
+   *
+   * @param metadata 可选曲目元数据；undefined 表示仅更新播放状态和进度。
+   * @returns 无返回值；失败处理不应阻塞或中断当前网页音频。
+   */
+  private publishDesktopMediaUpdate(metadata?: DesktopMediaMetadata): void {
+    void this.desktopMediaControls.update({
+      metadata,
+      state: this.snapshot.status,
+      positionMs: Math.max(0, Math.round(this.snapshot.positionMs)),
+      durationMs: Math.max(0, Math.round(this.snapshot.durationMs)),
+    }).catch(() => {
+      if (!this.isUsingDesktopMediaControls) return;
+      this.isUsingDesktopMediaControls = false;
+      this.desktopMediaControls.dispose();
+      this.synchronizeSystemMediaSession();
+    });
   }
 
   /**
@@ -637,6 +758,29 @@ function clearMediaSessionPosition(mediaSession: MediaSession): void {
   } catch {
     // 旧实现可能没有 setPositionState；元数据和基本控制不受影响。
   }
+}
+
+/**
+ * 将已由 WebView 鉴权取得的封面地址转换为可传给 Rust 的 data URL（数据 URL）。
+ *
+ * Tauri 桌面端的封面通常是 blob URL（对象 URL），Windows 和 macOS 系统进程无法访问
+ * 该地址。转换结果会由 Rust 写入应用缓存，再以 file URL（文件 URL）交给系统媒体面板。
+ *
+ * @param source 浏览器或 WebView 可读取的封面地址。
+ * @returns 最大 5 MiB 的图片 data URL；无封面、读取失败或过大时返回 undefined。
+ */
+async function artworkDataUrl(source: string | undefined): Promise<string | undefined> {
+  if (!source) return undefined;
+  const response = await fetch(source);
+  if (!response.ok) return undefined;
+  const artwork = await response.blob();
+  if (!artwork.type.startsWith('image/') || artwork.size > 5 * 1024 * 1024) return undefined;
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener('load', () => resolve(typeof reader.result === 'string' ? reader.result : undefined), { once: true });
+    reader.addEventListener('error', () => reject(reader.error ?? new Error('封面读取失败')), { once: true });
+    reader.readAsDataURL(artwork);
+  });
 }
 
 function getPlayerId(): string {

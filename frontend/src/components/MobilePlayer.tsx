@@ -294,6 +294,9 @@ export function MobilePlayer({
       case 'pause':
         void player.pause();
         return;
+      case 'toggle':
+        void player.toggle();
+        return;
       case 'seek':
         player.seek(command.positionMs);
         return;

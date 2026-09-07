@@ -8,6 +8,10 @@ pub enum Error {
     /// 当前运行时没有可用的原生播放内核，例如桌面端使用网页 Media Session 时。
     #[error("native playback is unavailable on this platform")]
     Unavailable,
+
+    /// Windows 或 macOS 的系统媒体面板拒绝某次状态同步。
+    #[error("desktop media controls error: {0}")]
+    DesktopMediaControls(String),
 }
 
 impl serde::Serialize for Error {

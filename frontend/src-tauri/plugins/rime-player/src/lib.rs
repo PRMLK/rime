@@ -1,7 +1,8 @@
 //! Rime 的原生后台音频插件。
 //!
-//! Android 与 iOS 使用各自的系统播放器，桌面端由网页 Media Session（媒体会话）
-//! 处理。这样移动端的播放生命周期不再依赖可能被系统冻结的 WebView。
+//! Android 与 iOS 使用各自的系统播放器；Windows 与 macOS 保持网页音频解码，
+//! 但通过原生系统媒体面板暴露曲目信息和媒体键。这样移动端的播放生命周期不再依赖
+//! 可能被系统冻结的 WebView，桌面端也不会因更换音频内核而破坏现有缓存链路。
 
 use tauri::{plugin::{Builder, TauriPlugin}, Manager, Runtime};
 
@@ -45,6 +46,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::pause,
             commands::seek,
             commands::stop,
+            commands::desktop_media_controls_available,
+            commands::update_desktop_media_controls,
         ])
         .setup(|app, api| {
             #[cfg(mobile)]
