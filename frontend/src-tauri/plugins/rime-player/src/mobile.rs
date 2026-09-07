@@ -1,10 +1,10 @@
-use serde::de::DeserializeOwned;
+use serde::{de::DeserializeOwned, Serialize};
 use tauri::{
     plugin::{PluginApi, PluginHandle},
     AppHandle, Runtime,
 };
 
-use crate::{models::{LoadRequest, NativePlaybackStatus, SeekRequest}, Result};
+use crate::{models::{LoadRequest, NativePlaybackStatus, SeekRequest}, Error, Result};
 
 #[cfg(target_os = "android")]
 const PLUGIN_IDENTIFIER: &str = "com.prmlk.rime.player";
@@ -23,7 +23,10 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
     api: PluginApi<R, C>,
 ) -> Result<RimePlayer<R>> {
     #[cfg(target_os = "android")]
-    let handle = api.register_android_plugin(PLUGIN_IDENTIFIER, "RimePlayerPlugin")?;
+    let handle = api
+        .register_android_plugin(PLUGIN_IDENTIFIER, "RimePlayerPlugin")
+        // `?` 不会自动串联 PluginInvokeError -> tauri::Error -> Error。
+        .map_err(tauri::Error::from)?;
     #[cfg(target_os = "ios")]
     let handle = api.register_ios_plugin(init_plugin_rime_player)?;
     Ok(RimePlayer(handle))
@@ -34,12 +37,30 @@ pub struct RimePlayer<R: Runtime>(PluginHandle<R>);
 
 impl<R: Runtime> RimePlayer<R> {
     /**
+     * 调用移动端原生插件，并统一转换跨平台边界产生的错误。
+     *
+     * Tauri 的移动插件 API 返回 `PluginInvokeError`，而本插件对外暴露
+     * `Error`。两者之间需要先经过 Tauri 的标准错误类型；显式完成这两步
+     * 转换可避免各播放命令重复处理，并符合 Rust `?` 只执行一次转换的规则。
+     *
+     * @param command - Kotlin 或 Swift 插件中注册的命令名称。
+     * @param payload - 可序列化的命令参数；无参数命令使用 `()`。
+     * @returns 成功时反序列化后的原生响应，失败时返回插件统一错误类型。
+     */
+    fn invoke<T: DeserializeOwned>(&self, command: &str, payload: impl Serialize) -> Result<T> {
+        self.0
+            .run_mobile_plugin(command, payload)
+            .map_err(tauri::Error::from)
+            .map_err(Error::from)
+    }
+
+    /**
      * 读取原生播放服务的当前快照。
      *
      * @returns 包含服务可用性、状态和播放位置的快照。
      */
     pub fn status(&self) -> Result<NativePlaybackStatus> {
-        self.0.run_mobile_plugin("status", ()).map_err(Into::into)
+        self.invoke("status", ())
     }
 
     /**
@@ -49,17 +70,17 @@ impl<R: Runtime> RimePlayer<R> {
      * @returns 无返回值；原生服务会自行维护后台播放和通知。
      */
     pub fn load(&self, request: LoadRequest) -> Result<()> {
-        self.0.run_mobile_plugin("load", request).map_err(Into::into)
+        self.invoke("load", request)
     }
 
     /** 恢复当前媒体。 */
     pub fn play(&self) -> Result<()> {
-        self.0.run_mobile_plugin("play", ()).map_err(Into::into)
+        self.invoke("play", ())
     }
 
     /** 暂停当前媒体。 */
     pub fn pause(&self) -> Result<()> {
-        self.0.run_mobile_plugin("pause", ()).map_err(Into::into)
+        self.invoke("pause", ())
     }
 
     /**
@@ -69,11 +90,11 @@ impl<R: Runtime> RimePlayer<R> {
      * @returns 无返回值。
      */
     pub fn seek(&self, request: SeekRequest) -> Result<()> {
-        self.0.run_mobile_plugin("seek", request).map_err(Into::into)
+        self.invoke("seek", request)
     }
 
     /** 停止并释放当前原生播放项。 */
     pub fn stop(&self) -> Result<()> {
-        self.0.run_mobile_plugin("stop", ()).map_err(Into::into)
+        self.invoke("stop", ())
     }
 }
