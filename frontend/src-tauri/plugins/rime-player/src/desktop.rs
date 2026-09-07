@@ -48,6 +48,8 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
         app: app.clone(),
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         media_controls: Mutex::new(None),
+        // 此处只保留 AppHandle 的运行时类型关联，并不拥有 R。函数指针形式不会把
+        // R 的 Send/Sync（线程安全）标记传播到 Tauri 必须托管的播放器状态。
         runtime: PhantomData,
     })
 }
@@ -64,7 +66,7 @@ pub struct RimePlayer<R: Runtime> {
     app: AppHandle<R>,
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     media_controls: Mutex<Option<MediaControls>>,
-    runtime: PhantomData<R>,
+    runtime: PhantomData<fn() -> R>,
 }
 
 impl<R: Runtime> RimePlayer<R> {
@@ -250,7 +252,11 @@ fn platform_config<R: Runtime>(app: &AppHandle<R>) -> Option<PlatformConfig<'sta
         Some(handle.hwnd.get() as *mut c_void)
     };
     #[cfg(target_os = "macos")]
-    let hwnd = None;
+    let hwnd = {
+        // macOS 的系统媒体控制器不需要窗口句柄；保留 app 参数以与 Windows 共用签名。
+        let _ = app;
+        None
+    };
 
     Some(PlatformConfig {
         display_name: "Rime",
@@ -285,7 +291,7 @@ fn desktop_media_command(event: MediaControlEvent) -> Option<DesktopMediaCommand
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 /** 原生媒体键事件通过 Tauri 事件总线发送给前端的最小负载。 */
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DesktopMediaCommand {
     #[serde(rename = "type")]
