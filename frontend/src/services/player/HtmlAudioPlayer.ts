@@ -35,11 +35,13 @@ type Listener = () => void;
  *
  * 这些指令来自通知栏、锁屏、蓝牙耳机或桌面系统媒体键。播放器本身不知道页面的
  * 队列策略，因此切歌指令会交给页面层决定下一首或上一首；播放、暂停和定位则可
- * 直接作用于当前音频元素。
+ * 直接作用于当前音频元素。`toggle`（切换播放状态）由部分桌面媒体键发出，需要
+ * 保留到页面层，以便根据当前实际状态调用播放器的切换逻辑。
  */
 export type SystemMediaCommand =
   | { type: 'play' }
   | { type: 'pause' }
+  | { type: 'toggle' }
   | { type: 'next' }
   | { type: 'previous' }
   | { type: 'seek'; positionMs: number };
