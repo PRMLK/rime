@@ -90,6 +90,22 @@ jobs:
         working-directory: frontend
         run: npm run tauri:android:release
 
+      - name: Verify Android media service manifest
+        working-directory: frontend
+        shell: bash
+        run: |
+          # 本地插件的 Kotlin 类可能已参与编译但其 Library Manifest 未被最终 APK 合并。
+          # 直接检查 ARM64 发布包，确保系统可启动前台媒体服务而非回退至网页音频。
+          apk_path=$(find src-tauri/gen/android/app/build/outputs -name '*arm64*.apk' -print -quit)
+          if [[ -z "$apk_path" ]]; then
+            echo "ARM64 APK was not produced." >&2
+            exit 1
+          fi
+          manifest_output=$(mktemp)
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump xmltree "$apk_path" AndroidManifest.xml > "$manifest_output"
+          grep -F 'com.prmlk.rime.player.PlaybackService' "$manifest_output"
+          grep -F 'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK' "$manifest_output"
+
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
