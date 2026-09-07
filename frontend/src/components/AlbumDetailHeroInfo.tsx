@@ -54,22 +54,26 @@ export function AlbumDetailHeroInfo({
         <AlbumDetailHeroArtistLinks artists={album.artists} onOpenArtist={onOpenArtist} />
         <AlbumDetailHeroDescriptionEntry description={album.description} />
       </div>
-      <div className="mt-[1.389cqw] flex min-w-0 items-center gap-[1.111cqw]">
+      {/*
+        三个操作以 1:1:1 的比例填满名称列，并统一使用圆角方形外观，消除右侧闲置空间与
+        按钮形状差异；主次操作颜色仍由各自的语义变体保留。列宽随头图容器连续变化，按钮
+        和图标由 album-action（专辑操作）尺寸同步保持正方形，避免在不同屏宽下出现比例失衡。
+      */}
+      <div className="mt-[1.389cqw] grid w-full min-w-0 grid-cols-3 items-center gap-[1.111cqw]">
         {/*
-          专辑操作使用不透明的 album-action（专辑操作色）语义令牌，并与页面背景共享封面色：
-          播放保留较深基底，收藏与更多保留较浅基底，换专辑时三者会随封面同步变色，同时
-          不会退回黑色、白色或透明底面。图标按钮不显示 Tooltip（提示气泡）文字，操作名称
-          仅由 aria-label（辅助技术标签）提供给读屏软件，避免遮挡专辑信息。
+          专辑操作使用不透明的 album-primary（专辑主操作）和 album-secondary（专辑次操作）
+          语义变体，并与页面背景共享封面色；换专辑时三者会同步变色，同时不会退回黑色、白色
+          或透明底面。图标按钮不显示 Tooltip（提示气泡）文字，操作名称仅由 aria-label（辅助
+          技术标签）提供给读屏软件，避免遮挡专辑信息。
         */}
         <Button
           variant="album-primary"
-          size="icon"
-          className="size-[8.333cqw] shrink-0 rounded-lg"
+          size="album-action"
           aria-label="全部播放"
           disabled={album.tracks.length === 0}
           onClick={() => onPlayAll(album.tracks)}
         >
-          <Play className="size-[3.472cqw]" data-icon="inline-start" aria-hidden="true" />
+          <Play data-icon="inline-start" aria-hidden="true" />
         </Button>
         <AlbumDetailHeroFavoriteAction
           favorite={isFavorite}
@@ -131,7 +135,8 @@ function AlbumDetailHeroArtistLinks({
   artists: ArtistRef[];
   onOpenArtist: (artistId: string) => void;
 }) {
-  const textClassName = 'text-[2.222cqw] leading-[3.125cqw]';
+  // 歌手文字比说明入口大一档，确保在专辑头图缩放到紧凑手机宽度时仍可舒适辨认。
+  const textClassName = 'text-[2.778cqw] leading-[3.472cqw]';
   const layoutClassName = 'mt-[0.694cqw] gap-x-[0.694cqw] gap-y-[0.694cqw]';
   const artistToneClassName = 'opacity-70';
 
@@ -166,8 +171,8 @@ function AlbumDetailHeroArtistLinks({
  * @param props - 图标与操作名称。
  * @param props.icon - 用于该不可用操作的 Lucide 图标组件。
  * @param props.label - 面向辅助技术的操作名称。
- * 图标以 2.778cqw 随 `AlbumDetailHero（专辑详情头图）` 缩放；辅助按钮略小于主播放
- * 按钮，使用户优先识别“播放全部”，但仍保持清晰可辨的图标比例。
+ * `album-action（专辑操作）` 尺寸会令按钮与图标随所在网格列等比伸缩；三个操作使用
+ * 相同的圆角方形外观与列宽，并保留次操作颜色，使其在任意屏宽下保持一致的图标比例与点击区域。
  *
  * @returns 可点击但当前不产生副作用的次要圆形图标按钮。
  */
@@ -181,12 +186,11 @@ function AlbumDetailHeroUnavailableAction({
   return (
     <Button
       variant="album-secondary"
-      size="icon"
-      className="size-[6.944cqw] shrink-0 rounded-full"
+      size="album-action"
       aria-label={label}
       onClick={handleReservedAlbumAction}
     >
-      <Icon className="size-[2.778cqw]" data-icon="inline-start" aria-hidden="true" />
+      <Icon data-icon="inline-start" aria-hidden="true" />
     </Button>
   );
 }
@@ -223,14 +227,17 @@ function AlbumDetailHeroFavoriteAction({
   return (
     <Button
       variant="album-secondary"
-      size="icon"
-      className="size-[6.944cqw] shrink-0 rounded-full"
+      size="album-action"
       aria-label={favorite ? '取消喜欢专辑' : '喜欢专辑'}
       aria-pressed={favorite}
       disabled={isUpdating}
       onClick={onToggle}
     >
-      <Heart fill={favorite ? 'currentColor' : 'none'} className="size-[2.778cqw]" data-icon="inline-start" aria-hidden="true" />
+      {/*
+        填充后的心形在上半部具有较大的视觉面积，几何居中时会显得偏上；按图标自身
+        边长下移 4%，在按钮随网格缩放时仍维持一致的光学居中效果。
+      */}
+      <Heart fill={favorite ? 'currentColor' : 'none'} className="translate-y-[4%]" data-icon="inline-start" aria-hidden="true" />
     </Button>
   );
 }
