@@ -103,6 +103,15 @@ jobs:
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
+          # 保持与 RustDesk 相同的发布表结构；尚未发布的平台保留空单元格。
+          body: |
+            | Architecture | Windows | Ubuntu | Mac | Android | Flatpak | iOS | Web |
+            | --- | --- | --- | --- | --- | --- | --- | --- |
+            | x86-64 (64-bit) |  |  |  | [Download](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/app-x86_64-release.apk) |  |  |  |
+            | AArch64 (ARM64) |  |  |  | [Download](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/app-arm64-release.apk) |  |  |  |
+            | ARMv7 (32-bit) |  |  |  | [Download](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/app-arm-release.apk) |  |  |  |
+            | x86-32 (32-bit) |  |  |  | [Download](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/app-x86-release.apk) |  |  |  |
+
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |

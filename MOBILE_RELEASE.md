@@ -55,6 +55,19 @@ APKs are split into `arm64`, `armv7`, `x86`, and `x86_64` packages so each conta
 only the native library required by that device. The universal AAB is uploaded to
 Google Play, which handles device-specific delivery automatically.
 
+每个标签发布都会在自动生成的变更日志前展示与 RustDesk 相同的“架构 × 平台”
+下载表。目前仅填写已有的 Android APK，其他平台单元格保留为空：
+
+| Architecture | Windows | Ubuntu | Mac | Android | Flatpak | iOS | Web |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| x86-64 (64-bit) |  |  |  | `app-x86_64-release.apk` |  |  |  |
+| AArch64 (ARM64) |  |  |  | `app-arm64-release.apk` |  |  |  |
+| ARMv7 (32-bit) |  |  |  | `app-arm-release.apk` |  |  |  |
+| x86-32 (32-bit) |  |  |  | `app-x86-release.apk` |  |  |  |
+
+AAB 仍会作为 Google Play 分发附件上传。以后发布其他平台时，只填写
+`.github/workflows/mobile-release.yml` 中对应的空单元格即可。
+
 ## Local Android build
 
 Install Rust, JDK 17, Android SDK, and Android NDK, then expose `JAVA_HOME`,
