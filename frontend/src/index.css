@@ -125,12 +125,18 @@
      */
     --mobile-safe-area-top: env(safe-area-inset-top, 0px);
     /*
-     * 全屏 Drawer（抽屉）卡片的页头不能沿用普通页面的顶部节奏：卡片自身会在
-     * 视口顶部保留圆角露出的间隙，因此这里只取安全区和 12px 基础间距中的较大值。
-     * 这样刘海、挖孔和灵动岛设备的标题会落在安全范围内，普通设备也不会因
-     * safe-area-inset-top 为 0px 而让关闭按钮贴近卡片顶部。
+     * 全屏 Drawer（抽屉）的外壳本身也必须避开刘海、挖孔和灵动岛。抽屉从视口底部
+     * 对齐，故以该值从高度中扣除，就能让顶部边线落在安全区之后；普通设备仍保留
+     * 原有的 8px 圆角露出间隙。仅给页头增加 padding（内边距）会让标题避让而卡片
+     * 顶边仍穿过异形屏区域，因而不能满足完整的视觉避让。
      */
-    --mobile-drawer-header-safe-top: max(var(--mobile-safe-area-top), 0.75rem);
+    --mobile-drawer-top-inset: max(var(--mobile-safe-area-top), 0.5rem);
+    --mobile-drawer-height: calc(100dvh - var(--mobile-drawer-top-inset));
+    /*
+     * 外壳已在上方扣除了安全区，页头只需保留卡片内部的 12px 基础节奏。若再次使用
+     * --mobile-safe-area-top，会把同一安全区计算两次，使标题与顶部边线出现过大间隔。
+     */
+    --mobile-drawer-header-safe-top: 0.75rem;
     /*
      * 全屏抽屉的正文滚动到末尾时，最后一个可操作元素仍须高于底部手势条。
      * 与顶部规则相同：异形屏采用实际安全区，普通设备保留 24px 的阅读与点击留白。

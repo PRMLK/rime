@@ -31,10 +31,10 @@ type MobileDrawerCardProps = Omit<ComponentPropsWithoutRef<typeof DrawerContent>
 /**
  * 渲染带统一安全区的移动端全屏抽屉卡片。
  *
- * 卡片本身保持从屏幕底部弹出的圆角与背景延展；所有可交互内容则由本组件在四边
- * 统一避让：页头使用顶部安全区，mobile-content-frame（移动端内容框）处理左右
- * 安全区，正文滚动区尾部保留底部手势条安全区。左右两侧始终各占一个图标按钮的
- * 宽度，因此仅有关闭或返回按钮时标题仍处于可用内容区域的水平中心。
+ * 卡片本身从屏幕底部弹出，并将顶部边线放在顶部安全区之后；所有可交互内容则由
+ * 本组件在四边统一避让：页头保留卡片内顶部间距，mobile-content-frame（移动端
+ * 内容框）处理左右安全区，正文滚动区尾部保留底部手势条安全区。左右两侧始终各
+ * 占一个图标按钮的宽度，因此仅有关闭或返回按钮时标题仍处于可用内容区域的水平中心。
  *
  * @param props - 全屏抽屉卡片的标题、两侧控件、正文和底层抽屉属性。
  * @param props.title - 必填的可访问标题内容。
@@ -65,7 +65,7 @@ export function MobileDrawerCard({
   return (
     <DrawerContent
       {...drawerContentProps}
-      className={cn('h-[calc(100dvh-0.5rem)] max-h-[calc(100dvh-0.5rem)]', className)}
+      className={cn('[--drawer-height:var(--mobile-drawer-height)]', className)}
     >
       <div className="mobile-content-frame">
         <DrawerHeader
