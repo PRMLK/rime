@@ -35,6 +35,11 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      - name: Derive release version from Git tag
+        if: github.ref_type == 'tag'
+        working-directory: frontend
+        run: node ../.github/scripts/sync-release-version.mjs "${{ github.ref_name }}"
+
       - name: Set up Java
         uses: actions/setup-java@v5
         with:
@@ -153,6 +158,11 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      - name: Derive release version from Git tag
+        if: github.ref_type == 'tag'
+        working-directory: frontend
+        run: node ../.github/scripts/sync-release-version.mjs "${{ github.ref_name }}"
+
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -216,6 +226,11 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+
+      - name: Derive release version from Git tag
+        if: github.ref_type == 'tag'
+        working-directory: frontend
+        run: node ../.github/scripts/sync-release-version.mjs "${{ github.ref_name }}"
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
