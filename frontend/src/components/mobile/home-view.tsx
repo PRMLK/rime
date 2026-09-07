@@ -11,6 +11,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/
 import { ItemGroup } from '@/components/ui/item';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useInfiniteCursorList } from '@/hooks/use-infinite-cursor-list';
+import { useCachedResource } from '@/hooks/use-cached-resource';
 
 /** 首页专辑轮播单项的响应式边长变量。 */
 const homeAlbumCardSizeVariableClassName =
@@ -312,28 +313,16 @@ function AlbumCarouselSection({
   refreshKey?: number;
   hideWhenEmpty?: boolean;
 }) {
-  const [albums, setAlbums] = useState<AlbumCardAlbum[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string>();
-
-  useEffect(() => {
-    const controller = new AbortController();
-    setIsLoading(true);
-    setError(undefined);
-    loadAlbums(controller.signal)
-      .then((page) => setAlbums(page.items))
-      .catch((loadError: unknown) => {
-        if (loadError instanceof DOMException && loadError.name === 'AbortError') return;
-        setError(loadError instanceof Error ? loadError.message : `${title}加载失败`);
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setIsLoading(false);
-      });
-    return () => controller.abort();
-  }, [loadAlbums, refreshKey, title]);
+  const resource = useCachedResource({
+    cacheKey: `home:${headingID}:v1`,
+    refreshKey,
+    load: loadAlbums,
+    errorMessage: `${title}加载失败`,
+  });
+  const albums = resource.data?.items ?? [];
 
   // “我的喜欢”等可选区块没有内容时直接收起，不用空状态打断首页的专辑浏览节奏。
-  if (!isLoading && !error && albums.length === 0 && hideWhenEmpty) return null;
+  if (!resource.isLoading && !resource.error && albums.length === 0 && hideWhenEmpty) return null;
 
   return (
     <section className={homeAlbumCardSizeVariableClassName} aria-labelledby={headingID}>
@@ -345,7 +334,7 @@ function AlbumCarouselSection({
           </Button>
         ) : <span className="text-sm font-semibold">{title}</span>}
       </h2>
-      {isLoading ? (
+      {resource.isLoading ? (
         <div className="mt-3 flex gap-3 overflow-hidden" role="status" aria-label={loadingLabel}>
           {[0, 1, 2, 3].map((item) => (
             <div key={item} className="w-[var(--home-album-card-size)] shrink-0">
@@ -355,12 +344,12 @@ function AlbumCarouselSection({
             </div>
           ))}
         </div>
-      ) : error || albums.length === 0 ? (
+      ) : resource.error || albums.length === 0 ? (
         <Empty className="mt-3 border">
           <EmptyHeader>
             <EmptyMedia variant="icon"><Disc3 aria-hidden="true" /></EmptyMedia>
-            <EmptyTitle>{error ? `${title}加载失败` : `暂无${title}`}</EmptyTitle>
-            {error && <EmptyDescription>{error}</EmptyDescription>}
+            <EmptyTitle>{resource.error ? `${title}加载失败` : `暂无${title}`}</EmptyTitle>
+            {resource.error && <EmptyDescription>{resource.error}</EmptyDescription>}
           </EmptyHeader>
         </Empty>
       ) : (
@@ -462,6 +451,7 @@ function AlbumGridView({
   const albumsFeed = useInfiniteCursorList({
     enabled: true,
     resetKey,
+    cacheKey: `${resetKey}:list:v1`,
     loadPage: loadAlbumPage,
   });
 

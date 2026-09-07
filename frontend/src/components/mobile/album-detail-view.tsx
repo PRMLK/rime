@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getAlbumDetail, getFavoriteAlbumStatus, setFavoriteAlbum, type AlbumDetail, type Track } from '@/api/rime';
 import { AlbumDetailHero, AlbumDetailHeroSkeleton } from '@/components/AlbumDetailHero';
 import { InfiniteScrollSentinel } from '@/components/InfiniteScrollSentinel';
@@ -8,6 +8,7 @@ import { UnifiedListFooterLogo } from '@/components/UnifiedListRow';
 import { ItemGroup } from '@/components/ui/item';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAlbumArtworkAccentColor } from '@/hooks/use-album-artwork-accent-color';
+import { useCachedResource } from '@/hooks/use-cached-resource';
 import { useProgressiveDisplay } from '@/hooks/use-progressive-display';
 
 /**
@@ -33,9 +34,13 @@ export function AlbumDetailView({
   onOpenArtist: (artistId: string) => void;
   onBackgroundColorChange: (color: string | undefined) => void;
 }) {
-  const [detail, setDetail] = useState<AlbumDetail>();
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string>();
+  const loadAlbum = useCallback((signal: AbortSignal) => getAlbumDetail(albumId, signal), [albumId]);
+  const album = useCachedResource<AlbumDetail>({
+    cacheKey: `album:${albumId}:v1`,
+    load: loadAlbum,
+    errorMessage: '专辑加载失败',
+  });
+  const detail = album.data;
   const [isFavorite, setIsFavorite] = useState(false);
   const [isLoadingFavorite, setIsLoadingFavorite] = useState(true);
   const [updatingFavoriteAlbumID, setUpdatingFavoriteAlbumID] = useState<string>();
@@ -48,23 +53,6 @@ export function AlbumDetailView({
   useEffect(() => {
     onBackgroundColorChange(artworkAccentColor);
   }, [artworkAccentColor, onBackgroundColorChange]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    setIsLoading(true);
-    setError(undefined);
-    setDetail(undefined);
-    getAlbumDetail(albumId, controller.signal)
-      .then(setDetail)
-      .catch((loadError: unknown) => {
-        if (loadError instanceof DOMException && loadError.name === 'AbortError') return;
-        setError(loadError instanceof Error ? loadError.message : '专辑加载失败');
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setIsLoading(false);
-      });
-    return () => controller.abort();
-  }, [albumId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -110,11 +98,11 @@ export function AlbumDetailView({
     }
   };
 
-  if (isLoading) return <AlbumDetailLoading />;
-  if (error || !detail) {
+  if (album.isLoading) return <AlbumDetailLoading />;
+  if (album.error || !detail) {
     return (
       <section className="mt-0">
-        <DetailEmpty title="专辑加载失败" description={error ?? '未找到可播放的专辑'} />
+        <DetailEmpty title="专辑加载失败" description={album.error ?? '未找到可播放的专辑'} />
       </section>
     );
   }

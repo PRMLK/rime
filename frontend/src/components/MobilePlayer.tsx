@@ -121,7 +121,8 @@ export function MobilePlayer({
   const searchFeed = useInfiniteCursorList({
     enabled: route.kind === 'search',
     resetKey: query,
-    delayMs: 250,
+    cacheKey: query.trim() === '' ? 'library-tracks:v1' : undefined,
+    delayMs: query.trim() === '' ? 0 : 250,
     preserveItemsWhenDisabled: true,
     loadPage: loadSearchPage,
   });

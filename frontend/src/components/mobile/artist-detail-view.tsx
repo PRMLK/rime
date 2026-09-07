@@ -1,11 +1,12 @@
 import { UserRound } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getArtistDetail, type Album, type ArtistRef } from '@/api/rime';
+import { getArtistDetail, type Album, type ArtistDetail } from '@/api/rime';
 import { AlbumArtworkSkeleton } from '@/components/AlbumArtwork';
 import { InfiniteScrollSentinel } from '@/components/InfiniteScrollSentinel';
 import { AlbumCard, AlbumGrid, DetailEmpty } from '@/components/mobile/album-collection';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useCachedResource } from '@/hooks/use-cached-resource';
 import { appendItemsWithoutDuplicates } from '@/hooks/use-progressive-display';
 
 /**
@@ -15,56 +16,51 @@ import { appendItemsWithoutDuplicates } from '@/hooks/use-progressive-display';
  * @returns 歌手详情的 React 元素，包含首次加载、续页和错误状态。
  */
 export function ArtistDetailView({ artistId, onOpenAlbum }: { artistId: string; onOpenAlbum: (albumId: string) => void }) {
-  const [artist, setArtist] = useState<ArtistRef>();
-  const [albums, setAlbums] = useState<Album[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string>();
-  const [nextCursor, setNextCursor] = useState<string>();
+  const loadArtist = useCallback((signal: AbortSignal) => getArtistDetail(artistId, 30, undefined, signal), [artistId]);
+  const artistResource = useCachedResource<ArtistDetail>({
+    cacheKey: `artist:${artistId}:v1`,
+    load: loadArtist,
+    errorMessage: '歌手加载失败',
+  });
+  const artist = artistResource.data;
+  const [pagination, setPagination] = useState<{ artistId: string; albums: Album[]; nextCursor?: string }>();
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState<string>();
   const requestGenerationRef = useRef(0);
   const moreControllerRef = useRef<AbortController | undefined>(undefined);
   const isLoadingMoreRef = useRef(false);
+  const albums = pagination?.artistId === artistId ? pagination.albums : artist?.albums ?? [];
+  const nextCursor = pagination?.artistId === artistId ? pagination.nextCursor : artist?.nextCursor;
 
   useEffect(() => {
-    const generation = ++requestGenerationRef.current;
-    const controller = new AbortController();
+    requestGenerationRef.current += 1;
     moreControllerRef.current?.abort();
     moreControllerRef.current = undefined;
     isLoadingMoreRef.current = false;
-    setIsLoading(true);
-    setError(undefined);
-    setArtist(undefined);
-    setAlbums([]);
-    setNextCursor(undefined);
     setIsLoadingMore(false);
     setLoadMoreError(undefined);
-    getArtistDetail(artistId, 30, undefined, controller.signal)
-      .then((page) => {
-        if (controller.signal.aborted || requestGenerationRef.current !== generation) return;
-        setArtist({ id: page.id, name: page.name });
-        setAlbums(page.albums);
-        setNextCursor(page.nextCursor);
-      })
-      .catch((loadError: unknown) => {
-        if (controller.signal.aborted || requestGenerationRef.current !== generation) return;
-        setError(loadError instanceof Error ? loadError.message : '歌手加载失败');
-      })
-      .finally(() => {
-        if (!controller.signal.aborted && requestGenerationRef.current === generation) setIsLoading(false);
-      });
     return () => {
-      controller.abort();
       moreControllerRef.current?.abort();
     };
   }, [artistId]);
+
+  useEffect(() => {
+    if (!artist) return;
+    requestGenerationRef.current += 1;
+    moreControllerRef.current?.abort();
+    moreControllerRef.current = undefined;
+    isLoadingMoreRef.current = false;
+    setPagination({ artistId, albums: artist.albums, nextCursor: artist.nextCursor });
+    setIsLoadingMore(false);
+    setLoadMoreError(undefined);
+  }, [artist, artistId]);
 
   /**
    * 加载当前歌手专辑的下一批，代次检查防止旧响应进入新歌手页面。
    * @returns 无返回值；请求结果会直接更新本页状态。
    */
   const loadMore = useCallback(() => {
-    if (!nextCursor || isLoading || isLoadingMoreRef.current) return;
+    if (!nextCursor || artistResource.isLoading || isLoadingMoreRef.current) return;
 
     const generation = requestGenerationRef.current;
     const controller = new AbortController();
@@ -77,8 +73,11 @@ export function ArtistDetailView({ artistId, onOpenAlbum }: { artistId: string; 
     getArtistDetail(artistId, 30, nextCursor, controller.signal)
       .then((page) => {
         if (controller.signal.aborted || requestGenerationRef.current !== generation) return;
-        setAlbums((currentAlbums) => appendItemsWithoutDuplicates(currentAlbums, page.albums));
-        setNextCursor(page.nextCursor);
+        setPagination((current) => ({
+          artistId,
+          albums: appendItemsWithoutDuplicates(current?.artistId === artistId ? current.albums : albums, page.albums),
+          nextCursor: page.nextCursor,
+        }));
       })
       .catch((loadError: unknown) => {
         if (controller.signal.aborted || requestGenerationRef.current !== generation) return;
@@ -90,10 +89,10 @@ export function ArtistDetailView({ artistId, onOpenAlbum }: { artistId: string; 
         isLoadingMoreRef.current = false;
         setIsLoadingMore(false);
       });
-  }, [artistId, isLoading, nextCursor]);
+  }, [albums, artistId, artistResource.isLoading, nextCursor]);
 
-  if (isLoading) return <ArtistDetailLoading />;
-  if (error || !artist) return <DetailEmpty title="歌手加载失败" description={error ?? '未找到可播放的作品'} />;
+  if (artistResource.isLoading) return <ArtistDetailLoading />;
+  if (artistResource.error || !artist) return <DetailEmpty title="歌手加载失败" description={artistResource.error ?? '未找到可播放的作品'} />;
 
   return (
     <section className="mt-8" aria-labelledby="artist-name">

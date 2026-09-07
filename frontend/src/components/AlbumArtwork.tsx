@@ -1,8 +1,10 @@
 import { useEffect, useState, type ComponentProps } from 'react';
-import { artworkUrl, getArtworkSource, type Album, type Track } from '@/api/rime';
+import { type Album, type Track } from '@/api/rime';
 import nowPlayingCover from '@/assets/now-playing.jpg';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useClientCacheScope } from '@/lib/client-cache-context';
 import { cn } from '@/lib/utils';
+import { artworkImmediateSource, subscribeArtworkSource } from '@/services/artwork-cache';
 
 /** 可被专辑封面组件读取的最小资料集合。曲目会使用其所属专辑的封面。 */
 type ArtworkSource = Pick<Album, 'artworkId' | 'title'> | Pick<Track, 'artworkId' | 'title'>;
@@ -87,25 +89,21 @@ export function AlbumArtwork({
   className?: string;
 }) {
   const config = artworkSizeConfig[size];
-  const immediateSource = artworkUrl(artwork?.artworkId, config.imageSize);
+  const cacheScope = useClientCacheScope();
+  const immediateSource = artworkImmediateSource(artwork?.artworkId, config.imageSize);
   const [source, setSource] = useState(immediateSource);
   const [failedSource, setFailedSource] = useState<string>();
 
   useEffect(() => {
-    let isCurrent = true;
     setSource(immediateSource);
     setFailedSource(undefined);
-    if (!artwork?.artworkId) return () => { isCurrent = false; };
+    if (!artwork?.artworkId) return undefined;
 
-    void getArtworkSource(artwork.artworkId, config.imageSize)
-      .then((nextSource) => {
-        if (isCurrent) setSource(nextSource);
-      })
-      .catch(() => {
-        if (isCurrent) setSource(undefined);
-      });
-    return () => { isCurrent = false; };
-  }, [artwork?.artworkId, config.imageSize, immediateSource]);
+    return subscribeArtworkSource(cacheScope, artwork.artworkId, config.imageSize, {
+      onSource: setSource,
+      onError: () => setSource(undefined),
+    });
+  }, [artwork?.artworkId, cacheScope, config.imageSize, immediateSource]);
 
   return (
     <img

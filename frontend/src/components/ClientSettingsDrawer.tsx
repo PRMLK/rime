@@ -15,6 +15,8 @@ import {
   bytesToGibibytes, gibibytesToBytes, readClientSettings, writeClientSettings,
   type ClientSettings, type PlaybackQuality,
 } from '@/lib/client-settings';
+import { clearArtworkRuntimeCache } from '@/services/artwork-cache';
+import { clearClientCache, getClientCacheStatus, type ClientCacheStatus } from '@/services/client-cache';
 import { clearMediaCache, getMediaCacheStatus, hasNativeMediaCache, pruneMediaCache, type MediaCacheStatus } from '@/services/media-cache';
 
 const playbackOptions: Array<{ value: PlaybackQuality; label: string }> = [
@@ -29,7 +31,8 @@ const playbackOptions: Array<{ value: PlaybackQuality; label: string }> = [
 
 export function ClientSettingsDrawer({ open, onOpenChange, scope }: { open: boolean; onOpenChange: (open: boolean) => void; scope: string }) {
   const [settings, setSettings] = useState<ClientSettings>(() => readClientSettings(scope));
-  const [cacheStatus, setCacheStatus] = useState<MediaCacheStatus>({ usedBytes: 0, itemCount: 0 });
+  const [mediaCacheStatus, setMediaCacheStatus] = useState<MediaCacheStatus>({ usedBytes: 0, itemCount: 0 });
+  const [clientCacheStatus, setClientCacheStatus] = useState<ClientCacheStatus>({ usedBytes: 0, itemCount: 0, artworkCount: 0, responseCount: 0 });
   const [cacheError, setCacheError] = useState<string>();
   const native = hasNativeMediaCache();
 
@@ -37,8 +40,11 @@ export function ClientSettingsDrawer({ open, onOpenChange, scope }: { open: bool
     if (!open) return;
     setSettings(readClientSettings(scope));
     setCacheError(undefined);
-    void getMediaCacheStatus(scope)
-      .then(setCacheStatus)
+    void Promise.all([getMediaCacheStatus(scope), getClientCacheStatus(scope)])
+      .then(([mediaStatus, clientStatus]) => {
+        setMediaCacheStatus(mediaStatus);
+        setClientCacheStatus(clientStatus);
+      })
       .catch((error: unknown) => setCacheError(error instanceof Error ? error.message : '缓存信息读取失败'));
   }, [open, scope]);
 
@@ -52,7 +58,7 @@ export function ClientSettingsDrawer({ open, onOpenChange, scope }: { open: bool
     const next = { ...settings, maxCacheBytes: gibibytesToBytes(gibibytes) };
     updateSettings(next);
     try {
-      setCacheStatus(await pruneMediaCache(scope, next.maxCacheBytes));
+      setMediaCacheStatus(await pruneMediaCache(scope, next.maxCacheBytes));
       setCacheError(undefined);
     } catch (error) {
       setCacheError(error instanceof Error ? error.message : '缓存上限更新失败');
@@ -61,7 +67,10 @@ export function ClientSettingsDrawer({ open, onOpenChange, scope }: { open: bool
 
   const clear = async () => {
     try {
-      setCacheStatus(await clearMediaCache(scope));
+      const [mediaStatus, clientStatus] = await Promise.all([clearMediaCache(scope), clearClientCache(scope)]);
+      clearArtworkRuntimeCache(scope);
+      setMediaCacheStatus(mediaStatus);
+      setClientCacheStatus(clientStatus);
       setCacheError(undefined);
     } catch (error) {
       setCacheError(error instanceof Error ? error.message : '缓存清理失败');
@@ -69,6 +78,8 @@ export function ClientSettingsDrawer({ open, onOpenChange, scope }: { open: bool
   };
 
   const cacheLimitGiB = bytesToGibibytes(settings.maxCacheBytes);
+  const totalCacheBytes = mediaCacheStatus.usedBytes + clientCacheStatus.usedBytes;
+  const totalCacheItems = mediaCacheStatus.itemCount + clientCacheStatus.itemCount;
   return (
     <Drawer open={open} onOpenChange={onOpenChange} swipeDirection="down">
       <MobileDrawerCard
@@ -99,7 +110,7 @@ export function ClientSettingsDrawer({ open, onOpenChange, scope }: { open: bool
               }}
               onValueCommitted={(value) => void updateCacheLimit(value)}
             />
-            <FieldDescription>{native ? '达到上限后自动删除最久未播放的歌曲。' : '网页端的媒体缓存空间由当前浏览器控制。'}</FieldDescription>
+            <FieldDescription>{native ? '达到上限后自动删除最久未播放的歌曲；列表和封面会自动管理。' : '网页端的列表和封面缓存空间由当前浏览器自动管理。'}</FieldDescription>
           </Field>
           <Field>
             <FieldLabel htmlFor="playback-quality">播放码率</FieldLabel>
@@ -129,14 +140,18 @@ export function ClientSettingsDrawer({ open, onOpenChange, scope }: { open: bool
             <Database className="mt-0.5 size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
             <div className="min-w-0 flex-1">
               <h2 id="cache-usage-heading" className="text-sm font-medium">缓存占用</h2>
-              <p className="text-sm text-muted-foreground">{native ? `${formatBytes(cacheStatus.usedBytes)} · ${cacheStatus.itemCount} 首歌曲` : '网页端不管理音频缓存'}</p>
+              <p className="text-sm text-muted-foreground">
+                {native
+                  ? `${formatBytes(totalCacheBytes)} · ${mediaCacheStatus.itemCount} 首歌曲 · ${clientCacheStatus.artworkCount} 张封面 · ${clientCacheStatus.responseCount} 组列表`
+                  : `${formatBytes(clientCacheStatus.usedBytes)} · ${clientCacheStatus.artworkCount} 张封面 · ${clientCacheStatus.responseCount} 组列表`}
+              </p>
             </div>
           </div>
           {cacheError && <p className="text-sm text-destructive">{cacheError}</p>}
           <AlertDialog>
-            <AlertDialogTrigger render={<Button variant="outline" disabled={!native || cacheStatus.itemCount === 0}><Trash2 data-icon="inline-start" />清理缓存</Button>} />
+            <AlertDialogTrigger render={<Button variant="outline" disabled={totalCacheItems === 0}><Trash2 data-icon="inline-start" />清理缓存</Button>} />
             <AlertDialogContent>
-              <AlertDialogHeader><AlertDialogTitle>清理客户端缓存？</AlertDialogTitle><AlertDialogDescription>已缓存的歌曲会被删除，账户、歌单和播放设置不会受到影响。</AlertDialogDescription></AlertDialogHeader>
+              <AlertDialogHeader><AlertDialogTitle>清理客户端缓存？</AlertDialogTitle><AlertDialogDescription>已缓存的歌曲、封面和列表数据会被删除，账户、歌单内容和播放设置不会受到影响。</AlertDialogDescription></AlertDialogHeader>
               <AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction onClick={() => void clear()}>清理</AlertDialogAction></AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>

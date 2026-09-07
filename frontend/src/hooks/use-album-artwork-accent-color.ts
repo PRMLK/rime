@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { getArtworkSource } from '@/api/rime';
 import { getArtworkAccentColor } from '@/lib/artwork-color';
+import { useClientCacheScope } from '@/lib/client-cache-context';
+import { subscribeArtworkSource } from '@/services/artwork-cache';
 
 /**
  * 根据当前专辑封面异步取得页面背景需要的主色。
@@ -12,6 +13,7 @@ import { getArtworkAccentColor } from '@/lib/artwork-color';
  * @returns 可用于 CSS 自定义属性的 `rgb()` 颜色字符串；提取失败时返回 `undefined`。
  */
 export function useAlbumArtworkAccentColor(artworkId?: string) {
+  const cacheScope = useClientCacheScope();
   const [accentColor, setAccentColor] = useState<string>();
 
   useEffect(() => {
@@ -24,16 +26,19 @@ export function useAlbumArtworkAccentColor(artworkId?: string) {
       };
     }
 
-    void getArtworkSource(artworkId, 128)
-      .then((source) => source ? getArtworkAccentColor(source) : undefined)
-      .then((color) => {
-        if (isCurrent) setAccentColor(color);
-      });
+    const unsubscribe = subscribeArtworkSource(cacheScope, artworkId, 128, {
+      onSource: (source) => {
+        void getArtworkAccentColor(source).then((color) => {
+          if (isCurrent) setAccentColor(color);
+        });
+      },
+    });
 
     return () => {
       isCurrent = false;
+      unsubscribe();
     };
-  }, [artworkId]);
+  }, [artworkId, cacheScope]);
 
   return accentColor;
 }

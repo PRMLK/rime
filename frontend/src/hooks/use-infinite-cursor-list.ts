@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { appendItemsWithoutDuplicates } from '@/hooks/use-progressive-display';
+import { useClientCacheScope } from '@/lib/client-cache-context';
+import { jsonFingerprint, readCachedJson, readCachedJsonSync, writeCachedJson } from '@/services/client-cache';
 
 /** 单个游标批次的通用响应形状。 */
 type CursorPage<T> = {
@@ -19,6 +21,8 @@ type InfiniteCursorListOptions<T extends { id: string }> = {
   preserveItemsWhenDisabled?: boolean;
   /** 接收可选续页游标和中止信号，返回一批项目及下一批游标。 */
   loadPage: (cursor: string | undefined, signal: AbortSignal) => Promise<CursorPage<T>>;
+  /** 需要持久化首屏时使用的稳定键；省略时仅保留当前组件内状态。 */
+  cacheKey?: string;
 };
 
 /**
@@ -38,10 +42,13 @@ export function useInfiniteCursorList<T extends { id: string }>({
   delayMs = 0,
   preserveItemsWhenDisabled = false,
   loadPage,
+  cacheKey,
 }: InfiniteCursorListOptions<T>) {
-  const [items, setItems] = useState<T[]>([]);
-  const [nextCursor, setNextCursor] = useState<string>();
-  const [isInitialLoading, setIsInitialLoading] = useState(enabled);
+  const cacheScope = useClientCacheScope();
+  const initialCached = cacheKey ? readCachedJsonSync<CursorPage<T>>(cacheScope, cacheKey) : undefined;
+  const [items, setItems] = useState<T[]>(initialCached?.value.items ?? []);
+  const [nextCursor, setNextCursor] = useState<string | undefined>(initialCached?.value.nextCursor);
+  const [isInitialLoading, setIsInitialLoading] = useState(enabled && !initialCached);
   const [initialError, setInitialError] = useState<string>();
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState<string>();
@@ -49,6 +56,7 @@ export function useInfiniteCursorList<T extends { id: string }>({
   const loadedResetKeyRef = useRef<string | undefined>(undefined);
   const moreControllerRef = useRef<AbortController | undefined>(undefined);
   const isLoadingMoreRef = useRef(false);
+  const firstPageFingerprintRef = useRef(initialCached?.fingerprint);
 
   useEffect(() => {
     const generation = ++requestGenerationRef.current;
@@ -69,19 +77,48 @@ export function useInfiniteCursorList<T extends { id: string }>({
 
     const controller = new AbortController();
     let timer: number | undefined;
-    setItems([]);
-    setIsInitialLoading(true);
+    const synchronous = cacheKey ? readCachedJsonSync<CursorPage<T>>(cacheScope, cacheKey) : undefined;
+    let hasCachedPage = Boolean(synchronous);
+    let freshApplied = false;
+    firstPageFingerprintRef.current = synchronous?.fingerprint;
+    setItems(synchronous?.value.items ?? []);
+    setNextCursor(synchronous?.value.nextCursor);
+    setIsInitialLoading(!synchronous);
+    if (synchronous) loadedResetKeyRef.current = resetKey;
+
+    const cachedRequest = cacheKey
+      ? readCachedJson<CursorPage<T>>(cacheScope, cacheKey).then((cached) => {
+        if (!cached || controller.signal.aborted || requestGenerationRef.current !== generation || freshApplied) return;
+        hasCachedPage = true;
+        if (firstPageFingerprintRef.current !== cached.fingerprint) {
+          firstPageFingerprintRef.current = cached.fingerprint;
+          setItems(cached.value.items);
+          setNextCursor(cached.value.nextCursor);
+        }
+        loadedResetKeyRef.current = resetKey;
+        setIsInitialLoading(false);
+      })
+      : Promise.resolve();
 
     const loadInitialPage = () => {
       void loadPage(undefined, controller.signal)
         .then((page) => {
           if (controller.signal.aborted || requestGenerationRef.current !== generation) return;
-          setItems(page.items);
-          setNextCursor(page.nextCursor);
+          freshApplied = true;
+          hasCachedPage = true;
+          const fingerprint = jsonFingerprint(page);
+          if (firstPageFingerprintRef.current !== fingerprint) {
+            firstPageFingerprintRef.current = fingerprint;
+            setItems(page.items);
+            setNextCursor(page.nextCursor);
+          }
           loadedResetKeyRef.current = resetKey;
+          if (cacheKey) void writeCachedJson(cacheScope, cacheKey, page);
         })
-        .catch((error: unknown) => {
+        .catch(async (error: unknown) => {
           if (controller.signal.aborted || requestGenerationRef.current !== generation) return;
+          await cachedRequest;
+          if (controller.signal.aborted || requestGenerationRef.current !== generation || hasCachedPage) return;
           setInitialError(error instanceof Error ? error.message : '列表加载失败');
         })
         .finally(() => {
@@ -96,7 +133,7 @@ export function useInfiniteCursorList<T extends { id: string }>({
       if (timer !== undefined) window.clearTimeout(timer);
       controller.abort();
     };
-  }, [delayMs, enabled, loadPage, preserveItemsWhenDisabled, resetKey]);
+  }, [cacheKey, cacheScope, delayMs, enabled, loadPage, preserveItemsWhenDisabled, resetKey]);
 
   const loadMore = useCallback(() => {
     /*

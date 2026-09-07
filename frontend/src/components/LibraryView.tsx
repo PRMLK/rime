@@ -1,5 +1,5 @@
 import { ArrowLeft, Heart, KeyRound, LibraryBig, ListMusic, LoaderCircle, LogOut, Pencil, Plus, Server, Settings, SlidersHorizontal, Trash2 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import {
   createPlaylist,
   changePassword,
@@ -18,7 +18,9 @@ import {
 import { AlbumArtwork } from '@/components/AlbumArtwork';
 import { InfiniteScrollSentinel } from '@/components/InfiniteScrollSentinel';
 import { UnifiedListFooterLogo, UnifiedListRow } from '@/components/UnifiedListRow';
-import { appendItemsWithoutDuplicates, useProgressiveDisplay } from '@/hooks/use-progressive-display';
+import { useCachedResource } from '@/hooks/use-cached-resource';
+import { useInfiniteCursorList } from '@/hooks/use-infinite-cursor-list';
+import { useProgressiveDisplay } from '@/hooks/use-progressive-display';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -45,50 +47,18 @@ type Props = {
 };
 
 export function LibraryView({ user, onChooseTrack, onOpenClientSettings, onOpenSystemSettings, onSignedOut, server, onSwitchServer }: Props) {
-  const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [selectedID, setSelectedID] = useState<string>();
   const [creating, setCreating] = useState(false);
   const [changingPassword, setChangingPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string>();
-  const [nextCursor, setNextCursor] = useState<string>();
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [loadMoreError, setLoadMoreError] = useState<string>();
   const [refresh, setRefresh] = useState(0);
-  const requestGenerationRef = useRef(0);
-  const moreControllerRef = useRef<AbortController | undefined>(undefined);
-  const isLoadingMoreRef = useRef(false);
-
-  useEffect(() => {
-    const generation = ++requestGenerationRef.current;
-    const controller = new AbortController();
-    moreControllerRef.current?.abort();
-    moreControllerRef.current = undefined;
-    isLoadingMoreRef.current = false;
-    setIsLoading(true);
-    setError(undefined);
-    setPlaylists([]);
-    setNextCursor(undefined);
-    setIsLoadingMore(false);
-    setLoadMoreError(undefined);
-    getPlaylists(10, undefined, controller.signal)
-      .then((page) => {
-        if (controller.signal.aborted || requestGenerationRef.current !== generation) return;
-        setPlaylists(page.items);
-        setNextCursor(page.nextCursor);
-      })
-      .catch((loadError: unknown) => {
-        if (controller.signal.aborted || requestGenerationRef.current !== generation) return;
-        setError(loadError instanceof Error ? loadError.message : '歌单加载失败');
-      })
-      .finally(() => {
-        if (!controller.signal.aborted && requestGenerationRef.current === generation) setIsLoading(false);
-      });
-    return () => {
-      controller.abort();
-      moreControllerRef.current?.abort();
-    };
-  }, [refresh]);
+  const loadPlaylistPage = useCallback((cursor: string | undefined, signal: AbortSignal) => getPlaylists(10, cursor, signal), []);
+  const playlistsFeed = useInfiniteCursorList<Playlist>({
+    enabled: true,
+    resetKey: String(refresh),
+    cacheKey: 'playlists:v1',
+    loadPage: loadPlaylistPage,
+  });
+  const playlists = playlistsFeed.items;
 
   const reload = useCallback(() => setRefresh((value) => value + 1), []);
   useEffect(() => {
@@ -96,41 +66,8 @@ export function LibraryView({ user, onChooseTrack, onOpenClientSettings, onOpenS
     return () => window.removeEventListener(playlistsChangedEvent, reload);
   }, [reload]);
 
-  /**
-   * 继续加载当前用户的下一批歌单。
-   * 同步加载锁与请求代次共同防止观察器重复触发，或旧响应在刷新后追加到新列表。
-   */
-  const loadMore = useCallback(() => {
-    if (!nextCursor || isLoading || isLoadingMoreRef.current) return;
-
-    const generation = requestGenerationRef.current;
-    const controller = new AbortController();
-    moreControllerRef.current?.abort();
-    moreControllerRef.current = controller;
-    isLoadingMoreRef.current = true;
-    setIsLoadingMore(true);
-    setLoadMoreError(undefined);
-
-    getPlaylists(10, nextCursor, controller.signal)
-      .then((page) => {
-        if (controller.signal.aborted || requestGenerationRef.current !== generation) return;
-        setPlaylists((currentPlaylists) => appendItemsWithoutDuplicates(currentPlaylists, page.items));
-        setNextCursor(page.nextCursor);
-      })
-      .catch((loadError: unknown) => {
-        if (controller.signal.aborted || requestGenerationRef.current !== generation) return;
-        setLoadMoreError(loadError instanceof Error ? loadError.message : '歌单加载失败');
-      })
-      .finally(() => {
-        if (controller.signal.aborted || requestGenerationRef.current !== generation) return;
-        if (moreControllerRef.current === controller) moreControllerRef.current = undefined;
-        isLoadingMoreRef.current = false;
-        setIsLoadingMore(false);
-      });
-  }, [isLoading, nextCursor]);
-
   if (selectedID) {
-    return <PlaylistPanel playlistID={selectedID} onBack={() => { setSelectedID(undefined); reload(); }} onChooseTrack={onChooseTrack} />;
+    return <PlaylistPanel playlistID={selectedID} refreshKey={refresh} onBack={() => { setSelectedID(undefined); reload(); }} onChooseTrack={onChooseTrack} />;
   }
 
   return (
@@ -144,8 +81,8 @@ export function LibraryView({ user, onChooseTrack, onOpenClientSettings, onOpenS
           <TooltipContent>新建歌单</TooltipContent>
         </Tooltip>
       </div>
-      {error && <p className="py-4 text-sm text-destructive">{error}</p>}
-      {isLoading ? (
+      {playlistsFeed.initialError && <p className="py-4 text-sm text-destructive">{playlistsFeed.initialError}</p>}
+      {playlistsFeed.isInitialLoading && playlists.length === 0 ? (
         <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />正在加载</div>
       ) : (
         <ItemGroup className="mt-3 gap-0">
@@ -160,13 +97,13 @@ export function LibraryView({ user, onChooseTrack, onOpenClientSettings, onOpenS
           ))}
         </ItemGroup>
       )}
-      {!error && !isLoading && playlists.length > 0 && (
+      {!playlistsFeed.initialError && !playlistsFeed.isInitialLoading && playlists.length > 0 && (
         <InfiniteScrollSentinel
-          hasMore={Boolean(nextCursor)}
-          isLoading={isLoadingMore}
-          error={loadMoreError}
+          hasMore={playlistsFeed.hasMore}
+          isLoading={playlistsFeed.isLoadingMore}
+          error={playlistsFeed.loadMoreError}
           observationKey={playlists.length}
-          onLoadMore={loadMore}
+          onLoadMore={playlistsFeed.loadMore}
         />
       )}
       <Separator className="my-8" />
@@ -252,25 +189,23 @@ function OwnPasswordDrawer({ open, onOpenChange, onChanged }: { open: boolean; o
   );
 }
 
-function PlaylistPanel({ playlistID, onBack, onChooseTrack }: { playlistID: string; onBack: () => void; onChooseTrack: (track: Track) => void }) {
-  const [playlist, setPlaylist] = useState<PlaylistDetail>();
+function PlaylistPanel({ playlistID, refreshKey, onBack, onChooseTrack }: { playlistID: string; refreshKey: number; onBack: () => void; onChooseTrack: (track: Track) => void }) {
   const [renaming, setRenaming] = useState(false);
-  const [error, setError] = useState<string>();
+  const [actionError, setActionError] = useState<string>();
   const [refresh, setRefresh] = useState(0);
+  const loadPlaylist = useCallback((signal: AbortSignal) => getPlaylist(playlistID, signal), [playlistID]);
+  const playlistResource = useCachedResource<PlaylistDetail>({
+    cacheKey: `playlist:${playlistID}:v1`,
+    refreshKey: `${refreshKey}:${refresh}`,
+    load: loadPlaylist,
+    errorMessage: '歌单加载失败',
+  });
+  const playlist = playlistResource.data;
+  const error = actionError ?? playlistResource.error;
   // 歌单完整曲目保留给后续播放逻辑；这里只控制初始与每次续显的 50 条可见项目。
   const displayedTracks = useProgressiveDisplay(playlist?.tracks ?? [], `${playlistID}:${refresh}`, 50);
-  useEffect(() => {
-    const controller = new AbortController();
-    getPlaylist(playlistID, controller.signal)
-      .then(setPlaylist)
-      .catch((loadError: unknown) => {
-        if (loadError instanceof DOMException && loadError.name === 'AbortError') return;
-        setError(loadError instanceof Error ? loadError.message : '歌单加载失败');
-      });
-    return () => controller.abort();
-  }, [playlistID, refresh]);
 
-  if (!playlist && !error) return <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />正在加载</div>;
+  if (!playlist && playlistResource.isLoading) return <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />正在加载</div>;
   if (!playlist) return <Empty className="mt-8 border"><EmptyHeader><EmptyTitle>无法打开歌单</EmptyTitle><EmptyDescription>{error}</EmptyDescription></EmptyHeader><Button variant="outline" onClick={onBack}>返回</Button></Empty>;
 
   return (
@@ -285,7 +220,7 @@ function PlaylistPanel({ playlistID, onBack, onChooseTrack }: { playlistID: stri
               <AlertDialogTrigger render={<Button variant="ghost" size="icon" aria-label="删除歌单" />}><Trash2 aria-hidden="true" /></AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader><AlertDialogTitle>删除“{playlist.name}”？</AlertDialogTitle><AlertDialogDescription>歌单中的歌曲不会从音乐库删除。</AlertDialogDescription></AlertDialogHeader>
-                <AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction variant="destructive" onClick={() => void deletePlaylist(playlist.id).then(onBack).catch((deleteError: unknown) => setError(deleteError instanceof Error ? deleteError.message : '删除失败'))}>删除</AlertDialogAction></AlertDialogFooter>
+                <AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction variant="destructive" onClick={() => void deletePlaylist(playlist.id).then(onBack).catch((deleteError: unknown) => setActionError(deleteError instanceof Error ? deleteError.message : '删除失败'))}>删除</AlertDialogAction></AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
           </>
@@ -303,7 +238,7 @@ function PlaylistPanel({ playlistID, onBack, onChooseTrack }: { playlistID: stri
                   <AlbumArtwork artwork={track} size="sm" />
                   <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{track.title}</span><span className="block truncate text-xs text-muted-foreground">{track.available ? artistNames(track) : '当前不可播放'}</span></span>
                 </button>
-                <ItemActions><Button variant="ghost" size="icon" aria-label={`从歌单移除《${track.title}》`} onClick={() => void removeTrackFromPlaylist(playlist.id, track.id).then(() => setRefresh((value) => value + 1)).catch((removeError: unknown) => setError(removeError instanceof Error ? removeError.message : '移除失败'))}><Trash2 aria-hidden="true" /></Button></ItemActions>
+                <ItemActions><Button variant="ghost" size="icon" aria-label={`从歌单移除《${track.title}》`} onClick={() => void removeTrackFromPlaylist(playlist.id, track.id).then(() => { setActionError(undefined); setRefresh((value) => value + 1); }).catch((removeError: unknown) => setActionError(removeError instanceof Error ? removeError.message : '移除失败'))}><Trash2 aria-hidden="true" /></Button></ItemActions>
               </Item>
             ))}
           </ItemGroup>
@@ -315,7 +250,7 @@ function PlaylistPanel({ playlistID, onBack, onChooseTrack }: { playlistID: stri
           />
         </>
       )}
-      <PlaylistNameDrawer open={renaming} title="重命名歌单" submitLabel="保存" initialName={playlist.name} onOpenChange={setRenaming} onSubmit={async (name) => { await renamePlaylist(playlist.id, name); setRenaming(false); setRefresh((value) => value + 1); }} />
+      <PlaylistNameDrawer open={renaming} title="重命名歌单" submitLabel="保存" initialName={playlist.name} onOpenChange={setRenaming} onSubmit={async (name) => { await renamePlaylist(playlist.id, name); setActionError(undefined); setRenaming(false); setRefresh((value) => value + 1); }} />
     </section>
   );
 }
