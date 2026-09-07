@@ -184,23 +184,29 @@ class PlaybackService : MediaSessionService() {
             .setUsage(C.USAGE_MEDIA)
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .build()
-        player = ExoPlayer.Builder(this).build().also { exoPlayer ->
-            exoPlayer.setAudioAttributes(attributes, true)
-            exoPlayer.addListener(object : Player.Listener {
-                /** 播放、暂停与焦点切换后更新供前端查询的快照。 */
-                override fun onIsPlayingChanged(isPlaying: Boolean) {
-                    playbackError = null
-                }
+        // 网络流媒体在熄屏后可能被 Wi-Fi 省电策略中断。WAKE_MODE_NETWORK（网络唤醒模式）
+        // 会在播放器处于播放或缓冲、且 playWhenReady 为 true 时自动管理 CPU/Wi-Fi 锁；
+        // 暂停、停止和释放播放器时锁会自动归还，避免手写锁遗漏释放造成耗电。
+        player = ExoPlayer.Builder(this)
+            .setWakeMode(C.WAKE_MODE_NETWORK)
+            .build()
+            .also { exoPlayer ->
+                exoPlayer.setAudioAttributes(attributes, true)
+                exoPlayer.addListener(object : Player.Listener {
+                    /** 播放、暂停与焦点切换后更新供前端查询的快照。 */
+                    override fun onIsPlayingChanged(isPlaying: Boolean) {
+                        playbackError = null
+                    }
 
-                /** 缓冲、结束或就绪状态由 status（状态）命令按需读取。 */
-                override fun onPlaybackStateChanged(playbackState: Int) = Unit
+                    /** 缓冲、结束或就绪状态由 status（状态）命令按需读取。 */
+                    override fun onPlaybackStateChanged(playbackState: Int) = Unit
 
-                /** 保存最近一次错误，方便页面恢复到前台后展示原因。 */
-                override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                    playbackError = error.message ?: "原生音频播放失败"
-                }
-            })
-        }
+                    /** 保存最近一次错误，方便页面恢复到前台后展示原因。 */
+                    override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                        playbackError = error.message ?: "原生音频播放失败"
+                    }
+                })
+            }
         mediaSession = MediaSession.Builder(this, requireNotNull(player)).build()
     }
 

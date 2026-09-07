@@ -9,6 +9,12 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!--
+      ExoPlayer 通过 WAKE_MODE_NETWORK（网络唤醒模式）在播放和缓冲期间临时持有 CPU 与
+      Wi-Fi 唤醒锁。该权限使熄屏后的流媒体传输不被 Wi-Fi 省电策略中断；锁由 Media3
+      在暂停、停止或报错后自动释放，不会让应用常驻唤醒设备。
+    -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
