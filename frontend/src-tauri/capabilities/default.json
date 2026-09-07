@@ -7,6 +7,7 @@
   ],
   "permissions": [
     "core:default",
+    "rime-player:default",
     {
       "identifier": "http:default",
       "allow": [

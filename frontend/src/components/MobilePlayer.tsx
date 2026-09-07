@@ -281,6 +281,34 @@ export function MobilePlayer({
     playRelative(1);
   }), [chooseTrack, playback.track, playbackMode, playRelative, player]);
 
+  /*
+   * 通知栏、锁屏、耳机和桌面媒体键并不了解 React 页面维护的播放队列。播放器服务
+   * 只负责把系统命令转发出来；此处仍由拥有队列状态的页面决定切歌策略。上一首采用
+   * 常见播放器规则：当前曲目已播放超过三秒时回到开头，否则切到队列中的前一首。
+   */
+  useEffect(() => player.subscribeToSystemMediaCommands((command) => {
+    switch (command.type) {
+      case 'play':
+        void player.play();
+        return;
+      case 'pause':
+        void player.pause();
+        return;
+      case 'seek':
+        player.seek(command.positionMs);
+        return;
+      case 'next':
+        playRelative(1);
+        return;
+      case 'previous':
+        if (playback.positionMs > 3_000) {
+          player.seek(0);
+          return;
+        }
+        playRelative(-1);
+    }
+  }), [playRelative, playback.positionMs, player]);
+
   /**
    * 打开专辑详情，并将来源标签保存在路由中。
    * @param albumId 专辑的唯一标识。

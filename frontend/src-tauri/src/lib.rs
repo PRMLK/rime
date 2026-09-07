@@ -387,6 +387,7 @@ fn prune(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_rime_player::init())
         .manage(MediaCacheState::default())
         .invoke_handler(tauri::generate_handler![
             resolve_cached_media,

@@ -1,0 +1,19 @@
+[package]
+name = "tauri-plugin-rime-player"
+version = "0.1.0"
+description = "Native background audio playback for Rime"
+edition = "2021"
+rust-version = "1.77.2"
+license = ""
+links = "tauri-plugin-rime-player"
+
+[build-dependencies]
+tauri-plugin = { version = "=2.6.3", features = ["build"] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "=2.11.5" }
+thiserror = "=2.0.20"
+
+[target.'cfg(target_os = "ios")'.dependencies]
+tauri = { version = "=2.11.5", features = ["wry"] }
