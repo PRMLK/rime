@@ -1,12 +1,8 @@
 package com.prmlk.rime.player
 
 import android.app.Activity
-import android.Manifest
+import android.content.ComponentName
 import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
-import android.os.IBinder
 import androidx.core.content.ContextCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -14,14 +10,17 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.MediaController
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import androidx.media3.session.SessionToken
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
+import com.google.common.util.concurrent.ListenableFuture
 
 /**
  * 前端传给原生播放器的播放源和系统媒体元数据。
@@ -44,6 +43,70 @@ class PlaybackLoadRequest {
 @InvokeArg
 class PlaybackSeekRequest {
     var positionMs: Long = 0
+}
+
+/**
+ * 将 Tauri 请求转换为 Media3 能通过 MediaController（媒体控制器）发送给服务的媒体项。
+ *
+ * @returns 包含播放地址和系统媒体界面元数据的单曲 MediaItem（媒体项）。
+ */
+private fun PlaybackLoadRequest.toMediaItem(): MediaItem = MediaItem.Builder()
+    // Rime 当前每次只让原生服务维护一个播放项，固定 ID 不会暴露含临时签名的播放 URL。
+    .setMediaId("rime-current-track")
+    .setUri(sourceUrl)
+    .setMimeType(contentType)
+    .setMediaMetadata(
+        MediaMetadata.Builder()
+            .setTitle(title)
+            .setArtist(artist)
+            .setAlbumTitle(album)
+            .build(),
+    )
+    .build()
+
+/**
+ * 连接 PlaybackService（播放服务）的唯一 MediaController（媒体控制器）。
+ *
+ * Media3 的标准模式是先通过 SessionToken（会话令牌）连接服务，再由控制器改变播放器状态。
+ * 这会让 MediaSessionService（媒体会话服务）在服务创建时登记会话，并由 Media3 自动创建
+ * MediaStyle（媒体样式）通知和媒体前台服务。不能用自定义 Intent（意图）直接驱动服务，
+ * 因为 MediaSessionService 只处理标准媒体动作。
+ */
+private object PlaybackControllerBridge {
+    private var controllerFuture: ListenableFuture<MediaController>? = null
+
+    /**
+     * 取得已连接的媒体控制器，必要时异步启动并连接播放服务。
+     *
+     * @param context Android 上下文；仅使用 applicationContext（应用上下文），避免持有 Activity。
+     * @param onConnected 控制器连接成功后在主线程执行的播放命令。
+     * @param onFailure 连接失败时在主线程执行的错误处理。
+     * @returns 无返回值；结果通过回调交给 Tauri 命令异步 resolve（成功）或 reject（失败）。
+     */
+    fun withController(
+        context: Context,
+        onConnected: (MediaController) -> Unit,
+        onFailure: (Exception) -> Unit,
+    ) {
+        val applicationContext = context.applicationContext
+        val future = synchronized(this) {
+            controllerFuture ?: MediaController.Builder(
+                applicationContext,
+                SessionToken(applicationContext, ComponentName(applicationContext, PlaybackService::class.java)),
+            ).buildAsync().also { controllerFuture = it }
+        }
+        future.addListener({
+            try {
+                onConnected(future.get())
+            } catch (error: Exception) {
+                // 连接失败的 future（未来结果）不能复用，否则所有后续播放都会立即失败。
+                synchronized(this) {
+                    if (controllerFuture === future) controllerFuture = null
+                }
+                onFailure(error)
+            }
+        }, ContextCompat.getMainExecutor(applicationContext))
+    }
 }
 
 /**
@@ -78,11 +141,6 @@ internal data class PlaybackStatus(
  */
 @TauriPlugin
 class RimePlayerPlugin(private val activity: Activity) : Plugin(activity) {
-    companion object {
-        /** Android 13 及以上向用户请求媒体通知权限时使用的请求编号。 */
-        private const val MEDIA_NOTIFICATION_PERMISSION_REQUEST_CODE = 4101
-    }
-
     /** @returns 原生服务当前快照；服务尚未启动时返回 idle（空闲）。 */
     @Command
     fun status(invoke: Invoke) {
@@ -98,44 +156,23 @@ class RimePlayerPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun load(invoke: Invoke) {
         val request = invoke.parseArgs(PlaybackLoadRequest::class.java)
-        requestNotificationPermissionForMediaControls()
-        PlaybackService.load(activity, request)
-        invoke.resolve()
-    }
-
-    /**
-     * 在用户主动开始播放时请求通知权限，保证前台媒体通知可展示给澎湃 OS 的控制中心。
-     *
-     * Android 13（API 33）起，`POST_NOTIFICATIONS`（通知权限）是运行时权限。仅在
-     * AndroidManifest.xml（Android 清单）中声明并不会自动授权；小米澎湃 OS 还会限制
-     * 后台本地通知，因此必须在用户触发播放这一明确场景中请求。Media3（Android 媒体
-     * 框架）仍会继续维护 MediaSession（媒体会话），用户允许后系统立即能显示其通知。
-     *
-     * @returns 无返回值。低于 Android 13、已授权或系统不支持请求的设备会直接跳过。
-     */
-    private fun requestNotificationPermissionForMediaControls() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
-        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
-            return
+        runPlayerCommand(invoke) { controller ->
+            controller.setMediaItem(request.toMediaItem(), request.startPositionMs.coerceAtLeast(0))
+            controller.prepare()
+            controller.play()
         }
-        activity.requestPermissions(
-            arrayOf(Manifest.permission.POST_NOTIFICATIONS),
-            MEDIA_NOTIFICATION_PERMISSION_REQUEST_CODE,
-        )
     }
 
     /** 恢复已加载的曲目。 */
     @Command
     fun play(invoke: Invoke) {
-        PlaybackService.sendCommand(activity, PlaybackService.ACTION_PLAY)
-        invoke.resolve()
+        runPlayerCommand(invoke) { controller -> controller.play() }
     }
 
     /** 暂停已加载的曲目。 */
     @Command
     fun pause(invoke: Invoke) {
-        PlaybackService.sendCommand(activity, PlaybackService.ACTION_PAUSE)
-        invoke.resolve()
+        runPlayerCommand(invoke) { controller -> controller.pause() }
     }
 
     /**
@@ -147,15 +184,40 @@ class RimePlayerPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun seek(invoke: Invoke) {
         val request = invoke.parseArgs(PlaybackSeekRequest::class.java)
-        PlaybackService.seek(activity, request.positionMs)
-        invoke.resolve()
+        runPlayerCommand(invoke) { controller -> controller.seekTo(request.positionMs.coerceAtLeast(0)) }
     }
 
     /** 停止播放并清空服务中的播放项。 */
     @Command
     fun stop(invoke: Invoke) {
-        PlaybackService.sendCommand(activity, PlaybackService.ACTION_STOP)
-        invoke.resolve()
+        runPlayerCommand(invoke) { controller ->
+            controller.stop()
+            controller.clearMediaItems()
+        }
+    }
+
+    /**
+     * 在控制器准备好后执行一个播放器命令，并将连接或命令异常回传给 WebView。
+     *
+     * @param invoke Tauri 调用上下文；异步连接完成后才 resolve（成功）或 reject（失败）。
+     * @param command 需要在已连接 MediaController（媒体控制器）上执行的命令。
+     * @returns 无返回值。
+     */
+    private fun runPlayerCommand(invoke: Invoke, command: (MediaController) -> Unit) {
+        PlaybackControllerBridge.withController(
+            activity,
+            onConnected = { controller ->
+                try {
+                    command(controller)
+                    invoke.resolve()
+                } catch (error: Exception) {
+                    invoke.reject(error.message ?: "原生媒体控制命令执行失败")
+                }
+            },
+            onFailure = { error ->
+                invoke.reject(error.message ?: "无法连接 Android 原生播放服务")
+            },
+        )
     }
 }
 
@@ -211,29 +273,6 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
-     * 处理来自 Tauri 插件的播放控制 Intent（意图）。
-     *
-     * @param intent 含曲目元数据或控制动作的服务启动 Intent。
-     * @param flags Android 服务重启策略；无活动播放时不主动重启，避免无用户行为的后台启动。
-     * @param startId 本次服务启动序号。
-     * @returns START_NOT_STICKY（不粘性启动）；父类会处理系统媒体按键和前台通知的
-     * 生命周期，但应用不盲目重启已经停止的播放。
-     */
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // MediaSessionService（媒体会话服务）会在父类中处理系统发来的媒体按键 Intent。
-        // 不能跳过该调用，否则蓝牙耳机、锁屏和小米控制中心的系统控制命令可能失效。
-        super.onStartCommand(intent, flags, startId)
-        when (intent?.action) {
-            ACTION_LOAD -> loadItem(intent)
-            ACTION_PLAY -> player?.play()
-            ACTION_PAUSE -> player?.pause()
-            ACTION_SEEK -> player?.seekTo(intent.getLongExtra(EXTRA_POSITION_MS, 0).coerceAtLeast(0))
-            ACTION_STOP -> stopPlayback()
-        }
-        return START_NOT_STICKY
-    }
-
-    /**
      * 暴露唯一系统媒体会话给通知栏、锁屏、蓝牙耳机和 Android Auto 等控制器。
      *
      * @param controllerInfo 请求连接的系统控制器信息。
@@ -255,55 +294,6 @@ class PlaybackService : MediaSessionService() {
         super.onDestroy()
     }
 
-    /**
-     * MediaSessionService 负责绑定，不向普通客户端提供 Binder（绑定器）。
-     *
-     * @param intent 绑定请求。
-     * @returns null。
-     */
-    override fun onBind(intent: Intent?): IBinder? = super.onBind(intent)
-
-    /**
-     * 将加载请求转为带系统元数据的 MediaItem（媒体项）。
-     *
-     * @param intent 包含前端已经验证过的播放 URL 与曲目字段。
-     * @returns 无返回值；同一服务只保留一个活动播放项，切歌时会原子替换。
-     */
-    private fun loadItem(intent: Intent) {
-        val sourceUrl = intent.getStringExtra(EXTRA_SOURCE_URL) ?: return
-        val title = intent.getStringExtra(EXTRA_TITLE) ?: "未知歌曲"
-        val artist = intent.getStringExtra(EXTRA_ARTIST) ?: "未知艺人"
-        val album = intent.getStringExtra(EXTRA_ALBUM) ?: "未知专辑"
-        val contentType = intent.getStringExtra(EXTRA_CONTENT_TYPE)
-        val startPosition = intent.getLongExtra(EXTRA_POSITION_MS, 0).coerceAtLeast(0)
-        val item = MediaItem.Builder()
-            .setUri(sourceUrl)
-            .setMimeType(contentType)
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setTitle(title)
-                    .setArtist(artist)
-                    .setAlbumTitle(album)
-                    .build(),
-            )
-            .build()
-        playbackError = null
-        player?.apply {
-            setMediaItem(item, startPosition)
-            prepare()
-            play()
-        }
-    }
-
-    /** 清空媒体、取消前台播放资格并停止无用服务。 */
-    private fun stopPlayback() {
-        player?.apply {
-            stop()
-            clearMediaItems()
-        }
-        stopSelf()
-    }
-
     /** @returns 当前播放器快照，供 WebView 从暂停状态恢复时同步界面。 */
     private fun snapshot(): PlaybackStatus {
         val exoPlayer = player
@@ -320,65 +310,8 @@ class PlaybackService : MediaSessionService() {
     }
 
     companion object {
-        const val ACTION_LOAD = "com.prmlk.rime.player.LOAD"
-        const val ACTION_PLAY = "com.prmlk.rime.player.PLAY"
-        const val ACTION_PAUSE = "com.prmlk.rime.player.PAUSE"
-        const val ACTION_SEEK = "com.prmlk.rime.player.SEEK"
-        const val ACTION_STOP = "com.prmlk.rime.player.STOP"
-        private const val EXTRA_SOURCE_URL = "sourceUrl"
-        private const val EXTRA_CONTENT_TYPE = "contentType"
-        private const val EXTRA_TITLE = "title"
-        private const val EXTRA_ARTIST = "artist"
-        private const val EXTRA_ALBUM = "album"
-        private const val EXTRA_POSITION_MS = "positionMs"
-
         @Volatile
         private var activeService: PlaybackService? = null
-
-        /**
-         * 启动或更新前台媒体服务。
-         *
-         * @param context 当前 Tauri Activity 的上下文。
-         * @param request 前端传入的安全播放会话与曲目元数据。
-         * @returns 无返回值；服务会在收到 ACTION_LOAD 后立即调用 play。
-         */
-        fun load(context: Context, request: PlaybackLoadRequest) {
-            val intent = Intent(context, PlaybackService::class.java).apply {
-                action = ACTION_LOAD
-                putExtra(EXTRA_SOURCE_URL, request.sourceUrl)
-                putExtra(EXTRA_CONTENT_TYPE, request.contentType)
-                putExtra(EXTRA_TITLE, request.title)
-                putExtra(EXTRA_ARTIST, request.artist)
-                putExtra(EXTRA_ALBUM, request.album)
-                putExtra(EXTRA_POSITION_MS, request.startPositionMs)
-            }
-            ContextCompat.startForegroundService(context, intent)
-        }
-
-        /**
-         * 向已有服务发送无参数控制命令。
-         *
-         * @param context 当前 Tauri Activity 的上下文。
-         * @param action 播放、暂停或停止动作。
-         * @returns 无返回值。
-         */
-        fun sendCommand(context: Context, action: String) {
-            context.startService(Intent(context, PlaybackService::class.java).setAction(action))
-        }
-
-        /**
-         * 向已有服务发送定位命令。
-         *
-         * @param context 当前 Tauri Activity 的上下文。
-         * @param positionMs 目标位置，单位毫秒。
-         * @returns 无返回值。
-         */
-        fun seek(context: Context, positionMs: Long) {
-            context.startService(Intent(context, PlaybackService::class.java).apply {
-                action = ACTION_SEEK
-                putExtra(EXTRA_POSITION_MS, positionMs.coerceAtLeast(0))
-            })
-        }
 
         /**
          * 读取当前服务状态，供同一 Android 插件模块中的 Tauri 命令使用。
