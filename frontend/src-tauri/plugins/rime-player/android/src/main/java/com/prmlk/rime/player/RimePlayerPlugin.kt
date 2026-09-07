@@ -49,7 +49,8 @@ class PlaybackSeekRequest {
  * 前端使用此快照在回到前台后恢复进度显示；通知栏本身由 MediaSessionService（媒体
  * 会话服务）直接从 ExoPlayer 状态更新，不依赖 WebView 是否仍在运行。
  */
-private data class PlaybackStatus(
+// 播放状态只在 Android 插件模块内流转，不应成为服务对外暴露的公共类型。
+internal data class PlaybackStatus(
     val available: Boolean,
     val state: String,
     val positionMs: Long,
@@ -339,8 +340,12 @@ class PlaybackService : MediaSessionService() {
             })
         }
 
-        /** @returns 当前服务状态；服务不存在时标记为原生能力可用但尚未播放。 */
-        fun currentStatus(): PlaybackStatus = activeService?.snapshot()
+        /**
+         * 读取当前服务状态，供同一 Android 插件模块中的 Tauri 命令使用。
+         *
+         * @returns 服务存在时返回其播放快照；服务不存在时标记为原生能力可用但尚未播放。
+         */
+        internal fun currentStatus(): PlaybackStatus = activeService?.snapshot()
             ?: PlaybackStatus(true, "idle", 0, 0)
     }
 }
