@@ -131,6 +131,12 @@
      * safe-area-inset-top 为 0px 而让关闭按钮贴近卡片顶部。
      */
     --mobile-drawer-header-safe-top: max(var(--mobile-safe-area-top), 0.75rem);
+    /*
+     * 全屏抽屉的正文滚动到末尾时，最后一个可操作元素仍须高于底部手势条。
+     * 与顶部规则相同：异形屏采用实际安全区，普通设备保留 24px 的阅读与点击留白。
+     * 左右边缘由 mobile-content-frame（移动端内容框）的安全区与比例留白统一处理。
+     */
+    --mobile-drawer-content-safe-bottom: max(env(safe-area-inset-bottom, 0px), 1.5rem);
     --mobile-content-gutter-start: max(var(--mobile-content-gutter), env(safe-area-inset-left, 0px));
     --mobile-content-gutter-end: max(var(--mobile-content-gutter), env(safe-area-inset-right, 0px));
     /*

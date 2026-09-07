@@ -4,11 +4,11 @@ import {
   createUser as createUserApi, getScheduledTasks, getUsers, resetUserPassword, runScheduledTask, updateUser as updateUserApi,
   type ScheduledTask, type User,
 } from '@/api/rime';
-import { AppScrollArea } from '@/components/AppScrollArea';
+import { MobileDrawerCard } from '@/components/MobileDrawerCard';
 import { UnifiedListRow } from '@/components/UnifiedListRow';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Drawer, DrawerClose, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
+import { Drawer, DrawerClose } from '@/components/ui/drawer';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
@@ -86,47 +86,32 @@ export function SystemSettingsDrawer({ open, onOpenChange }: { open: boolean; on
 
   return (
     <Drawer open={open} onOpenChange={changeOpen} swipeDirection="down">
-      <DrawerContent className="h-[calc(100dvh-0.5rem)] max-h-[calc(100dvh-0.5rem)]">
-        <div className="mobile-content-frame">
-          {/*
-           * 全屏设置卡片的背景仍可延展到圆角顶部；仅将可操作的页头避开系统状态栏。
-           * 该令牌与正在播放抽屉共用，避免不同设置页面在刘海或挖孔设备上出现
-           * 不一致的标题高度。
-           */}
-          <DrawerHeader className="flex-row items-center gap-2 p-0 pb-2 pt-[var(--mobile-drawer-header-safe-top)] text-left">
-            {view === 'root' ? (
-              <DrawerClose render={<Button variant="ghost" size="icon" aria-label="退出系统设置"><ChevronDown aria-hidden="true" /></Button>} />
-            ) : (
-              <Button variant="ghost" size="icon" aria-label="返回系统设置" onClick={() => setView('root')}><ArrowLeft aria-hidden="true" /></Button>
-            )}
-            <DrawerTitle className="min-w-0 flex-1 text-center text-sm">{view === 'root' ? '系统设置' : view === 'tasks' ? '计划任务' : '用户管理'}</DrawerTitle>
-            <span className="size-8 shrink-0" aria-hidden="true" />
-          </DrawerHeader>
-        </div>
-
-        <AppScrollArea className="min-h-0 flex-1">
-          <section className="mobile-content-frame pb-[max(env(safe-area-inset-bottom),1.5rem)]" aria-label={view === 'root' ? '系统设置项目' : view === 'tasks' ? '计划任务列表' : '用户列表'}>
-            {view === 'root' ? (
-              <ItemGroup className="gap-0">
-                <UnifiedListRow render={<button type="button" onClick={() => setView('users')} />} className="cursor-pointer py-3" separated>
-                  <ItemMedia variant="icon"><Users aria-hidden="true" /></ItemMedia>
-                  <ItemContent><ItemTitle>用户管理</ItemTitle></ItemContent>
-                  <ItemActions><ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" /></ItemActions>
-                </UnifiedListRow>
-                <UnifiedListRow render={<button type="button" onClick={() => setView('tasks')} />} className="cursor-pointer py-3" separated>
-                  <ItemMedia variant="icon"><CalendarClock aria-hidden="true" /></ItemMedia>
-                  <ItemContent><ItemTitle>计划任务</ItemTitle></ItemContent>
-                  <ItemActions><ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" /></ItemActions>
-                </UnifiedListRow>
-              </ItemGroup>
-            ) : view === 'tasks' ? (
-              <ScheduledTaskList tasks={scheduledTasks} isLoading={isLoading} error={error} onRunTask={runTask} />
-            ) : (
-              <AdminUserList />
-            )}
-          </section>
-        </AppScrollArea>
-      </DrawerContent>
+      <MobileDrawerCard
+        title={view === 'root' ? '系统设置' : view === 'tasks' ? '计划任务' : '用户管理'}
+        contentProps={{ 'aria-label': view === 'root' ? '系统设置项目' : view === 'tasks' ? '计划任务列表' : '用户列表' }}
+        leading={view === 'root'
+          ? <DrawerClose render={<Button variant="ghost" size="icon" aria-label="退出系统设置"><ChevronDown aria-hidden="true" /></Button>} />
+          : <Button variant="ghost" size="icon" aria-label="返回系统设置" onClick={() => setView('root')}><ArrowLeft aria-hidden="true" /></Button>}
+      >
+        {view === 'root' ? (
+          <ItemGroup className="gap-0">
+            <UnifiedListRow render={<button type="button" onClick={() => setView('users')} />} className="cursor-pointer py-3" separated>
+              <ItemMedia variant="icon"><Users aria-hidden="true" /></ItemMedia>
+              <ItemContent><ItemTitle>用户管理</ItemTitle></ItemContent>
+              <ItemActions><ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" /></ItemActions>
+            </UnifiedListRow>
+            <UnifiedListRow render={<button type="button" onClick={() => setView('tasks')} />} className="cursor-pointer py-3" separated>
+              <ItemMedia variant="icon"><CalendarClock aria-hidden="true" /></ItemMedia>
+              <ItemContent><ItemTitle>计划任务</ItemTitle></ItemContent>
+              <ItemActions><ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" /></ItemActions>
+            </UnifiedListRow>
+          </ItemGroup>
+        ) : view === 'tasks' ? (
+          <ScheduledTaskList tasks={scheduledTasks} isLoading={isLoading} error={error} onRunTask={runTask} />
+        ) : (
+          <AdminUserList />
+        )}
+      </MobileDrawerCard>
     </Drawer>
   );
 }

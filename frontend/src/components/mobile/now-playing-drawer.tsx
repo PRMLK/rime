@@ -9,12 +9,12 @@ import {
   type LyricsDocument, type Track,
 } from '@/api/rime';
 import { AlbumArtwork, AlbumArtworkFrame } from '@/components/AlbumArtwork';
-import { AppScrollArea } from '@/components/AppScrollArea';
+import { MobileDrawerCard } from '@/components/MobileDrawerCard';
 import { TrackListRow } from '@/components/mobile/track-list';
 import { UnifiedListFooterLogo } from '@/components/UnifiedListRow';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { DrawerClose, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
+import { DrawerClose } from '@/components/ui/drawer';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
@@ -72,28 +72,20 @@ export function NowPlayingDrawer({
   const PlaybackModeIcon = playbackMode === 'sequence' ? QueueOutlineIcon : RepeatOutlineIcon;
 
   return (
-    <DrawerContent className="h-[calc(100dvh-0.5rem)] max-h-[calc(100dvh-0.5rem)]">
-      <div className="mobile-content-frame">
-        {/*
-         * 全屏播放卡片与设置卡片共用顶部避让令牌：安全区由 App 壳统一提供，
-         * 非异形屏仍保留最小页头间距，避免关闭按钮贴近卡片圆角。
-         */}
-        <DrawerHeader className="flex-row items-center gap-2 p-0 pb-2 pt-[var(--mobile-drawer-header-safe-top)] text-left">
-          <DrawerClose
-            render={
-              <Button variant="ghost" size="icon" aria-label="收起播放器">
-                <ChevronDown aria-hidden="true" />
-              </Button>
-            }
-          />
-          <DrawerTitle className="min-w-0 flex-1 text-center text-sm">正在播放</DrawerTitle>
-          <span className="size-8 shrink-0" aria-hidden="true" />
-        </DrawerHeader>
-      </div>
-
-      <AppScrollArea className="min-h-0 flex-1">
-        <section className="mobile-content-frame pb-[max(env(safe-area-inset-bottom),1.5rem)]" aria-labelledby="now-playing-heading">
-          <AlbumArtworkFrame className="mx-auto mt-2 aspect-square w-full max-w-md bg-muted">
+    <MobileDrawerCard
+      title="正在播放"
+      contentProps={{ 'aria-labelledby': 'now-playing-heading' }}
+      leading={
+        <DrawerClose
+          render={
+            <Button variant="ghost" size="icon" aria-label="收起播放器">
+              <ChevronDown aria-hidden="true" />
+            </Button>
+          }
+        />
+      }
+    >
+      <AlbumArtworkFrame className="mx-auto mt-2 aspect-square w-full max-w-md bg-muted">
             {showLyrics ? (
               <LyricsPanel track={playback.track} positionMs={position} />
             ) : (
@@ -193,10 +185,8 @@ export function NowPlayingDrawer({
             ))}
             {queue.length > 0 && <UnifiedListFooterLogo />}
             {queue.length === 0 && <p className="py-6 text-sm text-muted-foreground">暂无曲目</p>}
-          </div>
-        </section>
-      </AppScrollArea>
-    </DrawerContent>
+      </div>
+    </MobileDrawerCard>
   );
 }
 
