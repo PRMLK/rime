@@ -14,6 +14,8 @@
     "tauri:android:release": "npm run tauri:android:release:aab && npm run tauri:android:release:apk",
     "tauri:android:release:aab": "node scripts/build-mobile.mjs android --aab",
     "tauri:android:release:apk": "node scripts/build-mobile.mjs android --apk --split-per-abi",
+    "tauri:windows:release": "tauri build --bundles nsis,msi",
+    "tauri:macos:release": "tauri build --bundles dmg",
     "tauri:ios:init": "tauri ios init",
     "tauri:ios:dev": "tauri ios dev",
     "tauri:ios:release": "node scripts/build-mobile.mjs ios --export-method app-store-connect"

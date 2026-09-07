@@ -1,17 +1,17 @@
-# Mobile packaging and CI/CD
+# 客户端打包与 CI/CD（持续集成与持续部署）
 
-Rime uses Tauri 2 for its installable mobile client. Both development and release
-builds bundle the local Vite `/mobile.html` entry. The native client asks the user
-to select a Rime server, validates its API capabilities, and then connects with a
-Bearer session. The browser client keeps using its current same-origin cookie flow.
+Rime 使用 Tauri 2 构建可安装客户端。Android、Windows x86-64 与 macOS ARM64
+发布包都会打入本地 Vite 的 `/mobile.html` 入口。原生客户端会要求用户选择 Rime
+服务器、校验 API（应用程序接口）能力后以 Bearer 会话连接；浏览器客户端继续使用
+同源 Cookie 流程。
 
 ## GitHub Actions release flow
 
-The `Mobile release` workflow supports two modes:
+`Client release`（客户端发布）工作流支持两种模式：
 
-- A manual run builds signed per-ABI Android APK files and one universal AAB, then stores them as workflow artifacts.
-- Pushing a tag such as `v0.1.2` also creates a GitHub Release and attaches all packages.
-- Google Play internal testing is optional and runs only when `PUBLISH_GOOGLE_PLAY` is `true`.
+- 手动运行会构建已签名的 Android 分 ABI APK 和通用 AAB，以及 Windows x86-64 的 EXE/MSI 与 macOS ARM64 的 DMG；所有产物都会保存为工作流附件。
+- 推送如 `v0.1.2` 的标签还会创建 GitHub Release（GitHub 发布版本），并上传所有平台的安装包。
+- Google Play 内部测试为可选项，仅在 `PUBLISH_GOOGLE_PLAY` 为 `true` 时执行。
 
 Set the optional `PUBLISH_GOOGLE_PLAY` repository Actions variable to `true` only
 after Google Play is ready. No server URL is compiled into the mobile package.
@@ -56,17 +56,30 @@ only the native library required by that device. The universal AAB is uploaded t
 Google Play, which handles device-specific delivery automatically.
 
 每个标签发布都会在自动生成的变更日志前展示与 RustDesk 相同的“架构 × 平台”
-下载表。目前仅填写已有的 Android APK，其他平台单元格保留为空：
+下载表。Windows x86-64 同时提供 EXE 与 MSI，macOS ARM64 提供 DMG，未构建的平台
+单元格保留为空：
 
-| Architecture | Windows | Ubuntu | Mac | Android | Flatpak | iOS | Web |
+| Architecture | Windows | Linux | Mac | Android | Flatpak | iOS | Web |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| x86-64 (64-bit) |  |  |  | `app-x86_64-release.apk` |  |  |  |
-| AArch64 (ARM64) |  |  |  | `app-arm64-release.apk` |  |  |  |
-| ARMv7 (32-bit) |  |  |  | `app-arm-release.apk` |  |  |  |
-| x86-32 (32-bit) |  |  |  | `app-x86-release.apk` |  |  |  |
+| x86-64 (64-bit) | `rime-windows-x86_64.exe`、`rime-windows-x86_64.msi` |  |  | `rime-x86_64-release.apk` |  |  |  |
+| AArch64 (ARM64) |  |  | `rime-macos-aarch64.dmg` | `rime-arm64-release.apk` |  |  |  |
+| ARMv7 (32-bit) |  |  |  | `rime-arm-release.apk` |  |  |  |
+| x86-32 (32-bit) |  |  |  | `rime-x86-release.apk` |  |  |  |
 
-AAB 仍会作为 Google Play 分发附件上传。以后发布其他平台时，只填写
+AAB 仍会作为 Google Play 分发附件上传。以后发布 Linux 或其他平台时，只填写
 `.github/workflows/mobile-release.yml` 中对应的空单元格即可。
+
+## 本地桌面端构建
+
+在对应操作系统的 `frontend/` 目录安装依赖后执行：
+
+```bash
+# Windows x86-64：生成 NSIS EXE 与 MSI
+npm run tauri:windows:release
+
+# Apple Silicon macOS：生成 ARM64 DMG
+npm run tauri:macos:release
+```
 
 ## Local Android build
 

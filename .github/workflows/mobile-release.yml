@@ -1,4 +1,4 @@
-name: Mobile release
+name: Client release
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: mobile-release-${{ github.ref }}
+  group: client-release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -106,33 +106,199 @@ jobs:
           grep -F 'com.prmlk.rime.player.PlaybackService' "$manifest_output"
           grep -F 'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK' "$manifest_output"
 
+      - name: Prepare Android release files
+        working-directory: frontend
+        shell: bash
+        run: |
+          # Tauri/Gradle 的默认模块名为 app，保留其内部产物命名；仅在上传前改为
+          # 面向用户的 rime 前缀，使工作流附件与 GitHub Release 的文件名保持一致。
+          mkdir -p release-artifacts
+          for architecture in arm arm64 x86 x86_64; do
+            source_path=$(find src-tauri/gen/android/app/build/outputs -type f -name "app-$architecture-release.apk" -print -quit)
+            if [[ -z "$source_path" ]]; then
+              echo "Expected Android $architecture APK was not produced." >&2
+              exit 1
+            fi
+            cp "$source_path" "release-artifacts/rime-$architecture-release.apk"
+          done
+
+          aab_path=$(find src-tauri/gen/android/app/build/outputs -type f -name 'app-universal-release.aab' -print -quit)
+          if [[ -z "$aab_path" ]]; then
+            echo "Expected universal Android AAB was not produced." >&2
+            exit 1
+          fi
+          cp "$aab_path" release-artifacts/rime-universal-release.aab
+
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
           name: rime-android-${{ github.run_id }}
           if-no-files-found: error
           path: |
-            frontend/src-tauri/gen/android/app/build/outputs/**/*.apk
-            frontend/src-tauri/gen/android/app/build/outputs/**/*.aab
+            frontend/release-artifacts/rime-*.apk
+            frontend/release-artifacts/rime-*.aab
+
+  windows:
+    name: Build Windows x86-64 packages
+    runs-on: windows-2025
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Validate release version
+        if: github.ref_type == 'tag'
+        working-directory: frontend
+        shell: pwsh
+        run: |
+          $appVersion = node -p "require('./src-tauri/tauri.conf.json').version"
+          if ($env:GITHUB_REF_NAME -ne "v$appVersion") {
+            throw "Tag $env:GITHUB_REF_NAME does not match Tauri version v$appVersion."
+          }
+
+      - name: Build Windows EXE and MSI packages
+        working-directory: frontend
+        run: npm run tauri:windows:release
+
+      - name: Prepare Windows release files
+        working-directory: frontend
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path 'src-tauri/target/release/bundle/nsis' -Filter '*.exe' | Select-Object -First 1
+          $msi = Get-ChildItem -Path 'src-tauri/target/release/bundle/msi' -Filter '*.msi' | Select-Object -First 1
+          if ($null -eq $exe -or $null -eq $msi) {
+            throw 'Expected Windows EXE and MSI bundles were not produced.'
+          }
+
+          # 使用固定文件名，让发布下载表不依赖 Tauri 默认文件名或版本号格式。
+          New-Item -ItemType Directory -Force -Path release-artifacts | Out-Null
+          Copy-Item $exe.FullName release-artifacts/rime-windows-x86_64.exe
+          Copy-Item $msi.FullName release-artifacts/rime-windows-x86_64.msi
+
+      - name: Upload Windows workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rime-windows-${{ github.run_id }}
+          if-no-files-found: error
+          path: frontend/release-artifacts/*
+
+  macos:
+    name: Build macOS ARM64 package
+    # GitHub 的 macos-14 托管运行器为 Apple Silicon，可原生构建 AArch64 DMG。
+    runs-on: macos-14
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Validate native architecture and release version
+        working-directory: frontend
+        shell: bash
+        run: |
+          test "$(uname -m)" = "arm64"
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            app_version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+            if [[ "$GITHUB_REF_NAME" != "v$app_version" ]]; then
+              echo "Tag $GITHUB_REF_NAME does not match Tauri version v$app_version." >&2
+              exit 1
+            fi
+          fi
+
+      - name: Build macOS ARM64 DMG package
+        working-directory: frontend
+        run: npm run tauri:macos:release
+
+      - name: Prepare macOS release file
+        working-directory: frontend
+        shell: bash
+        run: |
+          dmg_path=$(find src-tauri/target/release/bundle/dmg -maxdepth 1 -type f -name '*.dmg' -print -quit)
+          if [[ -z "$dmg_path" ]]; then
+            echo "Expected macOS DMG bundle was not produced." >&2
+            exit 1
+          fi
+
+          # 使用固定文件名，让发布下载表不依赖 Tauri 默认文件名或版本号格式。
+          mkdir -p release-artifacts
+          cp "$dmg_path" release-artifacts/rime-macos-aarch64.dmg
+
+      - name: Upload macOS workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rime-macos-${{ github.run_id }}
+          if-no-files-found: error
+          path: frontend/release-artifacts/*
+
+  release:
+    name: Publish GitHub release
+    needs:
+      - android
+      - windows
+      - macos
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v5
+        with:
+          pattern: rime-*-${{ github.run_id }}
+          path: release-assets
+          merge-multiple: true
 
       - name: Publish GitHub release
-        if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
-          # 保持与 RustDesk 相同的发布表结构；尚未发布的平台保留空单元格。
+          # 下载链接使用构建任务规范化后的名称；未构建的平台继续保留空单元格。
           body: |
-            | Architecture | Windows | Ubuntu | Mac | Android | Flatpak | iOS | Web |
+            | Architecture | Windows | Linux | Mac | Android | Flatpak | iOS | Web |
             | --- | --- | --- | --- | --- | --- | --- | --- |
-            | x86-64 (64-bit) |  |  |  | [Download](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/app-x86_64-release.apk) |  |  |  |
-            | AArch64 (ARM64) |  |  |  | [Download](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/app-arm64-release.apk) |  |  |  |
-            | ARMv7 (32-bit) |  |  |  | [Download](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/app-arm-release.apk) |  |  |  |
-            | x86-32 (32-bit) |  |  |  | [Download](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/app-x86-release.apk) |  |  |  |
+            | x86-64 (64-bit) | [EXE](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/rime-windows-x86_64.exe) [MSI](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/rime-windows-x86_64.msi) |  |  | [Download](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/rime-x86_64-release.apk) |  |  |  |
+            | AArch64 (ARM64) |  |  | [DMG](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/rime-macos-aarch64.dmg) | [Download](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/rime-arm64-release.apk) |  |  |  |
+            | ARMv7 (32-bit) |  |  |  | [Download](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/rime-arm-release.apk) |  |  |  |
+            | x86-32 (32-bit) |  |  |  | [Download](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/rime-x86-release.apk) |  |  |  |
 
           generate_release_notes: true
           fail_on_unmatched_files: true
-          files: |
-            frontend/src-tauri/gen/android/app/build/outputs/**/*.apk
-            frontend/src-tauri/gen/android/app/build/outputs/**/*.aab
+          files: release-assets/**/*
 
   google-play:
     name: Publish to Google Play internal testing
