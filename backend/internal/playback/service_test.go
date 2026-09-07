@@ -162,15 +162,16 @@ func TestCreateFallsBackToDirectSourceWhenTranscodingFails(t *testing.T) {
 	session, err := service.Create(context.Background(), "usr_1", CreateRequest{
 		TrackID: "trk_1", PlayerID: "player_1",
 		Capabilities: Capabilities{
-			Formats: []Format{{Container: "flac", Codec: "flac"}},
+			// M4A 让服务实际尝试 FFmpeg；FLAC 保留为转码失败时可安全直连的原文件。
+			Formats: []Format{{Container: "flac", Codec: "flac"}, {Container: "m4a", Codec: "aac"}},
 			Quality: "auto", MaxBitrateKbps: 256, SupportsByteRange: true,
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !transcoder.called || session.Source.Kind != "direct" || session.Source.BitrateKbps != 900 {
-		t.Fatalf("unexpected fallback result: transcoder_called=%v source=%+v", transcoder.called, session.Source)
+	if !transcoder.called || transcoder.target.Container != "m4a" || session.Source.Kind != "direct" || session.Source.BitrateKbps != 900 {
+		t.Fatalf("unexpected fallback result: transcoder_called=%v target=%+v source=%+v", transcoder.called, transcoder.target, session.Source)
 	}
 }
 
