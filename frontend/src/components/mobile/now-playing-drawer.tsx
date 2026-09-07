@@ -8,6 +8,7 @@ import {
   ApiError, addTrackToPlaylist, getAllPlaylists, getTrackLyrics,
   type LyricsDocument, type Track,
 } from '@/api/rime';
+import { AppScrollArea } from '@/components/AppScrollArea';
 import { AlbumArtwork, AlbumArtworkFrame } from '@/components/AlbumArtwork';
 import { MobileDrawerCard } from '@/components/MobileDrawerCard';
 import { TrackListRow } from '@/components/mobile/track-list';
