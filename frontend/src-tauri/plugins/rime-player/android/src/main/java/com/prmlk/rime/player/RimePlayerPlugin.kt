@@ -1,8 +1,11 @@
 package com.prmlk.rime.player
 
 import android.app.Activity
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.IBinder
 import androidx.core.content.ContextCompat
 import androidx.media3.common.AudioAttributes
@@ -75,6 +78,11 @@ internal data class PlaybackStatus(
  */
 @TauriPlugin
 class RimePlayerPlugin(private val activity: Activity) : Plugin(activity) {
+    companion object {
+        /** Android 13 及以上向用户请求媒体通知权限时使用的请求编号。 */
+        private const val MEDIA_NOTIFICATION_PERMISSION_REQUEST_CODE = 4101
+    }
+
     /** @returns 原生服务当前快照；服务尚未启动时返回 idle（空闲）。 */
     @Command
     fun status(invoke: Invoke) {
@@ -90,8 +98,30 @@ class RimePlayerPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun load(invoke: Invoke) {
         val request = invoke.parseArgs(PlaybackLoadRequest::class.java)
+        requestNotificationPermissionForMediaControls()
         PlaybackService.load(activity, request)
         invoke.resolve()
+    }
+
+    /**
+     * 在用户主动开始播放时请求通知权限，保证前台媒体通知可展示给澎湃 OS 的控制中心。
+     *
+     * Android 13（API 33）起，`POST_NOTIFICATIONS`（通知权限）是运行时权限。仅在
+     * AndroidManifest.xml（Android 清单）中声明并不会自动授权；小米澎湃 OS 还会限制
+     * 后台本地通知，因此必须在用户触发播放这一明确场景中请求。Media3（Android 媒体
+     * 框架）仍会继续维护 MediaSession（媒体会话），用户允许后系统立即能显示其通知。
+     *
+     * @returns 无返回值。低于 Android 13、已授权或系统不支持请求的设备会直接跳过。
+     */
+    private fun requestNotificationPermissionForMediaControls() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+            return
+        }
+        activity.requestPermissions(
+            arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+            MEDIA_NOTIFICATION_PERMISSION_REQUEST_CODE,
+        )
     }
 
     /** 恢复已加载的曲目。 */
@@ -180,9 +210,13 @@ class PlaybackService : MediaSessionService() {
      * @param intent 含曲目元数据或控制动作的服务启动 Intent。
      * @param flags Android 服务重启策略；无活动播放时不主动重启，避免无用户行为的后台启动。
      * @param startId 本次服务启动序号。
-     * @returns START_NOT_STICKY，播放恢复由系统媒体会话而非盲目重启服务负责。
+     * @returns START_NOT_STICKY（不粘性启动）；父类会处理系统媒体按键和前台通知的
+     * 生命周期，但应用不盲目重启已经停止的播放。
      */
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // MediaSessionService（媒体会话服务）会在父类中处理系统发来的媒体按键 Intent。
+        // 不能跳过该调用，否则蓝牙耳机、锁屏和小米控制中心的系统控制命令可能失效。
+        super.onStartCommand(intent, flags, startId)
         when (intent?.action) {
             ACTION_LOAD -> loadItem(intent)
             ACTION_PLAY -> player?.play()

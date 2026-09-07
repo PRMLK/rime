@@ -13,6 +13,9 @@ dist/
 # TypeScript build state
 *.tsbuildinfo
 
+# Android Gradle local caches
+.gradle/
+
 # Rime runtime state and local media
 backend/data/
 backend/music/
