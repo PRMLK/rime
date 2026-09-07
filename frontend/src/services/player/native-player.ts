@@ -1,5 +1,5 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
-import type { PlaybackSession, Track } from '@/api/rime';
+import type { PlaybackFormat, PlaybackSession, Track } from '@/api/rime';
 
 /** 原生播放服务能返回的状态；`ended` 用于让前端延续既有队列策略。 */
 export type NativePlayerState = 'idle' | 'loading' | 'playing' | 'paused' | 'ended' | 'error';
@@ -50,6 +50,19 @@ export class NativePlayerBridge {
       .then((status) => status.available)
       .catch(() => false);
     return this.availability;
+  }
+
+  /**
+   * 返回当前原生播放器可安全声明给服务端的额外直连格式。
+   *
+   * Android 8.1（API 27）及以上的 Media3/ExoPlayer 可直接解码 FLAC；该格式不应由
+   * WebView 的 `canPlayType`（格式探测）代替判断。iOS 和较早 Android 版本保持空列表，
+   * 继续使用服务端转码或网页内核的兼容路径。
+   *
+   * @returns 可附加到播放会话能力清单的格式数组；调用方应先确认 `isAvailable()` 为 true。
+   */
+  directPlaybackFormats(): PlaybackFormat[] {
+    return supportsAndroidNativeFlac() ? [{ container: 'flac', codec: 'flac' }] : [];
   }
 
   /**
@@ -121,4 +134,18 @@ export function nativeLoadRequest(
     durationMs: track.durationMs,
     startPositionMs: Math.max(0, Math.round(startPositionMs)),
   };
+}
+
+/**
+ * 判断当前 Android WebView 是否运行在具备系统 FLAC 解码保证的版本上。
+ *
+ * @returns Android 8.1（API 27）及以上时为 true；无法识别或非 Android 环境时为 false。
+ */
+function supportsAndroidNativeFlac(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const version = /\bAndroid\s+(\d+)(?:\.(\d+))?/i.exec(navigator.userAgent);
+  if (!version) return false;
+  const major = Number(version[1]);
+  const minor = Number(version[2] ?? '0');
+  return major > 8 || (major === 8 && minor >= 1);
 }

@@ -2,12 +2,87 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"rime/backend/internal/playback"
 )
+
+// TestOpenRepairsPlaybackSourceColumnsWhenMigrationWasRecorded 验证历史数据库的
+// schema_migrations（迁移记录表）即使错误登记了第 10 版，Open（打开存储）仍会补齐
+// playback_sessions（播放会话表）的播放源字段。这避免旧数据库在创建会话时因
+// source_kind 等列不存在而返回 SQLite 错误。
+func TestOpenRepairsPlaybackSourceColumnsWhenMigrationWasRecorded(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	databasePath := filepath.Join(t.TempDir(), "legacy-rime.db")
+	legacy, err := sql.Open("sqlite3", "file:"+databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := migrations.ReadDir("migrations")
+	if err != nil {
+		_ = legacy.Close()
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") || entry.Name() == "010_playback_sources.sql" {
+			continue
+		}
+		schema, err := migrations.ReadFile("migrations/" + entry.Name())
+		if err != nil {
+			_ = legacy.Close()
+			t.Fatal(err)
+		}
+		if _, err := legacy.ExecContext(ctx, string(schema)); err != nil {
+			_ = legacy.Close()
+			t.Fatal(err)
+		}
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+			continue
+		}
+		prefix, _, _ := strings.Cut(entry.Name(), "_")
+		version, err := strconv.Atoi(prefix)
+		if err != nil {
+			_ = legacy.Close()
+			t.Fatal(err)
+		}
+		if _, err := legacy.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, version, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			_ = legacy.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	for _, column := range []string{
+		"source_kind", "source_path", "source_container", "source_codec", "source_content_type",
+		"source_bitrate_kbps", "source_size", "source_modified_unix_ms", "source_content_version",
+		"content_key", "profile_id",
+	} {
+		var columnCount int
+		if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('playback_sessions') WHERE name = ?`, column).Scan(&columnCount); err != nil {
+			t.Fatal(err)
+		}
+		if columnCount != 1 {
+			t.Fatalf("%s column count = %d, want 1", column, columnCount)
+		}
+	}
+}
 
 // TestRecordPlaybackEventUsesServerTimeForHistory 验证继续聆听不会信任客户端未来时间。
 //

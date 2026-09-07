@@ -1,4 +1,5 @@
 import {
+  ApiError,
   createPlaybackSession,
   deletePlaybackSession,
   getArtworkSource,
@@ -111,7 +112,16 @@ export class HtmlAudioPlayer {
         if (generation !== this.loadGeneration) return;
       }
       const settings = readClientSettings(this.cacheScope);
-      const nextSession = await createPlaybackSession(track.id, this.playerId, playbackQualityRequest(settings.playbackQuality));
+      // 会话解析必须先知道原生内核是否可用；否则 FLAC 等 Android 已支持、但 WebView
+      // 未声明的格式会在服务端被过早拒绝，原生播放器根本得不到加载机会。
+      const useNativePlayer = await this.nativePlayer.isAvailable();
+      if (generation !== this.loadGeneration) return;
+      const nextSession = await createPlaybackSession(
+        track.id,
+        this.playerId,
+        playbackQualityRequest(settings.playbackQuality),
+        useNativePlayer ? this.nativePlayer.directPlaybackFormats() : [],
+      );
       if (generation !== this.loadGeneration) {
         void deletePlaybackSession(nextSession.sessionId);
         return;
@@ -120,11 +130,6 @@ export class HtmlAudioPlayer {
       this.audio.pause();
       this.session = nextSession;
       this.publish({ source: nextSession.source });
-      const useNativePlayer = await this.nativePlayer.isAvailable();
-      if (generation !== this.loadGeneration) {
-        void deletePlaybackSession(nextSession.sessionId);
-        return;
-      }
       if (useNativePlayer) {
         const previousCachedSession = this.cachedSession;
         this.cachedSession = undefined;
@@ -647,6 +652,15 @@ function getPlayerId(): string {
   }
 }
 
+/**
+ * 将播放器底层错误转换为适合直接呈现给用户的中文提示。
+ *
+ * @param error - API（应用程序接口）、原生播放器或浏览器音频元素抛出的未知错误。
+ * @returns 可在播放器界面展示的简洁错误文案；已知的服务端错误码会返回对应的处理建议。
+ */
 function messageFrom(error: unknown): string {
+  if (error instanceof ApiError && error.code === 'playback_format_unsupported') {
+    return '当前音源无法直接播放，服务器也未启用音频转码。请联系管理员配置 FFmpeg 后重试。';
+  }
   return error instanceof Error ? error.message : '播放失败';
 }

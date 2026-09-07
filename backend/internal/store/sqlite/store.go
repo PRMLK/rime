@@ -106,6 +106,70 @@ func (s *Store) migrate(ctx context.Context) error {
 			return err
 		}
 	}
+	return s.reconcilePlaybackSessionSourceColumns(ctx)
+}
+
+// reconcilePlaybackSessionSourceColumns 修复曾错误登记为已完成的播放源迁移。
+//
+// 早期开发数据库可能在 schema_migrations（迁移记录表）中包含第 10 版记录，但
+// playback_sessions（播放会话表）实际没有对应字段。常规迁移会依据版本记录跳过该
+// 文件，之后创建播放会话便会因 source_kind 等列不存在而失败。这里逐列检查并仅添加
+// 缺失项，因此既能修复这类历史数据库，也不会改动已完成迁移的现有数据。
+//
+// 参数 ctx 用于取消数据库调用。
+// 返回值为检查或补列过程中遇到的错误；所有字段已存在时返回 nil。
+func (s *Store) reconcilePlaybackSessionSourceColumns(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(playback_sessions)`)
+	if err != nil {
+		return fmt.Errorf("inspect playback session columns: %w", err)
+	}
+	defer rows.Close()
+
+	existing := make(map[string]struct{})
+	for rows.Next() {
+		var (
+			index        int
+			name         string
+			columnType   string
+			notNull      int
+			defaultValue any
+			primaryKey   int
+		)
+		if err := rows.Scan(&index, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return fmt.Errorf("read playback session column: %w", err)
+		}
+		existing[name] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate playback session columns: %w", err)
+	}
+
+	// 定义必须与 010_playback_sources.sql 保持一致。SQLite 不支持通用的
+	// ADD COLUMN IF NOT EXISTS，因此先读取表结构再逐项执行，保证重复启动安全。
+	required := []struct {
+		name       string
+		definition string
+	}{
+		{name: "source_kind", definition: "TEXT NOT NULL DEFAULT 'direct'"},
+		{name: "source_path", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "source_container", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "source_codec", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "source_content_type", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "source_bitrate_kbps", definition: "INTEGER NOT NULL DEFAULT 0"},
+		{name: "source_size", definition: "INTEGER NOT NULL DEFAULT 0"},
+		{name: "source_modified_unix_ms", definition: "INTEGER NOT NULL DEFAULT 0"},
+		{name: "source_content_version", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "content_key", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "profile_id", definition: "TEXT NOT NULL DEFAULT ''"},
+	}
+	for _, column := range required {
+		if _, ok := existing[column.name]; ok {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, "ALTER TABLE playback_sessions ADD COLUMN "+column.name+" "+column.definition); err != nil {
+			return fmt.Errorf("add playback session column %s: %w", column.name, err)
+		}
+	}
 	return nil
 }
 

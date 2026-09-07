@@ -155,6 +155,18 @@ export type PlaybackSession = {
   expiresAt: string;
 };
 
+/** 客户端可直接解码的一种媒体容器和编解码器组合。 */
+export type PlaybackFormat = {
+  container: string;
+  codec: string;
+};
+
+/** 创建播放会话时声明的音质偏好与可选码率上限。 */
+export type PlaybackQualityRequest = {
+  quality: 'auto' | 'original' | 'limited';
+  maxBitrateKbps?: number;
+};
+
 type Problem = {
   title?: string;
   detail?: string;
@@ -484,11 +496,12 @@ export async function getArtworkSource(artworkId: string | undefined, size: 128 
 }
 
 /**
- * 检测当前浏览器可直接播放的音频格式，供创建播放会话时优先选择无需转码的媒体。
+ * 检测网页音频元素和可用原生内核可直接播放的音频格式。
  *
- * @returns 支持的容器和编解码器列表；当浏览器未返回能力信息时，以 MP3 作为兼容性兜底。
+ * @param additionalFormats - 已由原生播放器确认的附加格式；网页环境传入空数组即可。
+ * @returns 格式优先级列表，供服务端选择直连音源或转码目标。
  */
-function supportedAudioFormats(): Array<{ container: string; codec: string }> {
+function supportedAudioFormats(additionalFormats: PlaybackFormat[] = []): PlaybackFormat[] {
   const audio = document.createElement('audio');
   const candidates = [
     { container: 'm4a', codec: 'aac', mime: 'audio/mp4; codecs="mp4a.40.2"' },
@@ -502,30 +515,72 @@ function supportedAudioFormats(): Array<{ container: string; codec: string }> {
   ];
   const supported = candidates.filter((candidate) => audio.canPlayType(candidate.mime) !== '')
     .map(({ container, codec }) => ({ container, codec }));
-  return supported.length > 0 ? supported : [{ container: 'mp3', codec: 'mp3' }];
+  const browserFormats = supported.length > 0 ? supported : [{ container: 'mp3', codec: 'mp3' }];
+  return [...browserFormats, ...additionalFormats];
 }
 
+/**
+ * 创建一个后端授权的播放会话。
+ *
+ * 首次请求遵从用户的自动或限码率偏好。若服务器既不能提供该码率也无法转码，则重试
+ * 一次原始音质；重试仍会使用同一份播放器格式清单，因此不会把不受支持的音源交给客户端。
+ *
+ * @param trackId - 要播放曲目的稳定 ID。
+ * @param playerId - 当前播放器实例的稳定 ID。
+ * @param quality - 用户设置导出的音质偏好与可选码率上限。
+ * @param additionalFormats - 原生播放器额外支持的格式，例如 Android 的 FLAC。
+ * @returns 包含已解析、且已转换为当前服务器绝对地址的播放会话。
+ */
 export async function createPlaybackSession(
   trackId: string,
   playerId: string,
-  quality: { quality: 'auto' | 'original' | 'limited'; maxBitrateKbps?: number },
+  quality: PlaybackQualityRequest,
+  additionalFormats: PlaybackFormat[] = [],
 ): Promise<PlaybackSession> {
-  const session = await request<PlaybackSession>('/api/v1/playback/sessions', {
+  const formats = supportedAudioFormats(additionalFormats);
+  let session: PlaybackSession;
+  try {
+    session = await requestPlaybackSession(trackId, playerId, formats, quality);
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.code !== 'playback_format_unsupported' || quality.quality === 'original') {
+      throw error;
+    }
+    // 低码率不可用时，原始音质是唯一不依赖服务端 FFmpeg（音频转码器）的安全回退。
+    session = await requestPlaybackSession(trackId, playerId, formats, { quality: 'original' });
+  }
+  return {
+    ...session,
+    source: { ...session.source, href: resolveServerPath(session.source.href) },
+  };
+}
+
+/**
+ * 向服务端提交一次播放会话解析请求。
+ *
+ * @param trackId - 要播放曲目的稳定 ID。
+ * @param playerId - 当前播放器实例的稳定 ID。
+ * @param formats - 播放内核确认支持的格式清单。
+ * @param quality - 本次请求采用的音质偏好。
+ * @returns 服务端返回的原始播放会话；播放地址尚未转换为当前服务器绝对地址。
+ */
+function requestPlaybackSession(
+  trackId: string,
+  playerId: string,
+  formats: PlaybackFormat[],
+  quality: PlaybackQualityRequest,
+): Promise<PlaybackSession> {
+  return request<PlaybackSession>('/api/v1/playback/sessions', {
     method: 'POST',
     body: JSON.stringify({
       trackId,
       playerId,
       capabilities: {
         supportsByteRange: true,
-        formats: supportedAudioFormats(),
+        formats,
         ...quality,
       },
     }),
   });
-  return {
-    ...session,
-    source: { ...session.source, href: resolveServerPath(session.source.href) },
-  };
 }
 
 /**

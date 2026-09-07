@@ -154,7 +154,20 @@ func (s *Service) Create(ctx context.Context, userID string, request CreateReque
 	} else {
 		resolved, err = s.resolveTranscode(ctx, media, request.Capabilities)
 		if err != nil {
-			return Session{}, err
+			// 请求已取消时不能创建新的会话。除此之外，转码器缺失、编码器不可用、
+			// 缓存目录不可写等失败都可以尝试同一份安全直连回退。
+			if ctx.Err() != nil {
+				return Session{}, err
+			}
+
+			// 自动/限码率模式优先请求较低码率媒体，但该偏好不能让播放器已明确
+			// 支持的原始文件变为不可播放。转码无法完成时忽略码率限制重新匹配；
+			// 容器和编解码器仍须完全匹配，不能把未知格式交给客户端冒险解码。
+			fallback, fallbackOK := chooseMedia(media, request.Capabilities.Formats, "original", 0)
+			if !fallbackOK {
+				return Session{}, err
+			}
+			resolved = directSource(fallback)
 		}
 	}
 

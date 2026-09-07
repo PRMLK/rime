@@ -52,6 +52,7 @@ type transcoderStub struct {
 	target  Format
 	bitrate int
 	source  ResolvedMedia
+	err     error
 }
 
 func (*transcoderStub) Available() bool { return true }
@@ -60,7 +61,7 @@ func (t *transcoderStub) Resolve(_ context.Context, _ catalog.MediaFile, target 
 	t.called = true
 	t.target = target
 	t.bitrate = bitrate
-	return t.source, nil
+	return t.source, t.err
 }
 
 func TestCreateTranscodesPlayableSourceAboveBitrateLimit(t *testing.T) {
@@ -112,6 +113,87 @@ func TestCreateUsesDirectSourceWithinBitrateLimit(t *testing.T) {
 	}
 	if transcoder.called || session.Source.Kind != "direct" || session.Source.ContentKey == "" {
 		t.Fatalf("unexpected direct selection: called=%v source=%+v", transcoder.called, session.Source)
+	}
+}
+
+// TestCreateFallsBackToDirectSourceWhenTranscodingIsUnavailable 验证自动音质的码率
+// 限制只是一项偏好。当原文件的格式已获播放器支持、却无法生成更低码率版本时，服务
+// 必须退回原始文件，不能让可正常播放的歌曲变成不可用。
+func TestCreateFallsBackToDirectSourceWhenTranscodingIsUnavailable(t *testing.T) {
+	repository := &playbackRepositoryStub{
+		track: catalog.Track{ID: "trk_1", Title: "Test"},
+		media: []catalog.MediaFile{{
+			ID: "med_1", TrackID: "trk_1", Container: "flac", Codec: "flac",
+			ContentType: "audio/flac", BitrateKbps: 900, Size: 400, ContentVersion: "400-1",
+		}},
+	}
+	// 不传入转码器，模拟裸机部署遗漏 FFmpeg（多媒体转码器）的场景。
+	service := New(repository)
+
+	session, err := service.Create(context.Background(), "usr_1", CreateRequest{
+		TrackID: "trk_1", PlayerID: "player_1",
+		Capabilities: Capabilities{
+			Formats: []Format{{Container: "flac", Codec: "flac"}},
+			Quality: "auto", MaxBitrateKbps: 256, SupportsByteRange: true,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.Source.Kind != "direct" || session.Source.BitrateKbps != 900 {
+		t.Fatalf("unexpected fallback source: %+v", session.Source)
+	}
+}
+
+// TestCreateFallsBackToDirectSourceWhenTranscodingFails 验证 FFmpeg（多媒体转码器）
+// 虽然已安装但执行失败时，服务仍会优先让声明支持 FLAC 的播放器直连原文件。这样缓存
+// 目录权限、损坏编码器或单次转码失败不会使本可播放的歌曲完全不可用。
+func TestCreateFallsBackToDirectSourceWhenTranscodingFails(t *testing.T) {
+	repository := &playbackRepositoryStub{
+		track: catalog.Track{ID: "trk_1", Title: "Test"},
+		media: []catalog.MediaFile{{
+			ID: "med_1", TrackID: "trk_1", Container: "flac", Codec: "flac",
+			ContentType: "audio/flac", BitrateKbps: 900, Size: 400, ContentVersion: "400-1",
+		}},
+	}
+	transcoder := &transcoderStub{err: errors.New("ffmpeg exited with status 1")}
+	service := New(repository, transcoder)
+
+	session, err := service.Create(context.Background(), "usr_1", CreateRequest{
+		TrackID: "trk_1", PlayerID: "player_1",
+		Capabilities: Capabilities{
+			Formats: []Format{{Container: "flac", Codec: "flac"}},
+			Quality: "auto", MaxBitrateKbps: 256, SupportsByteRange: true,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !transcoder.called || session.Source.Kind != "direct" || session.Source.BitrateKbps != 900 {
+		t.Fatalf("unexpected fallback result: transcoder_called=%v source=%+v", transcoder.called, session.Source)
+	}
+}
+
+// TestCreateRejectsUnsupportedFormatWithoutDirectOrTranscoding 确保降级仅适用于
+// 客户端明确声明可播放的格式。没有匹配的直连格式时，不能把未知音源交给播放器。
+func TestCreateRejectsUnsupportedFormatWithoutDirectOrTranscoding(t *testing.T) {
+	repository := &playbackRepositoryStub{
+		track: catalog.Track{ID: "trk_1", Title: "Test"},
+		media: []catalog.MediaFile{{
+			ID: "med_1", TrackID: "trk_1", Container: "wma", BitrateKbps: 192, ContentVersion: "source-v1",
+		}},
+	}
+	service := New(repository)
+
+	_, err := service.Create(context.Background(), "usr_1", CreateRequest{
+		TrackID: "trk_1", PlayerID: "player_1",
+		Capabilities: Capabilities{
+			Formats: []Format{{Container: "mp3", Codec: "mp3"}},
+			Quality: "auto", MaxBitrateKbps: 256, SupportsByteRange: true,
+		},
+	})
+	if !errors.Is(err, ErrUnsupportedFormat) {
+		t.Fatalf("error = %v, want ErrUnsupportedFormat", err)
 	}
 }
 
