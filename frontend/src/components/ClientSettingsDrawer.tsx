@@ -6,11 +6,13 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Drawer, DrawerClose } from '@/components/ui/drawer';
-import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import { Slider } from '@/components/ui/slider';
+import { Switch } from '@/components/ui/switch';
 import { MobileDrawerCard } from '@/components/MobileDrawerCard';
+import { getAccountSettings, updateAccountSettings } from '@/api/rime';
 import {
   bytesToGibibytes, gibibytesToBytes, readClientSettings, writeClientSettings,
   type ClientSettings, type PlaybackQuality,
@@ -29,11 +31,35 @@ const playbackOptions: Array<{ value: PlaybackQuality; label: string }> = [
   { value: 96, label: '96 kbps' },
 ];
 
-export function ClientSettingsDrawer({ open, onOpenChange, scope }: { open: boolean; onOpenChange: (open: boolean) => void; scope: string }) {
+/**
+ * 渲染当前设备的播放与缓存设置，并为管理员提供账号专属的播放器诊断开关。
+ *
+ * @param props - 抽屉开关、客户端设置作用域、管理员身份及诊断模式的受控状态。
+ * @returns 包含本地客户端设置和管理员诊断设置的 Drawer（抽屉）内容。
+ */
+export function ClientSettingsDrawer({
+  open,
+  onOpenChange,
+  scope,
+  isAdmin,
+  debugEnabled,
+  onDebugEnabledChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  scope: string;
+  isAdmin: boolean;
+  debugEnabled: boolean;
+  onDebugEnabledChange: (enabled: boolean) => void;
+}) {
   const [settings, setSettings] = useState<ClientSettings>(() => readClientSettings(scope));
   const [mediaCacheStatus, setMediaCacheStatus] = useState<MediaCacheStatus>({ usedBytes: 0, itemCount: 0 });
   const [clientCacheStatus, setClientCacheStatus] = useState<ClientCacheStatus>({ usedBytes: 0, itemCount: 0, artworkCount: 0, responseCount: 0 });
   const [cacheError, setCacheError] = useState<string>();
+  const [currentDebugEnabled, setCurrentDebugEnabled] = useState(debugEnabled);
+  const [isLoadingDebugSetting, setIsLoadingDebugSetting] = useState(false);
+  const [isUpdatingDebugSetting, setIsUpdatingDebugSetting] = useState(false);
+  const [debugSettingError, setDebugSettingError] = useState<string>();
   const native = hasNativeMediaCache();
 
   useEffect(() => {
@@ -47,6 +73,29 @@ export function ClientSettingsDrawer({ open, onOpenChange, scope }: { open: bool
       })
       .catch((error: unknown) => setCacheError(error instanceof Error ? error.message : '缓存信息读取失败'));
   }, [open, scope]);
+
+  useEffect(() => setCurrentDebugEnabled(debugEnabled), [debugEnabled]);
+
+  useEffect(() => {
+    if (!open || !isAdmin) return;
+    const controller = new AbortController();
+    setIsLoadingDebugSetting(true);
+    setDebugSettingError(undefined);
+    getAccountSettings(controller.signal)
+      .then((accountSettings) => {
+        if (controller.signal.aborted) return;
+        setCurrentDebugEnabled(accountSettings.debugEnabled);
+        onDebugEnabledChange(accountSettings.debugEnabled);
+      })
+      .catch((loadError: unknown) => {
+        if (loadError instanceof DOMException && loadError.name === 'AbortError') return;
+        setDebugSettingError(loadError instanceof Error ? loadError.message : '调试模式读取失败');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsLoadingDebugSetting(false);
+      });
+    return () => controller.abort();
+  }, [isAdmin, onDebugEnabledChange, open]);
 
   const updateSettings = (next: ClientSettings) => {
     setSettings(next);
@@ -74,6 +123,29 @@ export function ClientSettingsDrawer({ open, onOpenChange, scope }: { open: bool
       setCacheError(undefined);
     } catch (error) {
       setCacheError(error instanceof Error ? error.message : '缓存清理失败');
+    }
+  };
+
+  /**
+   * 更新当前管理员账号的播放调试开关，并在服务端确认后同步播放器状态。
+   *
+   * @param enabled - true 表示采集并展示播放器诊断，false 表示停止采集并隐藏诊断框。
+   * @returns 无返回值；写入失败时恢复已确认的旧状态并显示接口错误。
+   */
+  const changeDebugEnabled = async (enabled: boolean) => {
+    const previous = currentDebugEnabled;
+    setCurrentDebugEnabled(enabled);
+    setIsUpdatingDebugSetting(true);
+    setDebugSettingError(undefined);
+    try {
+      const accountSettings = await updateAccountSettings({ debugEnabled: enabled });
+      setCurrentDebugEnabled(accountSettings.debugEnabled);
+      onDebugEnabledChange(accountSettings.debugEnabled);
+    } catch (updateError: unknown) {
+      setCurrentDebugEnabled(previous);
+      setDebugSettingError(updateError instanceof Error ? updateError.message : '调试模式更新失败');
+    } finally {
+      setIsUpdatingDebugSetting(false);
     }
   };
 
@@ -132,6 +204,22 @@ export function ClientSettingsDrawer({ open, onOpenChange, scope }: { open: bool
             </Select>
             <FieldDescription>从下一首歌曲开始应用；低码率音源不会被放大。</FieldDescription>
           </Field>
+          {isAdmin && (
+            <Field orientation="horizontal" data-disabled={isLoadingDebugSetting || isUpdatingDebugSetting || undefined}>
+              <FieldContent>
+                <FieldLabel htmlFor="player-debug-enabled">播放器调试模式</FieldLabel>
+                <FieldDescription>显示当前账号的播放源协商、传输状态和错误信息。</FieldDescription>
+              </FieldContent>
+              <Switch
+                id="player-debug-enabled"
+                checked={currentDebugEnabled}
+                disabled={isLoadingDebugSetting || isUpdatingDebugSetting}
+                aria-label="播放器调试模式"
+                onCheckedChange={changeDebugEnabled}
+              />
+            </Field>
+          )}
+          {isAdmin && debugSettingError && <FieldError>{debugSettingError}</FieldError>}
         </FieldGroup>
 
         <Separator />

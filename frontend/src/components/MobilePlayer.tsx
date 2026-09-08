@@ -187,6 +187,10 @@ export function MobilePlayer({
   useEffect(() => () => player.dispose(), [player]);
 
   useEffect(() => {
+    if (user.role !== 'admin') {
+      setDebugEnabled(false);
+      return;
+    }
     const controller = new AbortController();
     getAccountSettings(controller.signal)
       .then((settings) => {
@@ -195,7 +199,7 @@ export function MobilePlayer({
       // 调试模式默认关闭；读取失败不能妨碍正常播放，也不能意外暴露诊断信息。
       .catch(() => undefined);
     return () => controller.abort();
-  }, [player]);
+  }, [player, user.role]);
 
   useEffect(() => {
     player.setDebugEnabled(debugEnabled);
@@ -620,13 +624,18 @@ export function MobilePlayer({
           onChooseTrack={chooseTrack}
         />
       </Drawer>
-      <ClientSettingsDrawer open={isClientSettingsOpen} onOpenChange={setIsClientSettingsOpen} scope={settingsScope} />
+      <ClientSettingsDrawer
+        open={isClientSettingsOpen}
+        onOpenChange={setIsClientSettingsOpen}
+        scope={settingsScope}
+        isAdmin={user.role === 'admin'}
+        debugEnabled={debugEnabled}
+        onDebugEnabledChange={setDebugEnabled}
+      />
       {user.role === 'admin' && (
         <SystemSettingsDrawer
           open={isSettingsOpen}
           onOpenChange={setIsSettingsOpen}
-          debugEnabled={debugEnabled}
-          onDebugEnabledChange={setDebugEnabled}
         />
       )}
     </TooltipProvider>
