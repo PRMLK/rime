@@ -24,6 +24,7 @@ import (
 	"rime/backend/internal/playback"
 	"rime/backend/internal/playlists"
 	"rime/backend/internal/search"
+	"rime/backend/internal/settings"
 	"rime/backend/internal/store/sqlite"
 	"rime/backend/internal/tasks"
 	v1 "rime/backend/internal/transport/http/native/v1"
@@ -161,7 +162,7 @@ func run(logger *slog.Logger) error {
 	}
 	defer taskService.Close()
 
-	handler := v1.New(search.New(store), browse.New(store), lyrics.NewService(store), playback.New(store, transcoder), artwork.NewService(store, artworkCache), taskService, identityService, playlists.New(store), logger)
+	handler := v1.New(search.New(store), browse.New(store), lyrics.NewService(store), playback.New(store, transcoder), artwork.NewService(store, artworkCache), taskService, identityService, playlists.New(store), settings.New(store), logger)
 	server := &http.Server{
 		Addr:              cfg.Address,
 		Handler:           handler,

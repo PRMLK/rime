@@ -1,8 +1,8 @@
 import { ArrowLeft, CalendarClock, ChevronDown, ChevronRight, LoaderCircle, MoreHorizontal, Play, Users } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
-  createUser as createUserApi, getScheduledTasks, getUsers, resetUserPassword, runScheduledTask, updateUser as updateUserApi,
-  type ScheduledTask, type User,
+  createUser as createUserApi, getScheduledTasks, getSystemSettings, getUsers, resetUserPassword, runScheduledTask, updateSystemSettings,
+  updateUser as updateUserApi, type ScheduledTask, type User,
 } from '@/api/rime';
 import { MobileDrawerCard } from '@/components/MobileDrawerCard';
 import { UnifiedListRow } from '@/components/UnifiedListRow';
@@ -12,10 +12,11 @@ import { Drawer, DrawerClose, DrawerContent, DrawerHeader, DrawerTitle } from '@
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from '@/components/ui/item';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 /**
@@ -24,12 +25,49 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
  * @param props - 当前抽屉的受控开关状态及其回调。
  * @returns 系统设置的完整 Drawer（抽屉）内容。
  */
-export function SystemSettingsDrawer({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+export function SystemSettingsDrawer({
+  open,
+  onOpenChange,
+  debugEnabled,
+  onDebugEnabledChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  debugEnabled: boolean;
+  onDebugEnabledChange: (enabled: boolean) => void;
+}) {
   const [view, setView] = useState<'root' | 'tasks' | 'users'>('root');
   const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string>();
   const [refreshVersion, setRefreshVersion] = useState(0);
+  const [currentDebugEnabled, setCurrentDebugEnabled] = useState(debugEnabled);
+  const [isLoadingDebugSetting, setIsLoadingDebugSetting] = useState(false);
+  const [isUpdatingDebugSetting, setIsUpdatingDebugSetting] = useState(false);
+  const [debugSettingError, setDebugSettingError] = useState<string>();
+
+  useEffect(() => setCurrentDebugEnabled(debugEnabled), [debugEnabled]);
+
+  useEffect(() => {
+    if (!open) return;
+    const controller = new AbortController();
+    setIsLoadingDebugSetting(true);
+    setDebugSettingError(undefined);
+    getSystemSettings(controller.signal)
+      .then((settings) => {
+        if (controller.signal.aborted) return;
+        setCurrentDebugEnabled(settings.debugEnabled);
+        onDebugEnabledChange(settings.debugEnabled);
+      })
+      .catch((loadError: unknown) => {
+        if (loadError instanceof DOMException && loadError.name === 'AbortError') return;
+        setDebugSettingError(loadError instanceof Error ? loadError.message : '调试模式读取失败');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsLoadingDebugSetting(false);
+      });
+    return () => controller.abort();
+  }, [onDebugEnabledChange, open]);
 
   useEffect(() => {
     if (!open || view !== 'tasks') return;
@@ -84,6 +122,29 @@ export function SystemSettingsDrawer({ open, onOpenChange }: { open: boolean; on
     }
   };
 
+  /**
+   * 更新服务端的全局播放调试开关，并在写入成功后立即同步当前播放器。
+   *
+   * @param enabled - true 表示采集并展示播放器诊断，false 表示停止采集并隐藏诊断框。
+   * @returns 无返回值；失败时保留服务端确认过的旧状态并显示接口错误。
+   */
+  const changeDebugEnabled = async (enabled: boolean) => {
+    const previous = currentDebugEnabled;
+    setCurrentDebugEnabled(enabled);
+    setIsUpdatingDebugSetting(true);
+    setDebugSettingError(undefined);
+    try {
+      const settings = await updateSystemSettings({ debugEnabled: enabled });
+      setCurrentDebugEnabled(settings.debugEnabled);
+      onDebugEnabledChange(settings.debugEnabled);
+    } catch (updateError: unknown) {
+      setCurrentDebugEnabled(previous);
+      setDebugSettingError(updateError instanceof Error ? updateError.message : '调试模式更新失败');
+    } finally {
+      setIsUpdatingDebugSetting(false);
+    }
+  };
+
   return (
     <Drawer open={open} onOpenChange={changeOpen} swipeDirection="down">
       <MobileDrawerCard
@@ -95,6 +156,20 @@ export function SystemSettingsDrawer({ open, onOpenChange }: { open: boolean; on
       >
         {view === 'root' ? (
           <ItemGroup className="gap-0">
+            <Field orientation="horizontal" className="px-3 py-3" data-disabled={isLoadingDebugSetting || isUpdatingDebugSetting || undefined}>
+              <FieldContent>
+                <FieldLabel htmlFor="player-debug-enabled">播放器调试模式</FieldLabel>
+                <FieldDescription>显示播放源协商、传输状态和错误信息。</FieldDescription>
+              </FieldContent>
+              <Switch
+                id="player-debug-enabled"
+                checked={currentDebugEnabled}
+                disabled={isLoadingDebugSetting || isUpdatingDebugSetting}
+                aria-label="播放器调试模式"
+                onCheckedChange={changeDebugEnabled}
+              />
+            </Field>
+            {debugSettingError && <FieldError className="px-3 pb-3">{debugSettingError}</FieldError>}
             <UnifiedListRow render={<button type="button" onClick={() => setView('users')} />} className="cursor-pointer py-3" separated>
               <ItemMedia variant="icon"><Users aria-hidden="true" /></ItemMedia>
               <ItemContent><ItemTitle>用户管理</ItemTitle></ItemContent>

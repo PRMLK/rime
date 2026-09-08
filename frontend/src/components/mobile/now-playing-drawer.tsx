@@ -169,7 +169,8 @@ export function NowPlayingDrawer({
               <TooltipContent>{showLyrics ? '显示专辑封面' : '显示歌词'}</TooltipContent>
             </Tooltip>
           </div>
-          <Separator className="my-8" />
+          {playback.diagnostics && <PlayerDiagnosticsPanel playback={playback} />}
+          <Separator className={playback.diagnostics ? 'my-5' : 'my-8'} />
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold">接下来</h2>
             <span className="text-xs text-muted-foreground">{queue.length} 首</span>
@@ -377,6 +378,96 @@ function PlayerButton({ label, disabled, onClick, children, className }: { label
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
   );
+}
+
+/**
+ * 渲染管理员开启调试模式后可见的播放协商、传输和错误记录。
+ *
+ * @param props - 当前播放器快照；诊断状态不存在时由调用方不渲染本组件。
+ * @returns 位于播放控制区下方的有界滚动诊断框，不展示含会话令牌的播放地址。
+ */
+function PlayerDiagnosticsPanel({ playback }: { playback: PlayerSnapshot }) {
+  const diagnostics = playback.diagnostics;
+  if (!diagnostics) return null;
+  const transport = playback.source
+    ? `${playback.source.kind} · ${playback.source.contentType}${playback.source.bitrateKbps ? ` · ${playback.source.bitrateKbps} kbps` : ''}`
+    : '等待服务端选源';
+
+  return (
+    <section className="mt-5 overflow-hidden rounded-md border border-border bg-muted/30" aria-labelledby="player-debug-heading">
+      <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2">
+        <h3 id="player-debug-heading" className="text-sm font-medium">播放调试</h3>
+        <Badge variant={playback.status === 'error' ? 'destructive' : 'secondary'}>{playerStatusLabel(playback.status)}</Badge>
+      </div>
+      <dl className="grid grid-cols-2 gap-x-3 gap-y-2 px-3 py-2 text-xs">
+        <DebugDetail label="内核" value={diagnostics.engine === 'native' ? '原生播放器' : '网页音频'} />
+        <DebugDetail label="原生服务" value={diagnostics.nativeAvailable === undefined ? '未检测' : diagnostics.nativeAvailable ? '可用' : '不可用'} />
+        <DebugDetail label="客户端标签" value={diagnostics.clientTags.join(', ') || '无'} />
+        <DebugDetail label="缓存" value={cacheStateLabel(diagnostics.cacheState)} />
+        <DebugDetail label="传输" value={transport} className="col-span-2" />
+        <DebugDetail label="播放进度" value={`${formatTime(playback.positionMs)} / ${formatTime(playback.durationMs)}`} />
+        <DebugDetail label="状态" value={playerStatusLabel(playback.status)} />
+      </dl>
+      <Separator />
+      <AppScrollArea className="h-32" aria-label="播放调试事件">
+        <div className="flex flex-col gap-1.5 px-3 py-2" role="log" aria-live="polite">
+          {diagnostics.events.map((event, index) => (
+            <p key={`${event.occurredAt}-${index}`} className={cn('break-words text-xs leading-5', event.level === 'error' ? 'text-destructive' : 'text-muted-foreground')}>
+              <time className="mr-1 tabular-nums text-foreground/70" dateTime={event.occurredAt}>{formatDiagnosticTime(event.occurredAt)}</time>
+              {event.message}
+            </p>
+          ))}
+        </div>
+      </AppScrollArea>
+    </section>
+  );
+}
+
+/**
+ * 渲染诊断框中的一个名称和值。
+ *
+ * @param props - 名称、可换行的值和可选网格布局类名。
+ * @returns 语义化的 definition（定义）列表项。
+ */
+function DebugDetail({ label, value, className }: { label: string; value: string; className?: string }) {
+  return (
+    <div className={className}>
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="mt-0.5 break-words text-foreground">{value}</dd>
+    </div>
+  );
+}
+
+/**
+ * 将播放器状态转换成中文短标签。
+ *
+ * @param status - HtmlAudioPlayer（网页音频播放器）发布的当前状态。
+ * @returns 适合状态徽章和诊断字段展示的中文文本。
+ */
+function playerStatusLabel(status: PlayerSnapshot['status']): string {
+  return { idle: '空闲', loading: '加载中', playing: '播放中', paused: '已暂停', error: '错误' }[status];
+}
+
+/**
+ * 将媒体缓存解析结果转换成中文短标签。
+ *
+ * @param state - 播放器记录的缓存命中状态。
+ * @returns 面向管理员的缓存状态说明。
+ */
+function cacheStateLabel(state: NonNullable<PlayerSnapshot['diagnostics']>['cacheState']): string {
+  return { 'not-used': '未使用', hit: '命中', miss: '未命中' }[state];
+}
+
+/**
+ * 格式化诊断事件的本地时间。
+ *
+ * @param occurredAt - ISO（国际标准化组织）格式事件时间。
+ * @returns 有效时间显示为时分秒；无效值回退为原始文本，避免隐藏服务端或原生异常数据。
+ */
+function formatDiagnosticTime(occurredAt: string): string {
+  const date = new Date(occurredAt);
+  if (Number.isNaN(date.getTime())) return occurredAt;
+  return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(date);
 }
 
 /**

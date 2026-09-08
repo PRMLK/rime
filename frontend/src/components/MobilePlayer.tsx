@@ -13,7 +13,7 @@ import {
   Heart, LoaderCircle,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type RefObject } from 'react';
-import { getFavoriteStatus, searchTracks, setFavorite, type ArtistRef, type Track, type User } from '@/api/rime';
+import { getFavoriteStatus, getSystemSettings, searchTracks, setFavorite, type ArtistRef, type Track, type User } from '@/api/rime';
 import { AlbumArtwork } from '@/components/AlbumArtwork';
 import { AppScrollArea } from '@/components/AppScrollArea';
 import { ClientSettingsDrawer } from '@/components/ClientSettingsDrawer';
@@ -95,6 +95,7 @@ export function MobilePlayer({
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isClientSettingsOpen, setIsClientSettingsOpen] = useState(false);
+  const [debugEnabled, setDebugEnabled] = useState(false);
   const [isLiked, setIsLiked] = useState(false);
   const [isLoadingLike, setIsLoadingLike] = useState(false);
   const [updatingLikeTrackID, setUpdatingLikeTrackID] = useState<string>();
@@ -184,6 +185,21 @@ export function MobilePlayer({
   const isUpdatingLike = isLoadingLike || (playback.track !== undefined && updatingLikeTrackID === playback.track.id);
 
   useEffect(() => () => player.dispose(), [player]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    getSystemSettings(controller.signal)
+      .then((settings) => {
+        if (!controller.signal.aborted) setDebugEnabled(settings.debugEnabled);
+      })
+      // 调试模式默认关闭；读取失败不能妨碍正常播放，也不能意外暴露诊断信息。
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [player]);
+
+  useEffect(() => {
+    player.setDebugEnabled(debugEnabled);
+  }, [debugEnabled, player]);
 
   useEffect(() => {
     if (!playback.track) {
@@ -605,7 +621,14 @@ export function MobilePlayer({
         />
       </Drawer>
       <ClientSettingsDrawer open={isClientSettingsOpen} onOpenChange={setIsClientSettingsOpen} scope={settingsScope} />
-      {user.role === 'admin' && <SystemSettingsDrawer open={isSettingsOpen} onOpenChange={setIsSettingsOpen} />}
+      {user.role === 'admin' && (
+        <SystemSettingsDrawer
+          open={isSettingsOpen}
+          onOpenChange={setIsSettingsOpen}
+          debugEnabled={debugEnabled}
+          onDebugEnabledChange={setDebugEnabled}
+        />
+      )}
     </TooltipProvider>
   );
 }

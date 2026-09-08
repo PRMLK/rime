@@ -28,6 +28,7 @@ import (
 	"rime/backend/internal/playback"
 	"rime/backend/internal/playlists"
 	"rime/backend/internal/search"
+	"rime/backend/internal/settings"
 	"rime/backend/internal/store/sqlite"
 	"rime/backend/internal/tasks"
 	v1 "rime/backend/internal/transport/http/native/v1"
@@ -107,7 +108,7 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(v1.New(search.New(store), browse.New(store), lyrics.NewService(store), playback.New(store), artwork.NewService(store, artworkCache), taskService, identityService, playlists.New(store), logger))
+	server := httptest.NewServer(v1.New(search.New(store), browse.New(store), lyrics.NewService(store), playback.New(store), artwork.NewService(store, artworkCache), taskService, identityService, playlists.New(store), settings.New(store), logger))
 	t.Cleanup(server.Close)
 	unauthorized, err := http.Get(server.URL + "/api/v1/search")
 	if err != nil {
@@ -156,6 +157,7 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 	if response.StatusCode != http.StatusConflict {
 		t.Fatalf("second setup status: %s", response.Status)
 	}
+	assertSystemSettings(t, client, server.URL)
 	assertRecentAlbums(t, client, server.URL)
 	assertAlbums(t, client, server.URL)
 	assertScheduledTaskRun(t, client, server.URL)
@@ -417,6 +419,65 @@ func assertBearerAuthentication(t *testing.T, serverURL string) {
 	response.Body.Close()
 	if response.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("revoked bearer status: %s", response.Status)
+	}
+}
+
+// assertSystemSettings 验证认证用户可读取全局调试状态，且管理员更新后会得到持久化结果。
+// 参数 t 用于报告断言失败，adminClient 携带管理员会话，serverURL 是待测 HTTP 服务地址。
+// 函数不返回值；任一状态码或 JSON 字段不符合预期时终止当前测试。
+func assertSystemSettings(t *testing.T, adminClient *http.Client, serverURL string) {
+	t.Helper()
+	response, err := adminClient.Get(serverURL + "/api/v1/system/settings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var initial struct {
+		DebugEnabled bool `json:"debugEnabled"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&initial); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || initial.DebugEnabled {
+		t.Fatalf("unexpected initial system settings: status=%s settings=%+v", response.Status, initial)
+	}
+
+	request, err := http.NewRequest(http.MethodPatch, serverURL+"/api/v1/admin/system/settings", bytes.NewBufferString(`{"debugEnabled":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err = adminClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var updated struct {
+		DebugEnabled bool `json:"debugEnabled"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&updated); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || !updated.DebugEnabled {
+		t.Fatalf("unexpected updated system settings: status=%s settings=%+v", response.Status, updated)
+	}
+
+	response, err = adminClient.Get(serverURL + "/api/v1/system/settings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted struct {
+		DebugEnabled bool `json:"debugEnabled"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&persisted); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || !persisted.DebugEnabled {
+		t.Fatalf("system settings were not persisted: status=%s settings=%+v", response.Status, persisted)
 	}
 }
 

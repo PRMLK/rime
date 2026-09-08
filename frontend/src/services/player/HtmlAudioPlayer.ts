@@ -19,6 +19,30 @@ import {
 
 export type PlayerStatus = 'idle' | 'loading' | 'playing' | 'paused' | 'error';
 
+/** 调试记录的严重程度；错误项会在播放器调试框中以破坏性颜色突出显示。 */
+export type PlayerDiagnosticLevel = 'info' | 'error';
+
+/** 一条按时间顺序记录的播放协商、传输或播放器内核事件。 */
+export type PlayerDiagnosticEvent = {
+  occurredAt: string;
+  level: PlayerDiagnosticLevel;
+  message: string;
+};
+
+/**
+ * 当前播放器公开给调试框的无敏感信息诊断状态。
+ *
+ * 不包含播放 URL（统一资源定位符）、会话 ID（标识）或认证信息，防止短期播放令牌
+ * 被截图、复制或同步到错误报告中。
+ */
+export type PlayerDiagnostics = {
+  engine: 'native' | 'web';
+  clientTags: string[];
+  nativeAvailable?: boolean;
+  cacheState: 'not-used' | 'hit' | 'miss';
+  events: PlayerDiagnosticEvent[];
+};
+
 export type PlayerSnapshot = {
   track?: Track;
   status: PlayerStatus;
@@ -26,6 +50,7 @@ export type PlayerSnapshot = {
   durationMs: number;
   source?: PlaybackSession['source'];
   error?: string;
+  diagnostics?: PlayerDiagnostics;
 };
 
 type Listener = () => void;
@@ -69,6 +94,7 @@ export class HtmlAudioPlayer {
   private desktopMediaMetadataGeneration = 0;
   private nativeProgressTimer?: ReturnType<typeof setInterval>;
   private nativeEndedNotified = false;
+  private debugEnabled = false;
 
   constructor(private readonly cacheScope: string) {
     this.audio.preload = 'metadata';
@@ -106,6 +132,22 @@ export class HtmlAudioPlayer {
   };
 
   /**
+   * 设置是否采集并公开播放器诊断。
+   *
+   * @param enabled - 由服务端管理员设置控制；关闭时立即丢弃内存中的诊断记录。
+   * @returns 无返回值；开启后保留当前播放源的后续协商、传输和错误事件。
+   */
+  setDebugEnabled(enabled: boolean): void {
+    if (enabled === this.debugEnabled) return;
+    this.debugEnabled = enabled;
+    if (!enabled) {
+      this.publish({ diagnostics: undefined });
+      return;
+    }
+    this.beginDiagnostics('调试模式已开启，等待播放操作。');
+  }
+
+  /**
    * 为指定曲目创建播放会话，并选择原生或网页播放内核。
    *
    * @param track - 用户请求播放的可用曲目。
@@ -114,14 +156,16 @@ export class HtmlAudioPlayer {
   async load(track: Track): Promise<void> {
     const generation = ++this.loadGeneration;
     const wasUsingNativePlayer = this.isUsingNativePlayer;
+    const clientTags = this.nativePlayer.clientTags();
     this.stopNativeProgressPolling();
     this.isUsingNativePlayer = false;
     this.nativeEndedNotified = false;
+    this.beginDiagnostics(`开始加载“${track.title}”。`, clientTags);
     this.publish({ track, status: 'loading', positionMs: 0, durationMs: track.durationMs, source: undefined, error: undefined });
     try {
       if (wasUsingNativePlayer) {
         // 先停掉旧服务，避免新请求因网络或系统限制失败时两套内核同时输出声音。
-        await this.nativePlayer.stop().catch(() => undefined);
+        await this.nativePlayer.stop().catch((error: unknown) => this.recordDiagnostic('error', `停止上一项原生播放失败：${messageFrom(error)}`));
         if (generation !== this.loadGeneration) return;
       }
       const settings = readClientSettings(this.cacheScope);
@@ -129,12 +173,16 @@ export class HtmlAudioPlayer {
       // 未声明的格式会在服务端被过早拒绝，原生播放器根本得不到加载机会。
       const useNativePlayer = await this.nativePlayer.isAvailable();
       if (generation !== this.loadGeneration) return;
+      this.updateDiagnostics({ engine: useNativePlayer ? 'native' : 'web', nativeAvailable: useNativePlayer });
+      this.recordDiagnostic('info', useNativePlayer ? '检测到可用原生播放器。' : '未检测到可用原生播放器，将使用网页音频内核。');
+      const quality = playbackQualityRequest(settings.playbackQuality);
+      this.recordDiagnostic('info', `请求播放会话：标签 ${clientTags.join(', ') || '无'}，音质 ${quality.quality}${quality.maxBitrateKbps ? `，上限 ${quality.maxBitrateKbps} kbps` : ''}。`);
       const nextSession = await createPlaybackSession(
         track.id,
         this.playerId,
-        playbackQualityRequest(settings.playbackQuality),
+        quality,
         useNativePlayer ? this.nativePlayer.directPlaybackFormats() : [],
-        this.nativePlayer.clientTags(),
+        clientTags,
       );
       if (generation !== this.loadGeneration) {
         void deletePlaybackSession(nextSession.sessionId);
@@ -144,6 +192,7 @@ export class HtmlAudioPlayer {
       this.audio.pause();
       this.session = nextSession;
       this.publish({ source: nextSession.source });
+      this.recordDiagnostic('info', `服务端已选源：${describePlaybackSource(nextSession.source)}。`);
       if (useNativePlayer) {
         const previousCachedSession = this.cachedSession;
         this.cachedSession = undefined;
@@ -156,17 +205,29 @@ export class HtmlAudioPlayer {
           void deletePlaybackSession(previousSession.sessionId);
         }
         try {
+          this.recordDiagnostic('info', '正在调用原生播放器加载播放源。');
           await this.nativePlayer.load(nativeLoadRequest(track, nextSession.source));
+          this.recordDiagnostic('info', '原生播放器已接受加载请求，开始轮询播放状态。');
           this.startNativeProgressPolling();
           return;
-        } catch {
+        } catch (error) {
           // 插件可用不代表本次服务一定能启动，例如设备临时拒绝前台服务。
           // 此时退回 HTMLAudioElement（网页音频元素），保证至少前台播放不中断。
           this.isUsingNativePlayer = false;
+          this.updateDiagnostics({ engine: 'web' });
+          this.recordDiagnostic('error', `原生播放器加载失败，已回退网页音频：${messageFrom(error)}`);
           this.synchronizeSystemMediaSession();
         }
       }
-      const cachedSource = await resolveCachedMedia(this.cacheScope, nextSession.source).catch(() => undefined);
+      let cachedSource: string | undefined;
+      try {
+        cachedSource = await resolveCachedMedia(this.cacheScope, nextSession.source);
+        this.updateDiagnostics({ engine: 'web', cacheState: cachedSource ? 'hit' : 'miss' });
+        this.recordDiagnostic('info', cachedSource ? '命中本地媒体缓存，网页音频将读取缓存文件。' : '未命中本地媒体缓存，网页音频将请求服务器串流。');
+      } catch (error) {
+        this.updateDiagnostics({ engine: 'web', cacheState: 'miss' });
+        this.recordDiagnostic('error', `读取本地媒体缓存失败，将请求服务器串流：${messageFrom(error)}`);
+      }
       if (generation !== this.loadGeneration) {
         if (cachedSource) void releaseCachedMedia(this.cacheScope, nextSession.source);
         void deletePlaybackSession(nextSession.sessionId);
@@ -175,6 +236,7 @@ export class HtmlAudioPlayer {
       const previousCachedSession = this.cachedSession;
       this.cachedSession = cachedSource ? nextSession : undefined;
       this.audio.src = cachedSource ?? nextSession.source.href;
+      this.recordDiagnostic('info', '网页音频已开始加载播放源。');
       this.audio.load();
       if (previousCachedSession) {
         void releaseCachedMedia(this.cacheScope, previousCachedSession.source);
@@ -184,11 +246,13 @@ export class HtmlAudioPlayer {
       }
       await this.audio.play();
       if (!cachedSource) {
-        void cacheMedia(this.cacheScope, nextSession.source, settings.maxCacheBytes).catch(() => undefined);
+        void cacheMedia(this.cacheScope, nextSession.source, settings.maxCacheBytes)
+          .then(() => this.recordDiagnostic('info', '播放源已加入本地媒体缓存任务。'))
+          .catch((error: unknown) => this.recordDiagnostic('error', `写入本地媒体缓存失败：${messageFrom(error)}`));
       }
     } catch (error) {
       if (generation === this.loadGeneration) {
-        this.publish({ status: 'error', error: messageFrom(error) });
+        this.publishError(error, '播放加载失败');
       }
       throw error;
     }
@@ -210,7 +274,7 @@ export class HtmlAudioPlayer {
           await this.play();
         }
       } catch (error) {
-        this.publish({ status: 'error', error: messageFrom(error) });
+        this.publishError(error, '读取原生播放状态失败');
       }
       return;
     }
@@ -236,14 +300,14 @@ export class HtmlAudioPlayer {
         await this.nativePlayer.play();
         await this.refreshNativePlaybackStatus();
       } catch (error) {
-        this.publish({ status: 'error', error: messageFrom(error) });
+        this.publishError(error, '恢复原生播放失败');
       }
       return;
     }
     try {
       await this.audio.play();
     } catch (error) {
-      this.publish({ status: 'error', error: messageFrom(error) });
+      this.publishError(error, '恢复网页音频播放失败');
     }
   }
 
@@ -259,7 +323,7 @@ export class HtmlAudioPlayer {
         await this.nativePlayer.pause();
         await this.refreshNativePlaybackStatus();
       } catch (error) {
-        this.publish({ status: 'error', error: messageFrom(error) });
+        this.publishError(error, '暂停原生播放失败');
       }
       return;
     }
@@ -277,7 +341,7 @@ export class HtmlAudioPlayer {
     if (this.isUsingNativePlayer) {
       void this.nativePlayer.seek(positionMs)
         .then(() => this.refreshNativePlaybackStatus())
-        .catch((error: unknown) => this.publish({ status: 'error', error: messageFrom(error) }));
+        .catch((error: unknown) => this.publishError(error, '原生播放定位失败'));
       return;
     }
     this.audio.currentTime = Math.max(0, positionMs) / 1000;
@@ -327,6 +391,89 @@ export class HtmlAudioPlayer {
     this.snapshot = { ...this.snapshot, ...update };
     this.synchronizeSystemMediaSession();
     this.listeners.forEach((listener) => listener());
+  }
+
+  /**
+   * 为一次新的播放操作建立空的调试记录。
+   *
+   * @param message - 作为首条记录展示的当前操作说明。
+   * @param clientTags - 本次会话提交给服务端的客户端标签；未传入时从当前原生桥接读取。
+   * @returns 无返回值；调试模式关闭时不会创建或保留记录。
+   */
+  private beginDiagnostics(message: string, clientTags = this.nativePlayer.clientTags()): void {
+    if (!this.debugEnabled) return;
+    this.publish({
+      diagnostics: {
+        engine: this.isUsingNativePlayer ? 'native' : 'web',
+        clientTags,
+        cacheState: 'not-used',
+        events: [this.diagnosticEvent('info', message)],
+      },
+    });
+  }
+
+  /**
+   * 更新当前诊断框顶部的稳定状态字段。
+   *
+   * @param update - 播放内核、原生可用性或缓存命中状态的增量更新；不会覆盖已有事件列表。
+   * @returns 无返回值；调试模式关闭时不产生状态或渲染更新。
+   */
+  private updateDiagnostics(update: Partial<Omit<PlayerDiagnostics, 'events'>>): void {
+    if (!this.debugEnabled) return;
+    const current = this.snapshot.diagnostics ?? this.emptyDiagnostics();
+    this.publish({ diagnostics: { ...current, ...update } });
+  }
+
+  /**
+   * 追加一条不含播放地址和认证信息的播放器诊断记录。
+   *
+   * @param level - info 表示正常路径，error 表示会话、传输或原生调用失败。
+   * @param message - 可直接展示给管理员的操作结果或原始错误文本。
+   * @returns 无返回值；仅保留最近 24 条，防止长时间播放造成无界内存增长。
+   */
+  private recordDiagnostic(level: PlayerDiagnosticLevel, message: string): void {
+    if (!this.debugEnabled) return;
+    const current = this.snapshot.diagnostics ?? this.emptyDiagnostics();
+    const events = [...current.events, this.diagnosticEvent(level, message)].slice(-24);
+    this.publish({ diagnostics: { ...current, engine: this.isUsingNativePlayer ? 'native' : current.engine, events } });
+  }
+
+  /**
+   * 同时向正常播放器快照与调试记录写入错误。
+   *
+   * @param error - 原生桥接、网络请求或网页音频抛出的错误，也可直接传入已格式化文本。
+   * @param context - 当前失败步骤，用于让调试记录区分会话协商、原生调用和传输上报。
+   * @returns 无返回值；页面仍可通过 snapshot.error（播放器错误）展示可操作的失败信息。
+   */
+  private publishError(error: unknown, context: string): void {
+    const message = messageFrom(error);
+    this.recordDiagnostic('error', `${context}：${message}`);
+    this.publish({ status: 'error', error: message });
+  }
+
+  /**
+   * 创建当前播放器状态的默认诊断容器。
+   *
+   * @returns 包含当前内核、客户端标签和空事件列表的诊断状态。
+   */
+  private emptyDiagnostics(): PlayerDiagnostics {
+    return {
+      engine: this.isUsingNativePlayer ? 'native' : 'web',
+      clientTags: this.nativePlayer.clientTags(),
+      cacheState: 'not-used',
+      events: [],
+    };
+  }
+
+  /**
+   * 创建带有统一 ISO（国际标准化组织）时间戳的诊断事件。
+   *
+   * @param level - 记录严重程度。
+   * @param message - 管理员可读的诊断内容。
+   * @returns 可追加到 PlayerDiagnostics（播放器诊断）事件列表的不可变对象。
+   */
+  private diagnosticEvent(level: PlayerDiagnosticLevel, message: string): PlayerDiagnosticEvent {
+    return { occurredAt: new Date().toISOString(), level, message };
   }
 
   /**
@@ -591,7 +738,7 @@ export class HtmlAudioPlayer {
       const status = await this.nativePlayer.status();
       if (this.isUsingNativePlayer) this.applyNativePlaybackStatus(status);
     } catch (error) {
-      if (this.isUsingNativePlayer) this.publish({ status: 'error', error: messageFrom(error) });
+      if (this.isUsingNativePlayer) this.publishError(error, '原生播放状态轮询失败');
     }
   }
 
@@ -623,6 +770,9 @@ export class HtmlAudioPlayer {
           : status.state === 'idle'
             ? 'idle'
             : 'paused';
+    if (status.error && (previousStatus !== 'error' || this.snapshot.error !== status.error)) {
+      this.recordDiagnostic('error', `原生播放服务报告错误：${status.error}`);
+    }
     this.publish({ status: nextStatus, positionMs, durationMs, error: status.error });
     if (nextStatus === 'playing') {
       if (previousStatus !== 'playing') this.report('started', positionMs);
@@ -645,12 +795,15 @@ export class HtmlAudioPlayer {
    */
   private report(type: 'started' | 'progress' | 'paused' | 'ended', positionMs?: number): void {
     if (!this.session) return;
-    void recordPlaybackEvent(this.session.sessionId, type, positionMs ?? this.audio.currentTime * 1000);
+    void recordPlaybackEvent(this.session.sessionId, type, positionMs ?? this.audio.currentTime * 1000)
+      .then(() => this.recordDiagnostic('info', `已上报播放事件：${type}。`))
+      .catch((error: unknown) => this.recordDiagnostic('error', `上报播放事件 ${type} 失败：${messageFrom(error)}`));
   }
 
   private handlePlaying = (): void => {
     if (this.isUsingNativePlayer) return;
     this.publish({ status: 'playing', error: undefined });
+    this.recordDiagnostic('info', '网页音频已进入播放状态。');
     this.report('started');
   };
 
@@ -658,6 +811,7 @@ export class HtmlAudioPlayer {
     if (this.isUsingNativePlayer) return;
     if (!this.audio.ended && this.session) {
       this.publish({ status: 'paused' });
+      this.recordDiagnostic('info', '网页音频已暂停。');
       this.report('paused');
     }
   };
@@ -665,6 +819,7 @@ export class HtmlAudioPlayer {
   private handleEnded = (): void => {
     if (this.isUsingNativePlayer) return;
     this.publish({ status: 'paused', positionMs: this.snapshot.durationMs });
+    this.recordDiagnostic('info', '网页音频已播放结束。');
     this.report('ended');
     this.endedListeners.forEach((listener) => listener());
   };
@@ -688,7 +843,8 @@ export class HtmlAudioPlayer {
 
   private handleError = (): void => {
     if (this.isUsingNativePlayer) return;
-    this.publish({ status: 'error', error: '音频加载失败' });
+    const errorCode = this.audio.error?.code;
+    this.publishError(`网页音频加载失败${errorCode ? `（MediaError ${errorCode}）` : ''}`, '网页音频播放失败');
   };
 }
 
@@ -809,5 +965,19 @@ function messageFrom(error: unknown): string {
   if (error instanceof ApiError && error.code === 'playback_format_unsupported') {
     return '当前音源无法直接播放，服务器也未启用音频转码。请联系管理员配置 FFmpeg 后重试。';
   }
+  if (typeof error === 'string') return error;
   return error instanceof Error ? error.message : '播放失败';
+}
+
+/**
+ * 将服务端选定的播放源转换为不含 URL（统一资源定位符）的调试摘要。
+ *
+ * @param source - 创建播放会话后服务端返回的音频源。
+ * @returns 容器、编解码器、码率和传输类型组成的管理员可读描述。
+ */
+function describePlaybackSource(source: PlaybackSession['source']): string {
+  const format = [source.container.toUpperCase(), source.codec?.toUpperCase()].filter(Boolean).join('/');
+  const bitrate = source.bitrateKbps ? `，${source.bitrateKbps} kbps` : '';
+  const profile = source.profileId ? `，配置 ${source.profileId}` : '';
+  return `${source.kind}，${format || source.contentType}${bitrate}，${source.seekMethod}${profile}`;
 }

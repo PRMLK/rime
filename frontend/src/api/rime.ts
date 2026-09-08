@@ -135,6 +135,11 @@ export type ScheduledTaskPage = {
   items: ScheduledTask[];
 };
 
+/** 管理员统一控制、所有已认证客户端可读取的系统设置。 */
+export type SystemSettings = {
+  debugEnabled: boolean;
+};
+
 export type PlaybackSession = {
   sessionId: string;
   track: Track;
@@ -381,6 +386,26 @@ export function updateUser(userId: string, input: { displayName?: string; role?:
 
 export function resetUserPassword(userId: string, password: string): Promise<void> {
   return request<void>(`/api/v1/admin/users/${encodeURIComponent(userId)}/password-reset`, { method: 'POST', body: JSON.stringify({ password }) });
+}
+
+/**
+ * 读取服务器当前的全局系统设置。
+ *
+ * @param signal - 页面卸载时用于取消请求的 AbortSignal（中止信号）。
+ * @returns 所有已认证客户端共享的系统设置；未登录或请求失败时抛出 ApiError（接口错误）。
+ */
+export function getSystemSettings(signal?: AbortSignal): Promise<SystemSettings> {
+  return request<SystemSettings>('/api/v1/system/settings', { signal });
+}
+
+/**
+ * 以管理员身份更新服务器的全局系统设置。
+ *
+ * @param input - 要更新的设置字段；debugEnabled（调试模式）可明确写为 false 以关闭。
+ * @returns 服务端持久化后的完整设置；非管理员或更新失败时抛出 ApiError（接口错误）。
+ */
+export function updateSystemSettings(input: { debugEnabled: boolean }): Promise<SystemSettings> {
+  return request<SystemSettings>('/api/v1/admin/system/settings', { method: 'PATCH', body: JSON.stringify(input) });
 }
 
 /**

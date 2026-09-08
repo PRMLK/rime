@@ -22,6 +22,7 @@ import (
 	"rime/backend/internal/playback"
 	"rime/backend/internal/playlists"
 	"rime/backend/internal/search"
+	"rime/backend/internal/settings"
 	"rime/backend/internal/tasks"
 )
 
@@ -39,11 +40,12 @@ type Handler struct {
 	tasks     *tasks.Service
 	identity  *identity.Service
 	playlists *playlists.Service
+	settings  *settings.Service
 	logger    *slog.Logger
 }
 
-func New(searchService *search.Service, browseService *browse.Service, lyricsService *lyrics.Service, playbackService *playback.Service, artworkService *artwork.Service, taskService *tasks.Service, identityService *identity.Service, playlistService *playlists.Service, logger *slog.Logger) http.Handler {
-	handler := &Handler{search: searchService, browse: browseService, lyrics: lyricsService, playback: playbackService, artwork: artworkService, tasks: taskService, identity: identityService, playlists: playlistService, logger: logger}
+func New(searchService *search.Service, browseService *browse.Service, lyricsService *lyrics.Service, playbackService *playback.Service, artworkService *artwork.Service, taskService *tasks.Service, identityService *identity.Service, playlistService *playlists.Service, settingsService *settings.Service, logger *slog.Logger) http.Handler {
+	handler := &Handler{search: searchService, browse: browseService, lyrics: lyricsService, playback: playbackService, artwork: artworkService, tasks: taskService, identity: identityService, playlists: playlistService, settings: settingsService, logger: logger}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/auth/status", handler.authStatus)
 	mux.HandleFunc("POST /api/v1/auth/setup", handler.setupAdmin)
@@ -73,6 +75,8 @@ func New(searchService *search.Service, browseService *browse.Service, lyricsSer
 	mux.HandleFunc("PATCH /api/v1/admin/users/{userID}", handler.updateUser)
 	mux.HandleFunc("POST /api/v1/admin/users/{userID}/password-reset", handler.resetPassword)
 	mux.HandleFunc("GET /api/v1/system/info", handler.systemInfo)
+	mux.HandleFunc("GET /api/v1/system/settings", handler.getSystemSettings)
+	mux.HandleFunc("PATCH /api/v1/admin/system/settings", handler.updateSystemSettings)
 	mux.HandleFunc("GET /api/v1/system/tasks", handler.listTasks)
 	mux.HandleFunc("POST /api/v1/system/tasks/{taskID}/runs", handler.runTask)
 	mux.HandleFunc("GET /api/v1/search", handler.searchTracks)
