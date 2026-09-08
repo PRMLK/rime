@@ -56,15 +56,16 @@ only the native library required by that device. The universal AAB is uploaded t
 Google Play, which handles device-specific delivery automatically.
 
 每个标签发布都会在自动生成的变更日志前展示与 RustDesk 相同的“架构 × 平台”
-下载表。Windows x86-64 同时提供 EXE 与 MSI，macOS ARM64 提供 DMG，未构建的平台
-单元格保留为空：
+下载表。所有附件文件名均含标签版本号，例如标签 `v0.1.2` 会生成
+`rime-windows-x86_64-v0.1.2.exe`。Windows x86-64 同时提供 EXE 与 MSI，macOS ARM64
+提供 DMG，未构建的平台单元格保留为空：
 
 | Architecture | Windows | Linux | Mac | Android | Flatpak | iOS | Web |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| x86-64 (64-bit) | `rime-windows-x86_64.exe`、`rime-windows-x86_64.msi` |  |  | `rime-x86_64-release.apk` |  |  |  |
-| AArch64 (ARM64) |  |  | `rime-macos-aarch64.dmg` | `rime-arm64-release.apk` |  |  |  |
-| ARMv7 (32-bit) |  |  |  | `rime-arm-release.apk` |  |  |  |
-| x86-32 (32-bit) |  |  |  | `rime-x86-release.apk` |  |  |  |
+| x86-64 (64-bit) | `rime-windows-x86_64-v<版本号>.exe`、`rime-windows-x86_64-v<版本号>.msi` |  |  | `rime-x86_64-v<版本号>-release.apk` |  |  |  |
+| AArch64 (ARM64) |  |  | `rime-macos-aarch64-v<版本号>.dmg` | `rime-arm64-v<版本号>-release.apk` |  |  |  |
+| ARMv7 (32-bit) |  |  |  | `rime-arm-v<版本号>-release.apk` |  |  |  |
+| x86-32 (32-bit) |  |  |  | `rime-x86-v<版本号>-release.apk` |  |  |  |
 
 AAB 仍会作为 Google Play 分发附件上传。以后发布 Linux 或其他平台时，只填写
 `.github/workflows/mobile-release.yml` 中对应的空单元格即可。

@@ -116,7 +116,10 @@ jobs:
         shell: bash
         run: |
           # Tauri/Gradle 的默认模块名为 app，保留其内部产物命名；仅在上传前改为
-          # 面向用户的 rime 前缀，使工作流附件与 GitHub Release 的文件名保持一致。
+          # 面向用户的 rime 前缀与版本号。无论由标签还是手动触发构建，均读取已同步的
+          # Tauri 版本；这样工作流附件和 GitHub Release 的文件名可一眼区分版本。
+          app_version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          release_version="v$app_version"
           mkdir -p release-artifacts
           for architecture in arm arm64 x86 x86_64; do
             source_path=$(find src-tauri/gen/android/app/build/outputs -type f -name "app-$architecture-release.apk" -print -quit)
@@ -124,7 +127,7 @@ jobs:
               echo "Expected Android $architecture APK was not produced." >&2
               exit 1
             fi
-            cp "$source_path" "release-artifacts/rime-$architecture-release.apk"
+            cp "$source_path" "release-artifacts/rime-$architecture-$release_version-release.apk"
           done
 
           aab_path=$(find src-tauri/gen/android/app/build/outputs -type f -name 'app-universal-release.aab' -print -quit)
@@ -132,7 +135,7 @@ jobs:
             echo "Expected universal Android AAB was not produced." >&2
             exit 1
           fi
-          cp "$aab_path" release-artifacts/rime-universal-release.aab
+          cp "$aab_path" "release-artifacts/rime-universal-$release_version-release.aab"
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
@@ -199,10 +202,13 @@ jobs:
             throw 'Expected Windows EXE and MSI bundles were not produced.'
           }
 
-          # 使用固定文件名，让发布下载表不依赖 Tauri 默认文件名或版本号格式。
+          # 用应用版本构造面向用户的稳定文件名，避免依赖 Tauri 默认命名；标签构建和
+          # 手动构建都从 tauri.conf.json 读取版本，保证发布附件可明确识别版本。
+          $appVersion = node -p "require('./src-tauri/tauri.conf.json').version"
+          $releaseVersion = "v$appVersion"
           New-Item -ItemType Directory -Force -Path release-artifacts | Out-Null
-          Copy-Item $exe.FullName release-artifacts/rime-windows-x86_64.exe
-          Copy-Item $msi.FullName release-artifacts/rime-windows-x86_64.msi
+          Copy-Item $exe.FullName "release-artifacts/rime-windows-x86_64-$releaseVersion.exe"
+          Copy-Item $msi.FullName "release-artifacts/rime-windows-x86_64-$releaseVersion.msi"
 
       - name: Upload Windows workflow artifacts
         uses: actions/upload-artifact@v4
@@ -271,9 +277,12 @@ jobs:
             exit 1
           fi
 
-          # 使用固定文件名，让发布下载表不依赖 Tauri 默认文件名或版本号格式。
+          # 用应用版本构造面向用户的稳定文件名，避免依赖 Tauri 默认命名；标签构建和
+          # 手动构建都从 tauri.conf.json 读取版本，保证发布附件可明确识别版本。
+          app_version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          release_version="v$app_version"
           mkdir -p release-artifacts
-          cp "$dmg_path" release-artifacts/rime-macos-aarch64.dmg
+          cp "$dmg_path" "release-artifacts/rime-macos-aarch64-$release_version.dmg"
 
       - name: Upload macOS workflow artifact
         uses: actions/upload-artifact@v4
@@ -302,14 +311,15 @@ jobs:
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          # 下载链接使用构建任务规范化后的名称；未构建的平台继续保留空单元格。
+          # 下载链接使用构建任务规范化后的版本化名称；未构建的平台继续保留空单元格。
+          # 发布作业只在标签触发，github.ref_name 即与构建中同步后的 v<版本号> 一致。
           body: |
             | Architecture | Windows | Linux | Mac | Android | Flatpak | iOS | Web |
             | --- | --- | --- | --- | --- | --- | --- | --- |
-            | x86-64 (64-bit) | [EXE](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/rime-windows-x86_64.exe) [MSI](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/rime-windows-x86_64.msi) |  |  | [Download](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/rime-x86_64-release.apk) |  |  |  |
-            | AArch64 (ARM64) |  |  | [DMG](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/rime-macos-aarch64.dmg) | [Download](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/rime-arm64-release.apk) |  |  |  |
-            | ARMv7 (32-bit) |  |  |  | [Download](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/rime-arm-release.apk) |  |  |  |
-            | x86-32 (32-bit) |  |  |  | [Download](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/rime-x86-release.apk) |  |  |  |
+            | x86-64 (64-bit) | [EXE](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/rime-windows-x86_64-${{ github.ref_name }}.exe) [MSI](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/rime-windows-x86_64-${{ github.ref_name }}.msi) |  |  | [Download](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/rime-x86_64-${{ github.ref_name }}-release.apk) |  |  |  |
+            | AArch64 (ARM64) |  |  | [DMG](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/rime-macos-aarch64-${{ github.ref_name }}.dmg) | [Download](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/rime-arm64-${{ github.ref_name }}-release.apk) |  |  |  |
+            | ARMv7 (32-bit) |  |  |  | [Download](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/rime-arm-${{ github.ref_name }}-release.apk) |  |  |  |
+            | x86-32 (32-bit) |  |  |  | [Download](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/rime-x86-${{ github.ref_name }}-release.apk) |  |  |  |
 
           generate_release_notes: true
           fail_on_unmatched_files: true
