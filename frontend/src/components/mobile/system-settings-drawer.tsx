@@ -1,7 +1,7 @@
 import { ArrowLeft, CalendarClock, ChevronDown, ChevronRight, LoaderCircle, MoreHorizontal, Play, Users } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
-  createUser as createUserApi, getScheduledTasks, getSystemSettings, getUsers, resetUserPassword, runScheduledTask, updateSystemSettings,
+  createUser as createUserApi, getAccountSettings, getScheduledTasks, getUsers, resetUserPassword, runScheduledTask, updateAccountSettings,
   updateUser as updateUserApi, type ScheduledTask, type User,
 } from '@/api/rime';
 import { MobileDrawerCard } from '@/components/MobileDrawerCard';
@@ -53,7 +53,7 @@ export function SystemSettingsDrawer({
     const controller = new AbortController();
     setIsLoadingDebugSetting(true);
     setDebugSettingError(undefined);
-    getSystemSettings(controller.signal)
+    getAccountSettings(controller.signal)
       .then((settings) => {
         if (controller.signal.aborted) return;
         setCurrentDebugEnabled(settings.debugEnabled);
@@ -123,7 +123,7 @@ export function SystemSettingsDrawer({
   };
 
   /**
-   * 更新服务端的全局播放调试开关，并在写入成功后立即同步当前播放器。
+   * 更新当前管理员账号的播放调试开关，并在写入成功后立即同步当前播放器。
    *
    * @param enabled - true 表示采集并展示播放器诊断，false 表示停止采集并隐藏诊断框。
    * @returns 无返回值；失败时保留服务端确认过的旧状态并显示接口错误。
@@ -134,7 +134,7 @@ export function SystemSettingsDrawer({
     setIsUpdatingDebugSetting(true);
     setDebugSettingError(undefined);
     try {
-      const settings = await updateSystemSettings({ debugEnabled: enabled });
+      const settings = await updateAccountSettings({ debugEnabled: enabled });
       setCurrentDebugEnabled(settings.debugEnabled);
       onDebugEnabledChange(settings.debugEnabled);
     } catch (updateError: unknown) {
@@ -159,7 +159,7 @@ export function SystemSettingsDrawer({
             <Field orientation="horizontal" className="px-3 py-3" data-disabled={isLoadingDebugSetting || isUpdatingDebugSetting || undefined}>
               <FieldContent>
                 <FieldLabel htmlFor="player-debug-enabled">播放器调试模式</FieldLabel>
-                <FieldDescription>显示播放源协商、传输状态和错误信息。</FieldDescription>
+                <FieldDescription>仅对当前账号显示播放源协商、传输状态和错误信息。</FieldDescription>
               </FieldContent>
               <Switch
                 id="player-debug-enabled"

@@ -157,7 +157,7 @@ func TestSearchCreateSessionAndRangeStream(t *testing.T) {
 	if response.StatusCode != http.StatusConflict {
 		t.Fatalf("second setup status: %s", response.Status)
 	}
-	assertSystemSettings(t, client, server.URL)
+	assertAccountSettings(t, client, server.URL)
 	assertRecentAlbums(t, client, server.URL)
 	assertAlbums(t, client, server.URL)
 	assertScheduledTaskRun(t, client, server.URL)
@@ -422,12 +422,12 @@ func assertBearerAuthentication(t *testing.T, serverURL string) {
 	}
 }
 
-// assertSystemSettings 验证认证用户可读取全局调试状态，且管理员更新后会得到持久化结果。
+// assertAccountSettings 验证管理员只会更新自身账号的调试状态，且该状态可被后续读取。
 // 参数 t 用于报告断言失败，adminClient 携带管理员会话，serverURL 是待测 HTTP 服务地址。
 // 函数不返回值；任一状态码或 JSON 字段不符合预期时终止当前测试。
-func assertSystemSettings(t *testing.T, adminClient *http.Client, serverURL string) {
+func assertAccountSettings(t *testing.T, adminClient *http.Client, serverURL string) {
 	t.Helper()
-	response, err := adminClient.Get(serverURL + "/api/v1/system/settings")
+	response, err := adminClient.Get(serverURL + "/api/v1/me/settings")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -440,10 +440,10 @@ func assertSystemSettings(t *testing.T, adminClient *http.Client, serverURL stri
 	}
 	response.Body.Close()
 	if response.StatusCode != http.StatusOK || initial.DebugEnabled {
-		t.Fatalf("unexpected initial system settings: status=%s settings=%+v", response.Status, initial)
+		t.Fatalf("unexpected initial account settings: status=%s settings=%+v", response.Status, initial)
 	}
 
-	request, err := http.NewRequest(http.MethodPatch, serverURL+"/api/v1/admin/system/settings", bytes.NewBufferString(`{"debugEnabled":true}`))
+	request, err := http.NewRequest(http.MethodPatch, serverURL+"/api/v1/me/settings", bytes.NewBufferString(`{"debugEnabled":true}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -461,10 +461,10 @@ func assertSystemSettings(t *testing.T, adminClient *http.Client, serverURL stri
 	}
 	response.Body.Close()
 	if response.StatusCode != http.StatusOK || !updated.DebugEnabled {
-		t.Fatalf("unexpected updated system settings: status=%s settings=%+v", response.Status, updated)
+		t.Fatalf("unexpected updated account settings: status=%s settings=%+v", response.Status, updated)
 	}
 
-	response, err = adminClient.Get(serverURL + "/api/v1/system/settings")
+	response, err = adminClient.Get(serverURL + "/api/v1/me/settings")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -477,7 +477,29 @@ func assertSystemSettings(t *testing.T, adminClient *http.Client, serverURL stri
 	}
 	response.Body.Close()
 	if response.StatusCode != http.StatusOK || !persisted.DebugEnabled {
-		t.Fatalf("system settings were not persisted: status=%s settings=%+v", response.Status, persisted)
+		t.Fatalf("account settings were not persisted: status=%s settings=%+v", response.Status, persisted)
+	}
+}
+
+// assertAccountDebugEnabled 验证当前会话账号读取到的诊断开关状态。
+// 参数 t 用于报告断言失败，client 携带待验证账号的会话，serverURL 是待测 HTTP 服务地址，expected 是预期状态。
+// 函数不返回值；任何账号读到其他账号的设置时，该断言会失败，从而防止账号间设置串扰。
+func assertAccountDebugEnabled(t *testing.T, client *http.Client, serverURL string, expected bool) {
+	t.Helper()
+	response, err := client.Get(serverURL + "/api/v1/me/settings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var configuration struct {
+		DebugEnabled bool `json:"debugEnabled"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&configuration); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || configuration.DebugEnabled != expected {
+		t.Fatalf("unexpected account settings: status=%s settings=%+v expectedDebugEnabled=%t", response.Status, configuration, expected)
 	}
 }
 
@@ -641,6 +663,25 @@ func assertIdentityAndPlaylists(t *testing.T, adminClient *http.Client, serverUR
 		t.Fatal(err)
 	}
 	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("listener re-login status: %s", response.Status)
+	}
+
+	// 管理员已开启自己的诊断模式；新建的普通账号仍必须保持默认关闭，不能读取到管理员偏好。
+	assertAccountDebugEnabled(t, listenerClient, serverURL, false)
+	listenerSettingsRequest, err := http.NewRequest(http.MethodPatch, serverURL+"/api/v1/me/settings", bytes.NewBufferString(`{"debugEnabled":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	listenerSettingsRequest.Header.Set("Content-Type", "application/json")
+	response, err = listenerClient.Do(listenerSettingsRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("listener account settings update status: %s", response.Status)
+	}
 
 	response, err = listenerClient.Get(serverURL + "/api/v1/system/tasks")
 	if err != nil {

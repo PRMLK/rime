@@ -13,7 +13,7 @@ import {
   Heart, LoaderCircle,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type RefObject } from 'react';
-import { getFavoriteStatus, getSystemSettings, searchTracks, setFavorite, type ArtistRef, type Track, type User } from '@/api/rime';
+import { getAccountSettings, getFavoriteStatus, searchTracks, setFavorite, type ArtistRef, type Track, type User } from '@/api/rime';
 import { AlbumArtwork } from '@/components/AlbumArtwork';
 import { AppScrollArea } from '@/components/AppScrollArea';
 import { ClientSettingsDrawer } from '@/components/ClientSettingsDrawer';
@@ -188,7 +188,7 @@ export function MobilePlayer({
 
   useEffect(() => {
     const controller = new AbortController();
-    getSystemSettings(controller.signal)
+    getAccountSettings(controller.signal)
       .then((settings) => {
         if (!controller.signal.aborted) setDebugEnabled(settings.debugEnabled);
       })
