@@ -60,12 +60,26 @@ export function MobileDrawerCard({
   titleClassName,
   contentProps,
   contentClassName,
+  style,
   ...drawerContentProps
 }: MobileDrawerCardProps) {
+  /*
+   * Base UI 的纵向 Drawer（抽屉）默认最多只占视口高度减去 6rem。全屏卡片若仅设置
+   * --drawer-height，仍会受该 max-height（最大高度）截断，导致安全区下方出现不该
+   * 露出的底层页面。两个变量必须取同一个安全区高度，才能让抽屉从红框后的可用区域
+   * 一直铺到屏幕底部。调用方传入的其余行内样式仍会保留。
+   */
+  const drawerContentStyle = {
+    ...style,
+    '--drawer-height': 'var(--mobile-drawer-height)',
+    '--drawer-content-max-height': 'var(--mobile-drawer-height)',
+  };
+
   return (
     <DrawerContent
       {...drawerContentProps}
-      className={cn('[--drawer-height:var(--mobile-drawer-height)]', className)}
+      style={drawerContentStyle}
+      className={cn(className)}
     >
       <div className="mobile-content-frame">
         <DrawerHeader
