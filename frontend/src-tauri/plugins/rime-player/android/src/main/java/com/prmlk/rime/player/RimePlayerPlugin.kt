@@ -1,8 +1,11 @@
 package com.prmlk.rime.player
 
 import android.app.Activity
+import android.Manifest
 import android.content.ComponentName
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.core.content.ContextCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -141,6 +144,11 @@ internal data class PlaybackStatus(
  */
 @TauriPlugin
 class RimePlayerPlugin(private val activity: Activity) : Plugin(activity) {
+    companion object {
+        /** Android 13 及以上向用户请求媒体通知权限时使用的稳定请求编号。 */
+        private const val MEDIA_NOTIFICATION_PERMISSION_REQUEST_CODE = 4101
+    }
+
     /** @returns 原生服务当前快照；服务尚未启动时返回 idle（空闲）。 */
     @Command
     fun status(invoke: Invoke) {
@@ -156,11 +164,34 @@ class RimePlayerPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun load(invoke: Invoke) {
         val request = invoke.parseArgs(PlaybackLoadRequest::class.java)
+        requestNotificationPermissionForMediaControls()
         runPlayerCommand(invoke) { controller ->
             controller.setMediaItem(request.toMediaItem(), request.startPositionMs.coerceAtLeast(0))
             controller.prepare()
             controller.play()
         }
+    }
+
+    /**
+     * 在用户主动开始播放时请求 Android 媒体通知权限。
+     *
+     * Android 13（API 33）起，POST_NOTIFICATIONS（通知权限）属于运行时权限；仅在
+     * AndroidManifest.xml（Android 清单）中声明不能让媒体卡片出现在小米控制中心。请求
+     * 必须放在用户点击播放的操作内，既符合 Android 的权限时机要求，也避免应用启动时
+     * 的无上下文弹窗。低版本、已授权和不支持运行时权限的设备会直接跳过。
+     *
+     * @returns 无返回值；授权结果由 Android 系统异步处理，MediaSessionService（媒体会话
+     * 服务）创建的媒体通知会在用户允许后由系统正常展示。
+     */
+    private fun requestNotificationPermissionForMediaControls() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+            return
+        }
+        activity.requestPermissions(
+            arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+            MEDIA_NOTIFICATION_PERMISSION_REQUEST_CODE,
+        )
     }
 
     /** 恢复已加载的曲目。 */

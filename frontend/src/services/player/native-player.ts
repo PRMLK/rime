@@ -15,6 +15,18 @@ export type NativePlayerStatus = {
 };
 
 /**
+ * 原生播放器桥接层的探测结果。
+ *
+ * `failure`（失败原因）只保存插件命令或原生服务返回的简短文本，不包含播放 URL（统一
+ * 资源定位符）、会话 ID（标识）或登录凭证。它用于让播放器调试框区分“设备确实不支持”
+ * 与“插件注册、权限或 IPC（进程间通信）调用失败”。
+ */
+export type NativePlayerAvailability = {
+  available: boolean;
+  failure?: string;
+};
+
+/**
  * 将后端会话和曲目数据转换为原生播放器请求。
  *
  * 原生服务只接收短期播放会话 URL，不会取得或持久化用户的 Bearer token（持有者令牌）。
@@ -67,17 +79,18 @@ export type DesktopMediaCommand =
  * 回退路径。这样旧安装包和 Web 版本不会因新原生能力尚未部署而无法播放。
  */
 export class NativePlayerBridge {
-  private availability?: Promise<boolean>;
+  private availability?: Promise<NativePlayerAvailability>;
 
   /**
-   * 返回当前原生运行时必须随播放会话上传的服务端选源标签。
+   * 返回当前原生运行时的平台标签。
    *
-   * 仅 Tauri 打包应用发送平台标签，普通浏览器不携带标签。服务端据此固定返回原生
-   * 播放器稳定支持的 M4A/AAC 播放源，避免 WebView 的格式探测结果影响原生服务选源。
+   * 此方法只识别平台，不表示插件已经可用。调用方必须先通过
+   * `probeAvailability`（探测原生可用性）确认成功，才能把结果发送给服务端选源；否则
+   * Android WebView（网页视图）会拿到仅适合原生服务的播放源，却仍由网页内核解码。
    *
    * @returns Android、iOS、Windows 或 macOS 原生运行时返回对应单一标签；其他环境为空。
    */
-  clientTags(): string[] {
+  platformTags(): string[] {
     if (!isTauri()) return [];
     if (isAndroidRuntime()) return ['android'];
     if (isIOSRuntime()) return ['ios'];
@@ -87,16 +100,32 @@ export class NativePlayerBridge {
   }
 
   /**
+   * 探测当前安装包的原生播放器插件，并保留一次可展示的失败原因。
+   *
+   * 同一播放器实例只探测一次，避免每首歌都在插件已缺失的旧安装包中重复触发 IPC
+   * （进程间通信）错误。调用 `status`（状态）失败不再被吞掉，失败文本会由调用方写入
+   * 管理员调试框，从而可以明确判断是否为插件未注册、能力权限缺失或原生服务异常。
+   *
+   * @returns `available` 为 true 时可调用原生加载命令；false 时 `failure` 可能包含原因。
+   */
+  async probeAvailability(): Promise<NativePlayerAvailability> {
+    if (!isTauri()) return { available: false };
+    this.availability ??= this.status()
+      .then((status) => ({
+        available: status.available,
+        failure: status.available ? undefined : normalizeNativeFailure(status.error ?? '原生播放服务返回不可用状态'),
+      }))
+      .catch((error: unknown) => ({ available: false, failure: normalizeNativeFailure(error) }));
+    return this.availability;
+  }
+
+  /**
    * 判断当前安装包是否包含可用的移动端原生播放器。
    *
    * @returns Android/iOS 原生插件成功响应时为 true，网页、桌面或旧安装包中为 false。
    */
   async isAvailable(): Promise<boolean> {
-    if (!isTauri()) return false;
-    this.availability ??= this.status()
-      .then((status) => status.available)
-      .catch(() => false);
-    return this.availability;
+    return (await this.probeAvailability()).available;
   }
 
   /**
@@ -288,12 +317,34 @@ function isWindowsRuntime(): boolean {
 /**
  * 判断当前原生壳是否运行在 macOS 系统上。
  *
- * iOS 的用户代理可能包含 Macintosh，必须在 clientTags（客户端标签）中优先完成 iOS 判断。
+ * iOS 的用户代理可能包含 Macintosh，必须在 platformTags（平台标签）中优先完成 iOS 判断。
  *
  * @returns 用户代理包含 Macintosh 或 Mac OS X 时返回 true。
  */
 function isMacOSRuntime(): boolean {
   return typeof navigator !== 'undefined' && /\b(Macintosh|Mac OS X)\b/i.test(navigator.userAgent);
+}
+
+/**
+ * 将原生插件异常压缩为可安全展示在客户端调试框的单行文本。
+ *
+ * @param error - Tauri 插件命令抛出的 Error（错误对象）、字符串或未知值。
+ * @returns 最多 320 个字符的单行原因；空值使用统一的未知错误提示。
+ */
+function normalizeNativeFailure(error: unknown): string {
+  let message: string;
+  if (error instanceof Error) {
+    message = error.message || error.name;
+  } else if (typeof error === 'string') {
+    message = error;
+  } else {
+    try {
+      message = JSON.stringify(error) ?? String(error);
+    } catch {
+      message = String(error);
+    }
+  }
+  return message.replace(/\s+/g, ' ').trim().slice(0, 320) || '原生播放器探测失败，但未返回具体原因';
 }
 
 /**

@@ -8,7 +8,12 @@ import {
   type Track,
 } from '@/api/rime';
 import { playbackQualityRequest, readClientSettings } from '@/lib/client-settings';
-import { cacheMedia, releaseCachedMedia, resolveCachedMedia } from '@/services/media-cache';
+import {
+  cacheMedia,
+  isAndroidTauriRuntime,
+  releaseCachedMedia,
+  resolveCachedMedia,
+} from '@/services/media-cache';
 import {
   DesktopMediaControlsBridge,
   NativePlayerBridge,
@@ -156,7 +161,7 @@ export class HtmlAudioPlayer {
   async load(track: Track): Promise<void> {
     const generation = ++this.loadGeneration;
     const wasUsingNativePlayer = this.isUsingNativePlayer;
-    const clientTags = this.nativePlayer.clientTags();
+    const platformTags = this.nativePlayer.platformTags();
     const isTrackChange = this.snapshot.track?.id !== track.id;
     this.stopNativeProgressPolling();
     this.isUsingNativePlayer = false;
@@ -164,9 +169,9 @@ export class HtmlAudioPlayer {
     // 诊断记录按曲目 ID 隔离：切换到另一首时从首条加载记录开始；同一首的重试、
     // 原生回退和传输失败必须继续追加，才能还原一次完整播放过程。
     if (isTrackChange || !this.snapshot.diagnostics) {
-      this.beginDiagnostics(`开始加载“${track.title}”。`, clientTags);
+      this.beginDiagnostics(`开始加载“${track.title}”。`, []);
     } else {
-      this.updateDiagnostics({ clientTags, cacheState: 'not-used' });
+      this.updateDiagnostics({ clientTags: [], cacheState: 'not-used' });
       this.recordDiagnostic('info', `重新加载“${track.title}”。`);
     }
     this.publish({ track, status: 'loading', positionMs: 0, durationMs: track.durationMs, source: undefined, error: undefined });
@@ -179,10 +184,23 @@ export class HtmlAudioPlayer {
       const settings = readClientSettings(this.cacheScope);
       // 会话解析必须先知道原生内核是否可用；否则 FLAC 等 Android 已支持、但 WebView
       // 未声明的格式会在服务端被过早拒绝，原生播放器根本得不到加载机会。
-      const useNativePlayer = await this.nativePlayer.isAvailable();
+      const nativeAvailability = await this.nativePlayer.probeAvailability();
+      const useNativePlayer = nativeAvailability.available;
+      // 服务端标签表示“本次实际由原生服务解码”，而不是设备所属平台。探测失败时必须
+      // 发送空标签，保证服务端选择网页内核可以稳定播放的兼容源。
+      const clientTags = useNativePlayer ? platformTags : [];
       if (generation !== this.loadGeneration) return;
-      this.updateDiagnostics({ engine: useNativePlayer ? 'native' : 'web', nativeAvailable: useNativePlayer });
-      this.recordDiagnostic('info', useNativePlayer ? '检测到可用原生播放器。' : '未检测到可用原生播放器，将使用网页音频内核。');
+      this.updateDiagnostics({
+        engine: useNativePlayer ? 'native' : 'web',
+        nativeAvailable: useNativePlayer,
+        clientTags,
+      });
+      this.recordDiagnostic(
+        'info',
+        useNativePlayer
+          ? '检测到可用原生播放器。'
+          : `未检测到可用原生播放器，将使用网页音频内核。${nativeAvailability.failure ? ` 原因：${nativeAvailability.failure}` : ''}`,
+      );
       const quality = playbackQualityRequest(settings.playbackQuality);
       this.recordDiagnostic('info', `请求播放会话：标签 ${clientTags.join(', ') || '无'}，音质 ${quality.quality}${quality.maxBitrateKbps ? `，上限 ${quality.maxBitrateKbps} kbps` : ''}。`);
       const nextSession = await createPlaybackSession(
@@ -228,13 +246,22 @@ export class HtmlAudioPlayer {
         }
       }
       let cachedSource: string | undefined;
-      try {
-        cachedSource = await resolveCachedMedia(this.cacheScope, nextSession.source);
-        this.updateDiagnostics({ engine: 'web', cacheState: cachedSource ? 'hit' : 'miss' });
-        this.recordDiagnostic('info', cachedSource ? '命中本地媒体缓存，网页音频将读取缓存文件。' : '未命中本地媒体缓存，网页音频将请求服务器串流。');
-      } catch (error) {
-        this.updateDiagnostics({ engine: 'web', cacheState: 'miss' });
-        this.recordDiagnostic('error', `读取本地媒体缓存失败，将请求服务器串流：${messageFrom(error)}`);
+      // 原生服务不可用后的 Android 回退必须绕过 asset（资源）协议缓存。该协议在部分
+      // 系统 WebView 的续读请求中会中断；服务端 HTTP 范围串流则由 Android WebView
+      // 与播放器完整支持。桌面和 iOS 仍沿用既有缓存路径。
+      const bypassLocalMediaCache = isAndroidTauriRuntime();
+      if (bypassLocalMediaCache) {
+        this.updateDiagnostics({ engine: 'web', cacheState: 'not-used' });
+        this.recordDiagnostic('info', 'Android 网页回退已绕过本地媒体缓存，将直接请求支持字节范围的服务器串流。');
+      } else {
+        try {
+          cachedSource = await resolveCachedMedia(this.cacheScope, nextSession.source);
+          this.updateDiagnostics({ engine: 'web', cacheState: cachedSource ? 'hit' : 'miss' });
+          this.recordDiagnostic('info', cachedSource ? '命中本地媒体缓存，网页音频将读取缓存文件。' : '未命中本地媒体缓存，网页音频将请求服务器串流。');
+        } catch (error) {
+          this.updateDiagnostics({ engine: 'web', cacheState: 'miss' });
+          this.recordDiagnostic('error', `读取本地媒体缓存失败，将请求服务器串流：${messageFrom(error)}`);
+        }
       }
       if (generation !== this.loadGeneration) {
         if (cachedSource) void releaseCachedMedia(this.cacheScope, nextSession.source);
@@ -253,7 +280,7 @@ export class HtmlAudioPlayer {
         void deletePlaybackSession(previousSession.sessionId);
       }
       await this.audio.play();
-      if (!cachedSource) {
+      if (!cachedSource && !bypassLocalMediaCache) {
         void cacheMedia(this.cacheScope, nextSession.source, settings.maxCacheBytes)
           .then(() => this.recordDiagnostic('info', '播放源已加入本地媒体缓存任务。'))
           .catch((error: unknown) => this.recordDiagnostic('error', `写入本地媒体缓存失败：${messageFrom(error)}`));
@@ -405,10 +432,10 @@ export class HtmlAudioPlayer {
    * 为一次新的播放操作建立空的调试记录。
    *
    * @param message - 作为首条记录展示的当前操作说明。
-   * @param clientTags - 本次会话提交给服务端的客户端标签；未传入时从当前原生桥接读取。
+   * @param clientTags - 本次会话提交给服务端的客户端标签；探测尚未完成时传入空数组。
    * @returns 无返回值；调试模式关闭时不会创建或保留记录。
    */
-  private beginDiagnostics(message: string, clientTags = this.nativePlayer.clientTags()): void {
+  private beginDiagnostics(message: string, clientTags: string[] = []): void {
     if (!this.debugEnabled) return;
     this.publish({
       diagnostics: {
@@ -467,7 +494,7 @@ export class HtmlAudioPlayer {
   private emptyDiagnostics(): PlayerDiagnostics {
     return {
       engine: this.isUsingNativePlayer ? 'native' : 'web',
-      clientTags: this.nativePlayer.clientTags(),
+      clientTags: [],
       cacheState: 'not-used',
       events: [],
     };
@@ -833,7 +860,9 @@ export class HtmlAudioPlayer {
   };
 
   private handleTimeUpdate = (): void => {
-    if (this.isUsingNativePlayer) return;
+    // Android WebView 可能在 error（错误）事件后补发一次延迟的 timeupdate（进度更新）。
+    // 该事件不代表播放恢复，继续上报会让服务端和调试框出现“失败后仍有进度”的假象。
+    if (this.isUsingNativePlayer || this.snapshot.status === 'error') return;
     const now = Date.now();
     this.publish({ positionMs: this.audio.currentTime * 1000 });
     if (now - this.lastProgressEventAt >= 15_000) {
@@ -851,9 +880,24 @@ export class HtmlAudioPlayer {
 
   private handleError = (): void => {
     if (this.isUsingNativePlayer) return;
-    const errorCode = this.audio.error?.code;
-    this.publishError(`网页音频加载失败${errorCode ? `（MediaError ${errorCode}）` : ''}`, '网页音频播放失败');
+    this.publishError(describeHtmlAudioError(this.audio), '网页音频播放失败');
   };
+}
+
+/**
+ * 构建不含播放 URL（统一资源定位符）的网页音频错误说明。
+ *
+ * @param audio - 触发 error（错误）事件的 HTMLAudioElement（网页音频元素）。
+ * @returns 同时包含 MediaError 代码、浏览器原因、网络状态和就绪状态的诊断文本。
+ */
+function describeHtmlAudioError(audio: HTMLAudioElement): string {
+  const mediaError = audio.error;
+  const code = mediaError?.code;
+  const message = mediaError?.message?.trim();
+  const networkState = ['EMPTY', 'IDLE', 'LOADING', 'NO_SOURCE'][audio.networkState] ?? `UNKNOWN(${audio.networkState})`;
+  const readyState = ['HAVE_NOTHING', 'HAVE_METADATA', 'HAVE_CURRENT_DATA', 'HAVE_FUTURE_DATA', 'HAVE_ENOUGH_DATA'][audio.readyState]
+    ?? `UNKNOWN(${audio.readyState})`;
+  return `网页音频加载失败${code ? `（MediaError ${code}）` : ''}${message ? `：${message}` : ''}；网络状态 ${networkState}，就绪状态 ${readyState}`;
 }
 
 /**

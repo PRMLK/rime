@@ -12,6 +12,23 @@ export function hasNativeMediaCache(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
+/**
+ * 判断当前是否是 Android Tauri WebView（网页视图）运行时。
+ *
+ * Android 的原生播放器不可用时，HTMLAudioElement（网页音频元素）会回退到网页内核。
+ * 该内核读取 `asset` 协议的本地缓存文件时，部分系统 WebView 会在后续 Range（字节范围）
+ * 请求中断流并报告 MediaError 2（网络错误）。这不是缓存文件完整性问题，因此回退路径
+ * 必须直接使用服务端的 HTTP 范围串流；缓存仍可保留给原生播放器及其他平台使用。
+ *
+ * @returns 运行在 Android Tauri 容器时为 true；浏览器、iOS 和桌面端为 false。
+ */
+export function isAndroidTauriRuntime(): boolean {
+  return typeof window !== 'undefined'
+    && typeof navigator !== 'undefined'
+    && '__TAURI_INTERNALS__' in window
+    && /\bAndroid\b/i.test(navigator.userAgent);
+}
+
 export async function resolveCachedMedia(scope: string, source: PlaybackSession['source']): Promise<string | undefined> {
   if (!hasNativeMediaCache() || !source.cacheable) return undefined;
   const path = await invoke<string | null>('resolve_cached_media', {
