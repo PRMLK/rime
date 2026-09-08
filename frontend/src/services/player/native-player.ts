@@ -72,14 +72,18 @@ export class NativePlayerBridge {
   /**
    * 返回当前原生运行时必须随播放会话上传的服务端选源标签。
    *
-   * 仅 Tauri Android 应用发送 `android`，不会把普通 Android 浏览器误标为原生客户端。
-   * 服务端据此固定返回 Media3（Android 媒体框架）稳定支持的 M4A/AAC 播放源，避免
-   * WebView 的格式探测结果影响原生播放服务的选源。
+   * 仅 Tauri 打包应用发送平台标签，普通浏览器不携带标签。服务端据此固定返回原生
+   * 播放器稳定支持的 M4A/AAC 播放源，避免 WebView 的格式探测结果影响原生服务选源。
    *
-   * @returns Android 原生运行时时返回仅含 `android` 的数组；其他平台返回空数组。
+   * @returns Android、iOS、Windows 或 macOS 原生运行时返回对应单一标签；其他环境为空。
    */
   clientTags(): string[] {
-    return isTauri() && isAndroidRuntime() ? ['android'] : [];
+    if (!isTauri()) return [];
+    if (isAndroidRuntime()) return ['android'];
+    if (isIOSRuntime()) return ['ios'];
+    if (isWindowsRuntime()) return ['windows'];
+    if (isMacOSRuntime()) return ['macos'];
+    return [];
   }
 
   /**
@@ -261,6 +265,35 @@ function supportsAndroidNativeFlac(): boolean {
  */
 function isAndroidRuntime(): boolean {
   return typeof navigator !== 'undefined' && /\bAndroid\b/i.test(navigator.userAgent);
+}
+
+/**
+ * 判断当前 WebView 是否运行在 iOS 系统上。
+ *
+ * @returns 用户代理明确属于 iPhone、iPad 或 iPod 时返回 true。
+ */
+function isIOSRuntime(): boolean {
+  return typeof navigator !== 'undefined' && /\b(iPhone|iPad|iPod)\b/i.test(navigator.userAgent);
+}
+
+/**
+ * 判断当前原生壳是否运行在 Windows 系统上。
+ *
+ * @returns 用户代理包含 Windows NT 时返回 true。
+ */
+function isWindowsRuntime(): boolean {
+  return typeof navigator !== 'undefined' && /\bWindows NT\b/i.test(navigator.userAgent);
+}
+
+/**
+ * 判断当前原生壳是否运行在 macOS 系统上。
+ *
+ * iOS 的用户代理可能包含 Macintosh，必须在 clientTags（客户端标签）中优先完成 iOS 判断。
+ *
+ * @returns 用户代理包含 Macintosh 或 Mac OS X 时返回 true。
+ */
+function isMacOSRuntime(): boolean {
+  return typeof navigator !== 'undefined' && /\b(Macintosh|Mac OS X)\b/i.test(navigator.userAgent);
 }
 
 /**

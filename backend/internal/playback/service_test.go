@@ -116,43 +116,47 @@ func TestCreateUsesDirectSourceWithinBitrateLimit(t *testing.T) {
 	}
 }
 
-// TestCreateForcesAACSourceForAndroidClient 验证 Android 标签会覆盖客户端格式列表，
-// 固定请求 M4A/AAC 转码。这样即使 WebView 上报 FLAC，后台 Media3（Android 媒体框架）
-// 也只会接收到稳定的 AAC 媒体流。
-func TestCreateForcesAACSourceForAndroidClient(t *testing.T) {
-	repository := &playbackRepositoryStub{
-		track: catalog.Track{ID: "trk_1", Title: "Test"},
-		media: []catalog.MediaFile{{
-			ID: "med_1", TrackID: "trk_1", Container: "flac", Codec: "flac",
-			ContentType: "audio/flac", BitrateKbps: 900, ContentVersion: "source-v1",
-		}},
-	}
-	transcoder := &transcoderStub{source: ResolvedMedia{
-		Kind: "transcode", ContentKey: "cached-aac", ProfileID: "aac-m4a-192-v1",
-		Media: catalog.MediaFile{
-			ID: "med_1", TrackID: "trk_1", Container: "m4a", Codec: "aac",
-			ContentType: "audio/mp4", BitrateKbps: 192, Size: 1234, ContentVersion: "cached-aac",
-		},
-	}}
-	service := New(repository, transcoder)
+// TestCreateForcesAACSourceForTaggedNativeClients 验证四个原生平台标签都会覆盖客户端
+// 格式列表并固定请求 M4A/AAC。这样即使 WebView 上报 FLAC，原生媒体层也只会收到
+// 稳定的 AAC 媒体流。
+func TestCreateForcesAACSourceForTaggedNativeClients(t *testing.T) {
+	for _, tag := range []string{androidClientTag, iosClientTag, windowsClientTag, macOSClientTag} {
+		t.Run(tag, func(t *testing.T) {
+			repository := &playbackRepositoryStub{
+				track: catalog.Track{ID: "trk_1", Title: "Test"},
+				media: []catalog.MediaFile{{
+					ID: "med_1", TrackID: "trk_1", Container: "flac", Codec: "flac",
+					ContentType: "audio/flac", BitrateKbps: 900, ContentVersion: "source-v1",
+				}},
+			}
+			transcoder := &transcoderStub{source: ResolvedMedia{
+				Kind: "transcode", ContentKey: "cached-aac", ProfileID: "aac-m4a-192-v1",
+				Media: catalog.MediaFile{
+					ID: "med_1", TrackID: "trk_1", Container: "m4a", Codec: "aac",
+					ContentType: "audio/mp4", BitrateKbps: 192, Size: 1234, ContentVersion: "cached-aac",
+				},
+			}}
+			service := New(repository, transcoder)
 
-	session, err := service.Create(context.Background(), "usr_1", CreateRequest{
-		TrackID: "trk_1", PlayerID: "player_1",
-		Capabilities: Capabilities{
-			Tags: []string{"android"},
-			// 故意只声明 FLAC，证明 android 标签不依赖 WebView 的格式清单。
-			Formats: []Format{{Container: "flac", Codec: "flac"}},
-			Quality: "limited", MaxBitrateKbps: 192, SupportsByteRange: true,
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !transcoder.called || transcoder.target != (Format{Container: "m4a", Codec: "aac"}) || transcoder.bitrate != 192 {
-		t.Fatalf("unexpected Android source selection: called=%v target=%+v bitrate=%d", transcoder.called, transcoder.target, transcoder.bitrate)
-	}
-	if session.Source.Kind != "transcode" || session.Source.Container != "m4a" || session.Source.Codec != "aac" {
-		t.Fatalf("unexpected Android source: %+v", session.Source)
+			session, err := service.Create(context.Background(), "usr_1", CreateRequest{
+				TrackID: "trk_1", PlayerID: "player_1",
+				Capabilities: Capabilities{
+					Tags: []string{tag},
+					// 故意只声明 FLAC，证明原生标签不依赖 WebView 的格式清单。
+					Formats: []Format{{Container: "flac", Codec: "flac"}},
+					Quality: "limited", MaxBitrateKbps: 192, SupportsByteRange: true,
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !transcoder.called || transcoder.target != (Format{Container: "m4a", Codec: "aac"}) || transcoder.bitrate != 192 {
+				t.Fatalf("unexpected %s source selection: called=%v target=%+v bitrate=%d", tag, transcoder.called, transcoder.target, transcoder.bitrate)
+			}
+			if session.Source.Kind != "transcode" || session.Source.Container != "m4a" || session.Source.Codec != "aac" {
+				t.Fatalf("unexpected %s source: %+v", tag, session.Source)
+			}
+		})
 	}
 }
 

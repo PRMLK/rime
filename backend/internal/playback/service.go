@@ -32,7 +32,12 @@ type Capabilities struct {
 	Tags              []string `json:"tags,omitempty"`
 }
 
-const androidClientTag = "android"
+const (
+	androidClientTag = "android"
+	iosClientTag     = "ios"
+	windowsClientTag = "windows"
+	macOSClientTag   = "macos"
+)
 
 type CreateRequest struct {
 	TrackID       string       `json:"trackId"`
@@ -151,10 +156,10 @@ func (s *Service) Create(ctx context.Context, userID string, request CreateReque
 		return Session{}, err
 	}
 	resolved := ResolvedMedia{}
-	if hasClientTag(request.Capabilities.Tags, androidClientTag) {
-		// Android 原生播放器不使用 WebView 的实际解码结果选源。固定为 M4A/AAC
-		// 能避免 WebView 宣称支持、但 Media3 在后台或熄屏时不稳定的容器进入服务。
-		resolved, err = s.resolveAndroidSource(ctx, media, request.Capabilities)
+	if requiresAACSource(request.Capabilities.Tags) {
+		// 原生播放器不使用 WebView 的实际解码结果选源。固定为 M4A/AAC 能避免
+		// WebView 宣称支持、但后台原生播放服务不稳定的容器进入服务。
+		resolved, err = s.resolveNativeAACSource(ctx, media, request.Capabilities)
 	} else {
 		resolved, err = s.resolveDefaultSource(ctx, media, request.Capabilities)
 	}
@@ -213,23 +218,23 @@ func (s *Service) resolveDefaultSource(ctx context.Context, media []catalog.Medi
 }
 
 /**
- * resolveAndroidSource 为携带 android 标签的客户端固定解析 M4A/AAC 播放源。
+ * resolveNativeAACSource 为携带原生平台标签的客户端固定解析 M4A/AAC 播放源。
  *
  * 优先复用符合用户码率偏好的已有 AAC 文件，避免无谓转码；没有合适文件时，必须由
- * FFmpeg 转码为 AAC。这里故意不回退到 FLAC、OPUS 等原文件，确保 Android 标签确实
+ * FFmpeg 转码为 AAC。这里故意不回退到 FLAC、OPUS 等原文件，确保原生平台标签确实
  * 对应稳定且可预测的媒体容器，而不是只作为统计字段。
  *
  * @param ctx 用于取消正在执行的转码。
  * @param media 曲目当前可用的原始媒体文件，按大小降序排列。
- * @param capabilities Android 客户端请求的音质与最大码率。
+ * @param capabilities 原生客户端请求的音质与最大码率。
  * @returns M4A/AAC 直连文件或转码缓存文件；无法产生 AAC 时返回播放格式错误。
  */
-func (s *Service) resolveAndroidSource(ctx context.Context, media []catalog.MediaFile, capabilities Capabilities) (ResolvedMedia, error) {
-	androidFormat := Format{Container: "m4a", Codec: "aac"}
-	if selected, ok := chooseMedia(media, []Format{androidFormat}, capabilities.Quality, capabilities.MaxBitrateKbps); ok {
+func (s *Service) resolveNativeAACSource(ctx context.Context, media []catalog.MediaFile, capabilities Capabilities) (ResolvedMedia, error) {
+	aacFormat := Format{Container: "m4a", Codec: "aac"}
+	if selected, ok := chooseMedia(media, []Format{aacFormat}, capabilities.Quality, capabilities.MaxBitrateKbps); ok {
 		return directSource(selected), nil
 	}
-	return s.resolveTranscodeFormat(ctx, media, androidFormat, capabilities)
+	return s.resolveTranscodeFormat(ctx, media, aacFormat, capabilities)
 }
 
 func (s *Service) resolveTranscode(ctx context.Context, media []catalog.MediaFile, capabilities Capabilities) (ResolvedMedia, error) {
@@ -348,6 +353,22 @@ func hasClientTag(tags []string, expected string) bool {
 		}
 	}
 	return false
+}
+
+/**
+ * requiresAACSource 判断客户端标签是否对应需要稳定 AAC 容器的原生播放器。
+ *
+ * Android、iOS、Windows 和 macOS 的打包客户端都由原生媒体层或系统 WebView 输出音频，
+ * 因而使用同一 M4A/AAC 策略。网页浏览器不匹配本函数，继续按实际格式能力协商。
+ *
+ * @param tags 客户端提交的标签集合。
+ * @returns 任一原生客户端标签存在时返回 true。
+ */
+func requiresAACSource(tags []string) bool {
+	return hasClientTag(tags, androidClientTag) ||
+		hasClientTag(tags, iosClientTag) ||
+		hasClientTag(tags, windowsClientTag) ||
+		hasClientTag(tags, macOSClientTag)
 }
 
 func chooseMedia(media []catalog.MediaFile, formats []Format, quality string, maxBitrateKbps int) (catalog.MediaFile, bool) {
