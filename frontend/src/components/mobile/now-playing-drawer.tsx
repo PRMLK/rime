@@ -384,7 +384,7 @@ function PlayerButton({ label, disabled, onClick, children, className }: { label
  * 渲染管理员开启调试模式后可见的播放协商、传输和错误记录。
  *
  * @param props - 当前播放器快照；诊断状态不存在时由调用方不渲染本组件。
- * @returns 位于播放控制区下方的有界滚动诊断框，不展示含会话令牌的播放地址。
+ * @returns 位于播放控制区下方、随日志内容向下展开的诊断框，不展示含会话令牌的播放地址。
  */
 function PlayerDiagnosticsPanel({ playback }: { playback: PlayerSnapshot }) {
   const diagnostics = playback.diagnostics;
@@ -409,16 +409,15 @@ function PlayerDiagnosticsPanel({ playback }: { playback: PlayerSnapshot }) {
         <DebugDetail label="状态" value={playerStatusLabel(playback.status)} />
       </dl>
       <Separator />
-      <AppScrollArea className="h-32" aria-label="播放调试事件">
-        <div className="flex flex-col gap-1.5 px-3 py-2" role="log" aria-live="polite">
-          {diagnostics.events.map((event, index) => (
-            <p key={`${event.occurredAt}-${index}`} className={cn('break-words text-xs leading-5', event.level === 'error' ? 'text-destructive' : 'text-muted-foreground')}>
-              <time className="mr-1 tabular-nums text-foreground/70" dateTime={event.occurredAt}>{formatDiagnosticTime(event.occurredAt)}</time>
-              {event.message}
-            </p>
-          ))}
-        </div>
-      </AppScrollArea>
+      {/* 日志高度由内容决定；外层正在播放抽屉负责唯一的页面滚动，避免嵌套滚动手势。 */}
+      <div className="flex flex-col gap-1.5 px-3 py-2" role="log" aria-live="polite" aria-label="播放调试事件">
+        {diagnostics.events.map((event, index) => (
+          <p key={`${event.occurredAt}-${index}`} className={cn('break-words text-xs leading-5', event.level === 'error' ? 'text-destructive' : 'text-muted-foreground')}>
+            <time className="mr-1 tabular-nums text-foreground/70" dateTime={event.occurredAt}>{formatDiagnosticTime(event.occurredAt)}</time>
+            {event.message}
+          </p>
+        ))}
+      </div>
     </section>
   );
 }

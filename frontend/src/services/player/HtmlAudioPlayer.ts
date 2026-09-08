@@ -157,10 +157,18 @@ export class HtmlAudioPlayer {
     const generation = ++this.loadGeneration;
     const wasUsingNativePlayer = this.isUsingNativePlayer;
     const clientTags = this.nativePlayer.clientTags();
+    const isTrackChange = this.snapshot.track?.id !== track.id;
     this.stopNativeProgressPolling();
     this.isUsingNativePlayer = false;
     this.nativeEndedNotified = false;
-    this.beginDiagnostics(`开始加载“${track.title}”。`, clientTags);
+    // 诊断记录按曲目 ID 隔离：切换到另一首时从首条加载记录开始；同一首的重试、
+    // 原生回退和传输失败必须继续追加，才能还原一次完整播放过程。
+    if (isTrackChange || !this.snapshot.diagnostics) {
+      this.beginDiagnostics(`开始加载“${track.title}”。`, clientTags);
+    } else {
+      this.updateDiagnostics({ clientTags, cacheState: 'not-used' });
+      this.recordDiagnostic('info', `重新加载“${track.title}”。`);
+    }
     this.publish({ track, status: 'loading', positionMs: 0, durationMs: track.durationMs, source: undefined, error: undefined });
     try {
       if (wasUsingNativePlayer) {
@@ -429,12 +437,12 @@ export class HtmlAudioPlayer {
    *
    * @param level - info 表示正常路径，error 表示会话、传输或原生调用失败。
    * @param message - 可直接展示给管理员的操作结果或原始错误文本。
-   * @returns 无返回值；仅保留最近 24 条，防止长时间播放造成无界内存增长。
+   * @returns 无返回值；当前曲目期间持续累积，切换曲目时由 beginDiagnostics（开始诊断）统一清空。
    */
   private recordDiagnostic(level: PlayerDiagnosticLevel, message: string): void {
     if (!this.debugEnabled) return;
     const current = this.snapshot.diagnostics ?? this.emptyDiagnostics();
-    const events = [...current.events, this.diagnosticEvent(level, message)].slice(-24);
+    const events = [...current.events, this.diagnosticEvent(level, message)];
     this.publish({ diagnostics: { ...current, engine: this.isUsingNativePlayer ? 'native' : current.engine, events } });
   }
 
