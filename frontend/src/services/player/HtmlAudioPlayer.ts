@@ -134,6 +134,7 @@ export class HtmlAudioPlayer {
         this.playerId,
         playbackQualityRequest(settings.playbackQuality),
         useNativePlayer ? this.nativePlayer.directPlaybackFormats() : [],
+        this.nativePlayer.clientTags(),
       );
       if (generation !== this.loadGeneration) {
         void deletePlaybackSession(nextSession.sessionId);

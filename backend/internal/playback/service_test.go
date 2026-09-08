@@ -116,6 +116,46 @@ func TestCreateUsesDirectSourceWithinBitrateLimit(t *testing.T) {
 	}
 }
 
+// TestCreateForcesAACSourceForAndroidClient 验证 Android 标签会覆盖客户端格式列表，
+// 固定请求 M4A/AAC 转码。这样即使 WebView 上报 FLAC，后台 Media3（Android 媒体框架）
+// 也只会接收到稳定的 AAC 媒体流。
+func TestCreateForcesAACSourceForAndroidClient(t *testing.T) {
+	repository := &playbackRepositoryStub{
+		track: catalog.Track{ID: "trk_1", Title: "Test"},
+		media: []catalog.MediaFile{{
+			ID: "med_1", TrackID: "trk_1", Container: "flac", Codec: "flac",
+			ContentType: "audio/flac", BitrateKbps: 900, ContentVersion: "source-v1",
+		}},
+	}
+	transcoder := &transcoderStub{source: ResolvedMedia{
+		Kind: "transcode", ContentKey: "cached-aac", ProfileID: "aac-m4a-192-v1",
+		Media: catalog.MediaFile{
+			ID: "med_1", TrackID: "trk_1", Container: "m4a", Codec: "aac",
+			ContentType: "audio/mp4", BitrateKbps: 192, Size: 1234, ContentVersion: "cached-aac",
+		},
+	}}
+	service := New(repository, transcoder)
+
+	session, err := service.Create(context.Background(), "usr_1", CreateRequest{
+		TrackID: "trk_1", PlayerID: "player_1",
+		Capabilities: Capabilities{
+			Tags: []string{"android"},
+			// 故意只声明 FLAC，证明 android 标签不依赖 WebView 的格式清单。
+			Formats: []Format{{Container: "flac", Codec: "flac"}},
+			Quality: "limited", MaxBitrateKbps: 192, SupportsByteRange: true,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !transcoder.called || transcoder.target != (Format{Container: "m4a", Codec: "aac"}) || transcoder.bitrate != 192 {
+		t.Fatalf("unexpected Android source selection: called=%v target=%+v bitrate=%d", transcoder.called, transcoder.target, transcoder.bitrate)
+	}
+	if session.Source.Kind != "transcode" || session.Source.Container != "m4a" || session.Source.Codec != "aac" {
+		t.Fatalf("unexpected Android source: %+v", session.Source)
+	}
+}
+
 // TestCreateFallsBackToDirectSourceWhenTranscodingIsUnavailable 验证自动音质的码率
 // 限制只是一项偏好。当原文件的格式已获播放器支持、却无法生成更低码率版本时，服务
 // 必须退回原始文件，不能让可正常播放的歌曲变成不可用。

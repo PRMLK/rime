@@ -529,6 +529,7 @@ function supportedAudioFormats(additionalFormats: PlaybackFormat[] = []): Playba
  * @param playerId - 当前播放器实例的稳定 ID。
  * @param quality - 用户设置导出的音质偏好与可选码率上限。
  * @param additionalFormats - 原生播放器额外支持的格式，例如 Android 的 FLAC。
+ * @param clientTags - 原生客户端声明的选源标签，例如 Android 的 `android`。
  * @returns 包含已解析、且已转换为当前服务器绝对地址的播放会话。
  */
 export async function createPlaybackSession(
@@ -536,17 +537,18 @@ export async function createPlaybackSession(
   playerId: string,
   quality: PlaybackQualityRequest,
   additionalFormats: PlaybackFormat[] = [],
+  clientTags: string[] = [],
 ): Promise<PlaybackSession> {
   const formats = supportedAudioFormats(additionalFormats);
   let session: PlaybackSession;
   try {
-    session = await requestPlaybackSession(trackId, playerId, formats, quality);
+    session = await requestPlaybackSession(trackId, playerId, formats, quality, clientTags);
   } catch (error) {
     if (!(error instanceof ApiError) || error.code !== 'playback_format_unsupported' || quality.quality === 'original') {
       throw error;
     }
     // 低码率不可用时，原始音质是唯一不依赖服务端 FFmpeg（音频转码器）的安全回退。
-    session = await requestPlaybackSession(trackId, playerId, formats, { quality: 'original' });
+    session = await requestPlaybackSession(trackId, playerId, formats, { quality: 'original' }, clientTags);
   }
   return {
     ...session,
@@ -561,6 +563,7 @@ export async function createPlaybackSession(
  * @param playerId - 当前播放器实例的稳定 ID。
  * @param formats - 播放内核确认支持的格式清单。
  * @param quality - 本次请求采用的音质偏好。
+ * @param clientTags - 客户端运行时标签；服务端仅将其用于媒体兼容性选源。
  * @returns 服务端返回的原始播放会话；播放地址尚未转换为当前服务器绝对地址。
  */
 function requestPlaybackSession(
@@ -568,6 +571,7 @@ function requestPlaybackSession(
   playerId: string,
   formats: PlaybackFormat[],
   quality: PlaybackQualityRequest,
+  clientTags: string[],
 ): Promise<PlaybackSession> {
   return request<PlaybackSession>('/api/v1/playback/sessions', {
     method: 'POST',
@@ -577,6 +581,7 @@ function requestPlaybackSession(
       capabilities: {
         supportsByteRange: true,
         formats,
+        tags: clientTags,
         ...quality,
       },
     }),

@@ -70,6 +70,19 @@ export class NativePlayerBridge {
   private availability?: Promise<boolean>;
 
   /**
+   * 返回当前原生运行时必须随播放会话上传的服务端选源标签。
+   *
+   * 仅 Tauri Android 应用发送 `android`，不会把普通 Android 浏览器误标为原生客户端。
+   * 服务端据此固定返回 Media3（Android 媒体框架）稳定支持的 M4A/AAC 播放源，避免
+   * WebView 的格式探测结果影响原生播放服务的选源。
+   *
+   * @returns Android 原生运行时时返回仅含 `android` 的数组；其他平台返回空数组。
+   */
+  clientTags(): string[] {
+    return isTauri() && isAndroidRuntime() ? ['android'] : [];
+  }
+
+  /**
    * 判断当前安装包是否包含可用的移动端原生播放器。
    *
    * @returns Android/iOS 原生插件成功响应时为 true，网页、桌面或旧安装包中为 false。
@@ -233,12 +246,21 @@ export function nativeLoadRequest(
  * @returns Android 8.1（API 27）及以上时为 true；无法识别或非 Android 环境时为 false。
  */
 function supportsAndroidNativeFlac(): boolean {
-  if (typeof navigator === 'undefined') return false;
+  if (!isAndroidRuntime()) return false;
   const version = /\bAndroid\s+(\d+)(?:\.(\d+))?/i.exec(navigator.userAgent);
   if (!version) return false;
   const major = Number(version[1]);
   const minor = Number(version[2] ?? '0');
   return major > 8 || (major === 8 && minor >= 1);
+}
+
+/**
+ * 判断当前 WebView 是否运行在 Android 系统上。
+ *
+ * @returns 用户代理明确包含 Android 时返回 true；服务端渲染等无浏览器环境返回 false。
+ */
+function isAndroidRuntime(): boolean {
+  return typeof navigator !== 'undefined' && /\bAndroid\b/i.test(navigator.userAgent);
 }
 
 /**

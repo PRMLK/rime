@@ -29,7 +29,10 @@ type Capabilities struct {
 	SupportsByteRange bool     `json:"supportsByteRange"`
 	Quality           string   `json:"quality,omitempty"`
 	MaxBitrateKbps    int      `json:"maxBitrateKbps,omitempty"`
+	Tags              []string `json:"tags,omitempty"`
 }
+
+const androidClientTag = "android"
 
 type CreateRequest struct {
 	TrackID       string       `json:"trackId"`
@@ -147,28 +150,16 @@ func (s *Service) Create(ctx context.Context, userID string, request CreateReque
 	if err != nil {
 		return Session{}, err
 	}
-	selected, ok := chooseMedia(media, request.Capabilities.Formats, request.Capabilities.Quality, request.Capabilities.MaxBitrateKbps)
 	resolved := ResolvedMedia{}
-	if ok {
-		resolved = directSource(selected)
+	if hasClientTag(request.Capabilities.Tags, androidClientTag) {
+		// Android 原生播放器不使用 WebView 的实际解码结果选源。固定为 M4A/AAC
+		// 能避免 WebView 宣称支持、但 Media3 在后台或熄屏时不稳定的容器进入服务。
+		resolved, err = s.resolveAndroidSource(ctx, media, request.Capabilities)
 	} else {
-		resolved, err = s.resolveTranscode(ctx, media, request.Capabilities)
-		if err != nil {
-			// 请求已取消时不能创建新的会话。除此之外，转码器缺失、编码器不可用、
-			// 缓存目录不可写等失败都可以尝试同一份安全直连回退。
-			if ctx.Err() != nil {
-				return Session{}, err
-			}
-
-			// 自动/限码率模式优先请求较低码率媒体，但该偏好不能让播放器已明确
-			// 支持的原始文件变为不可播放。转码无法完成时忽略码率限制重新匹配；
-			// 容器和编解码器仍须完全匹配，不能把未知格式交给客户端冒险解码。
-			fallback, fallbackOK := chooseMedia(media, request.Capabilities.Formats, "original", 0)
-			if !fallbackOK {
-				return Session{}, err
-			}
-			resolved = directSource(fallback)
-		}
+		resolved, err = s.resolveDefaultSource(ctx, media, request.Capabilities)
+	}
+	if err != nil {
+		return Session{}, err
 	}
 
 	sessionID, err := id.New("pbs")
@@ -188,12 +179,81 @@ func (s *Service) Create(ctx context.Context, userID string, request CreateReque
 	return Session{SessionID: sessionID, Track: track, Source: responseSource(sessionID, resolved), ExpiresAt: expiresAt}, nil
 }
 
+/**
+ * resolveDefaultSource 保持未标记客户端既有的格式协商和直连回退策略。
+ *
+ * @param ctx 用于取消正在执行的转码。
+ * @param media 曲目当前可用的原始媒体文件，按大小降序排列。
+ * @param capabilities 客户端声明的格式、码率与音质偏好。
+ * @returns 可供该客户端播放的直连或转码来源。
+ */
+func (s *Service) resolveDefaultSource(ctx context.Context, media []catalog.MediaFile, capabilities Capabilities) (ResolvedMedia, error) {
+	selected, ok := chooseMedia(media, capabilities.Formats, capabilities.Quality, capabilities.MaxBitrateKbps)
+	if ok {
+		return directSource(selected), nil
+	}
+	resolved, err := s.resolveTranscode(ctx, media, capabilities)
+	if err == nil {
+		return resolved, nil
+	}
+	// 请求已取消时不能创建新的会话。除此之外，转码器缺失、编码器不可用、
+	// 缓存目录不可写等失败都可以尝试同一份安全直连回退。
+	if ctx.Err() != nil {
+		return ResolvedMedia{}, err
+	}
+
+	// 自动/限码率模式优先请求较低码率媒体，但该偏好不能让播放器已明确
+	// 支持的原始文件变为不可播放。转码无法完成时忽略码率限制重新匹配；
+	// 容器和编解码器仍须完全匹配，不能把未知格式交给客户端冒险解码。
+	fallback, fallbackOK := chooseMedia(media, capabilities.Formats, "original", 0)
+	if !fallbackOK {
+		return ResolvedMedia{}, err
+	}
+	return directSource(fallback), nil
+}
+
+/**
+ * resolveAndroidSource 为携带 android 标签的客户端固定解析 M4A/AAC 播放源。
+ *
+ * 优先复用符合用户码率偏好的已有 AAC 文件，避免无谓转码；没有合适文件时，必须由
+ * FFmpeg 转码为 AAC。这里故意不回退到 FLAC、OPUS 等原文件，确保 Android 标签确实
+ * 对应稳定且可预测的媒体容器，而不是只作为统计字段。
+ *
+ * @param ctx 用于取消正在执行的转码。
+ * @param media 曲目当前可用的原始媒体文件，按大小降序排列。
+ * @param capabilities Android 客户端请求的音质与最大码率。
+ * @returns M4A/AAC 直连文件或转码缓存文件；无法产生 AAC 时返回播放格式错误。
+ */
+func (s *Service) resolveAndroidSource(ctx context.Context, media []catalog.MediaFile, capabilities Capabilities) (ResolvedMedia, error) {
+	androidFormat := Format{Container: "m4a", Codec: "aac"}
+	if selected, ok := chooseMedia(media, []Format{androidFormat}, capabilities.Quality, capabilities.MaxBitrateKbps); ok {
+		return directSource(selected), nil
+	}
+	return s.resolveTranscodeFormat(ctx, media, androidFormat, capabilities)
+}
+
 func (s *Service) resolveTranscode(ctx context.Context, media []catalog.MediaFile, capabilities Capabilities) (ResolvedMedia, error) {
 	if len(media) == 0 || !s.SupportsTranscoding() {
 		return ResolvedMedia{}, ErrUnsupportedFormat
 	}
 	target, ok := chooseTranscodeFormat(capabilities.Formats)
 	if !ok {
+		return ResolvedMedia{}, ErrUnsupportedFormat
+	}
+	return s.resolveTranscodeFormat(ctx, media, target, capabilities)
+}
+
+/**
+ * resolveTranscodeFormat 将首选原始文件转为指定的、已由策略选定的输出格式。
+ *
+ * @param ctx 用于取消 FFmpeg（多媒体转码器）进程。
+ * @param media 曲目当前可用的原始媒体文件，首项是服务端优先使用的高质量来源。
+ * @param target 目标容器和编解码器，调用方必须已完成兼容性或平台策略判断。
+ * @param capabilities 用户请求的音质与最大码率。
+ * @returns 已缓存或新生成的转码来源。
+ */
+func (s *Service) resolveTranscodeFormat(ctx context.Context, media []catalog.MediaFile, target Format, capabilities Capabilities) (ResolvedMedia, error) {
+	if len(media) == 0 || !s.SupportsTranscoding() {
 		return ResolvedMedia{}, ErrUnsupportedFormat
 	}
 	bitrate := capabilities.MaxBitrateKbps
@@ -270,6 +330,24 @@ func validateCapabilities(capabilities Capabilities) error {
 		return fmt.Errorf("%w: maxBitrateKbps must be between 32 and 320", ErrInvalidCapabilities)
 	}
 	return nil
+}
+
+/**
+ * hasClientTag 判断客户端是否声明了某个不区分大小写的能力标签。
+ *
+ * 标签来自客户端请求，不能承担身份或权限判断；仅用于决定返回哪种兼容播放源。
+ *
+ * @param tags 客户端提交的标签集合。
+ * @param expected 需要匹配的规范化标签，例如 android。
+ * @returns 存在匹配标签时返回 true。
+ */
+func hasClientTag(tags []string, expected string) bool {
+	for _, tag := range tags {
+		if strings.EqualFold(strings.TrimSpace(tag), expected) {
+			return true
+		}
+	}
+	return false
 }
 
 func chooseMedia(media []catalog.MediaFile, formats []Format, quality string, maxBitrateKbps int) (catalog.MediaFile, bool) {
