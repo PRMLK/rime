@@ -1,0 +1,20 @@
+# Rime 播放器插件暴露给本地打包 WebView 的最小默认权限集。
+#
+# Tauri 会由 build.rs（构建脚本）根据命令名自动生成 allow-* 权限，但不会自动把它们
+# 加进 default（默认权限集）。应用的 capabilities/default.json 已授予
+# rime-player:default；这里必须显式列出命令，前端的 plugin:rime-player|status 等调用
+# 才能通过 ACL（命令访问控制）到达 Rust、Kotlin 或 Swift 实现。
+"$schema" = "schemas/schema.json"
+
+[default]
+description = "允许 Rime 本地播放器执行播放控制和桌面媒体面板同步。"
+permissions = [
+  "allow-status",
+  "allow-load",
+  "allow-play",
+  "allow-pause",
+  "allow-seek",
+  "allow-stop",
+  "allow-desktop-media-controls-available",
+  "allow-update-desktop-media-controls",
+]
