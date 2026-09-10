@@ -29,15 +29,9 @@ type Capabilities struct {
 	SupportsByteRange bool     `json:"supportsByteRange"`
 	Quality           string   `json:"quality,omitempty"`
 	MaxBitrateKbps    int      `json:"maxBitrateKbps,omitempty"`
-	Tags              []string `json:"tags,omitempty"`
+	// Tags 保留客户端平台信息以兼容既有请求，不参与播放格式选择。
+	Tags []string `json:"tags,omitempty"`
 }
-
-const (
-	androidClientTag = "android"
-	iosClientTag     = "ios"
-	windowsClientTag = "windows"
-	macOSClientTag   = "macos"
-)
 
 type CreateRequest struct {
 	TrackID       string       `json:"trackId"`
@@ -155,14 +149,9 @@ func (s *Service) Create(ctx context.Context, userID string, request CreateReque
 	if err != nil {
 		return Session{}, err
 	}
-	resolved := ResolvedMedia{}
-	if requiresAACSource(request.Capabilities.Tags) {
-		// 原生播放器不使用 WebView 的实际解码结果选源。固定为 M4A/AAC 能避免
-		// WebView 宣称支持、但后台原生播放服务不稳定的容器进入服务。
-		resolved, err = s.resolveNativeAACSource(ctx, media, request.Capabilities)
-	} else {
-		resolved, err = s.resolveDefaultSource(ctx, media, request.Capabilities)
-	}
+	// 所有客户端按实际格式能力和音质偏好选源。原始音质下，只要播放器声明支持
+	// 原文件格式，就直接传输原文件，平台标签不能覆盖这一选择。
+	resolved, err := s.resolveDefaultSource(ctx, media, request.Capabilities)
 	if err != nil {
 		return Session{}, err
 	}
@@ -185,7 +174,10 @@ func (s *Service) Create(ctx context.Context, userID string, request CreateReque
 }
 
 /**
- * resolveDefaultSource 保持未标记客户端既有的格式协商和直连回退策略。
+ * resolveDefaultSource 为所有客户端按格式能力和音质偏好优先选择原文件。
+ *
+ * 原始音质忽略码率限制；只有没有符合格式及音质要求的原文件时才尝试转码。
+ * 平台标签不参与选源，因此原生播放器声明支持的 FLAC 可直接传输。
  *
  * @param ctx 用于取消正在执行的转码。
  * @param media 曲目当前可用的原始媒体文件，按大小降序排列。
@@ -217,26 +209,6 @@ func (s *Service) resolveDefaultSource(ctx context.Context, media []catalog.Medi
 	return directSource(fallback), nil
 }
 
-/**
- * resolveNativeAACSource 为携带原生平台标签的客户端固定解析 M4A/AAC 播放源。
- *
- * 优先复用符合用户码率偏好的已有 AAC 文件，避免无谓转码；没有合适文件时，必须由
- * FFmpeg 转码为 AAC。这里故意不回退到 FLAC、OPUS 等原文件，确保原生平台标签确实
- * 对应稳定且可预测的媒体容器，而不是只作为统计字段。
- *
- * @param ctx 用于取消正在执行的转码。
- * @param media 曲目当前可用的原始媒体文件，按大小降序排列。
- * @param capabilities 原生客户端请求的音质与最大码率。
- * @returns M4A/AAC 直连文件或转码缓存文件；无法产生 AAC 时返回播放格式错误。
- */
-func (s *Service) resolveNativeAACSource(ctx context.Context, media []catalog.MediaFile, capabilities Capabilities) (ResolvedMedia, error) {
-	aacFormat := Format{Container: "m4a", Codec: "aac"}
-	if selected, ok := chooseMedia(media, []Format{aacFormat}, capabilities.Quality, capabilities.MaxBitrateKbps); ok {
-		return directSource(selected), nil
-	}
-	return s.resolveTranscodeFormat(ctx, media, aacFormat, capabilities)
-}
-
 func (s *Service) resolveTranscode(ctx context.Context, media []catalog.MediaFile, capabilities Capabilities) (ResolvedMedia, error) {
 	if len(media) == 0 || !s.SupportsTranscoding() {
 		return ResolvedMedia{}, ErrUnsupportedFormat
@@ -253,7 +225,7 @@ func (s *Service) resolveTranscode(ctx context.Context, media []catalog.MediaFil
  *
  * @param ctx 用于取消 FFmpeg（多媒体转码器）进程。
  * @param media 曲目当前可用的原始媒体文件，首项是服务端优先使用的高质量来源。
- * @param target 目标容器和编解码器，调用方必须已完成兼容性或平台策略判断。
+ * @param target 目标容器和编解码器，调用方必须已根据客户端格式能力完成兼容性判断。
  * @param capabilities 用户请求的音质与最大码率。
  * @returns 已缓存或新生成的转码来源。
  */
@@ -335,40 +307,6 @@ func validateCapabilities(capabilities Capabilities) error {
 		return fmt.Errorf("%w: maxBitrateKbps must be between 32 and 320", ErrInvalidCapabilities)
 	}
 	return nil
-}
-
-/**
- * hasClientTag 判断客户端是否声明了某个不区分大小写的能力标签。
- *
- * 标签来自客户端请求，不能承担身份或权限判断；仅用于决定返回哪种兼容播放源。
- *
- * @param tags 客户端提交的标签集合。
- * @param expected 需要匹配的规范化标签，例如 android。
- * @returns 存在匹配标签时返回 true。
- */
-func hasClientTag(tags []string, expected string) bool {
-	for _, tag := range tags {
-		if strings.EqualFold(strings.TrimSpace(tag), expected) {
-			return true
-		}
-	}
-	return false
-}
-
-/**
- * requiresAACSource 判断客户端标签是否对应需要稳定 AAC 容器的原生播放器。
- *
- * Android、iOS、Windows 和 macOS 的打包客户端都由原生媒体层或系统 WebView 输出音频，
- * 因而使用同一 M4A/AAC 策略。网页浏览器不匹配本函数，继续按实际格式能力协商。
- *
- * @param tags 客户端提交的标签集合。
- * @returns 任一原生客户端标签存在时返回 true。
- */
-func requiresAACSource(tags []string) bool {
-	return hasClientTag(tags, androidClientTag) ||
-		hasClientTag(tags, iosClientTag) ||
-		hasClientTag(tags, windowsClientTag) ||
-		hasClientTag(tags, macOSClientTag)
 }
 
 func chooseMedia(media []catalog.MediaFile, formats []Format, quality string, maxBitrateKbps int) (catalog.MediaFile, bool) {

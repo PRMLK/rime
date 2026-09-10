@@ -78,6 +78,8 @@ func TestCreateTranscodesPlayableSourceAboveBitrateLimit(t *testing.T) {
 	session, err := service.Create(context.Background(), "usr_1", CreateRequest{
 		TrackID: "trk_1", PlayerID: "player_1",
 		Capabilities: Capabilities{
+			// 平台标签不强制 AAC，但用户明确设置的码率上限仍应触发正常转码。
+			Tags:    []string{"android"},
 			Formats: []Format{{Container: "flac", Codec: "flac"}, {Container: "m4a", Codec: "aac"}},
 			Quality: "limited", MaxBitrateKbps: 192, SupportsByteRange: true,
 		},
@@ -116,45 +118,44 @@ func TestCreateUsesDirectSourceWithinBitrateLimit(t *testing.T) {
 	}
 }
 
-// TestCreateForcesAACSourceForTaggedNativeClients 验证四个原生平台标签都会覆盖客户端
-// 格式列表并固定请求 M4A/AAC。这样即使 WebView 上报 FLAC，原生媒体层也只会收到
-// 稳定的 AAC 媒体流。
-func TestCreateForcesAACSourceForTaggedNativeClients(t *testing.T) {
-	for _, tag := range []string{androidClientTag, iosClientTag, windowsClientTag, macOSClientTag} {
+// TestCreateKeepsOriginalSourceForTaggedNativeClients 验证四个原生平台在原始音质下
+// 直接传输已声明支持的 FLAC。即使转码器可用且请求携带码率上限，也不能覆盖原始音质。
+// 参数 t 为测试运行上下文；无返回值，错误的选源或持久化结果通过测试断言报告。
+func TestCreateKeepsOriginalSourceForTaggedNativeClients(t *testing.T) {
+	for _, tag := range []string{"android", "ios", "windows", "macos"} {
 		t.Run(tag, func(t *testing.T) {
 			repository := &playbackRepositoryStub{
 				track: catalog.Track{ID: "trk_1", Title: "Test"},
 				media: []catalog.MediaFile{{
 					ID: "med_1", TrackID: "trk_1", Container: "flac", Codec: "flac",
+					Path: "/library/source.flac", Size: 4096,
 					ContentType: "audio/flac", BitrateKbps: 900, ContentVersion: "source-v1",
 				}},
 			}
-			transcoder := &transcoderStub{source: ResolvedMedia{
-				Kind: "transcode", ContentKey: "cached-aac", ProfileID: "aac-m4a-192-v1",
-				Media: catalog.MediaFile{
-					ID: "med_1", TrackID: "trk_1", Container: "m4a", Codec: "aac",
-					ContentType: "audio/mp4", BitrateKbps: 192, Size: 1234, ContentVersion: "cached-aac",
-				},
-			}}
+			transcoder := &transcoderStub{}
 			service := New(repository, transcoder)
 
 			session, err := service.Create(context.Background(), "usr_1", CreateRequest{
 				TrackID: "trk_1", PlayerID: "player_1",
 				Capabilities: Capabilities{
 					Tags: []string{tag},
-					// 故意只声明 FLAC，证明原生标签不依赖 WebView 的格式清单。
-					Formats: []Format{{Container: "flac", Codec: "flac"}},
-					Quality: "limited", MaxBitrateKbps: 192, SupportsByteRange: true,
+					// 模拟客户端把 AAC 列在 FLAC 前面；仅有 FLAC 原文件时仍应直连。
+					Formats: []Format{{Container: "m4a", Codec: "aac"}, {Container: "flac", Codec: "flac"}},
+					Quality: "original", MaxBitrateKbps: 192, SupportsByteRange: true,
 				},
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !transcoder.called || transcoder.target != (Format{Container: "m4a", Codec: "aac"}) || transcoder.bitrate != 192 {
-				t.Fatalf("unexpected %s source selection: called=%v target=%+v bitrate=%d", tag, transcoder.called, transcoder.target, transcoder.bitrate)
+			if transcoder.called {
+				t.Fatalf("unexpected %s transcoding for original quality", tag)
 			}
-			if session.Source.Kind != "transcode" || session.Source.Container != "m4a" || session.Source.Codec != "aac" {
+			if session.Source.Kind != "direct" || session.Source.Container != "flac" || session.Source.Codec != "flac" || session.Source.BitrateKbps != 900 || session.Source.ContentLength != 4096 {
 				t.Fatalf("unexpected %s source: %+v", tag, session.Source)
+			}
+			// 串流读取会话持久化的媒体信息，必须保留原文件路径及版本，不能指向转码缓存。
+			if repository.record.Source.Media != repository.media[0] || repository.record.Source.ProfileID != "" {
+				t.Fatalf("unexpected %s persisted source: %+v", tag, repository.record.Source)
 			}
 		})
 	}
