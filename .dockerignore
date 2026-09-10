@@ -4,6 +4,8 @@
 .env.*
 **/node_modules
 **/dist
+# 原生客户端的前端构建产物不进入 Docker 构建上下文。
+**/dist-native
 **/*.tsbuildinfo
 backend/data
 backend/music

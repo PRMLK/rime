@@ -4,10 +4,10 @@
   "version": "0.1.6",
   "identifier": "com.prmlk.rime",
   "build": {
-    "frontendDist": "../dist",
+    "frontendDist": "../dist-native",
     "devUrl": "http://localhost:5173/mobile.html",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "beforeBuildCommand": "npm run build:native"
   },
   "app": {
     "windows": [

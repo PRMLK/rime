@@ -1,9 +1,10 @@
 # 客户端打包与 CI/CD（持续集成与持续部署）
 
 Rime 使用 Tauri 2 构建可安装客户端。Android、Windows x86-64 与 macOS ARM64
-发布包都会打入本地 Vite 的 `/mobile.html` 入口。原生客户端会要求用户选择 Rime
-服务器、校验 API（应用程序接口）能力后以 Bearer 会话连接；浏览器客户端继续使用
-同源 Cookie 流程。
+发布包都会先运行 `npm run build:native`，仅将 Vite 的 `/mobile.html` 入口及其依赖
+输出到 `dist-native/` 后打入安装包，不会包含网页端的 Viewbox（开发预览壳）代码。
+原生客户端会要求用户选择 Rime 服务器、校验 API（应用程序接口）能力后以 Bearer
+会话连接；浏览器客户端继续使用同源 Cookie 流程。
 
 ## GitHub Actions release flow
 

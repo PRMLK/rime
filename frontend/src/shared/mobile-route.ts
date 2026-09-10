@@ -1,0 +1,178 @@
+import { useCallback, useEffect, useState } from 'react';
+
+/** 移动端主导航可直接显示的页面标识。 */
+export type MobileTab = 'home' | 'search' | 'library';
+
+/**
+ * MobileRoute（移动端路由）描述能够由 URL 完整恢复的页面状态。
+ *
+ * 详情页的来源标签用于在用户点击页头返回时提供合理的兜底目的地。列表续页游标仅
+ * 保留在组件内存中，避免无限滚动时每次自动加载都污染浏览器历史。Hash（哈希）路由
+ * 不依赖服务器重写规则，因此可以同时运行在
+ * 根路径移动端入口和 Viewbox 的 iframe（内嵌预览页）中。
+ */
+export type MobileRoute =
+  | { kind: 'tab'; tab: MobileTab }
+  | { kind: 'search'; query: string }
+  | { kind: 'albums' }
+  | { kind: 'recent-albums' }
+  | { kind: 'album'; albumId: string; sourceTab: MobileTab }
+  | { kind: 'artist'; artistId: string; sourceTab: MobileTab };
+
+/**
+ * 移动端路由变化事件名称。
+ *
+ * 原生 `hashchange`（哈希变化）无法感知 `history.replaceState`（替换历史）
+ * 对地址栏的更新，因此编辑器外层页面通过该事件同步 iframe（内嵌预览页）的路由。
+ */
+export const mobileRouteChangeEvent = 'rime:mobile-route-change';
+
+/**
+ * 移动端路由变化事件的附加数据。
+ */
+export interface MobileRouteChangeDetail {
+  /** 规范化后的哈希路由，例如 `#/search?q=Rime`。 */
+  hash: string;
+  /** 是否使用替换历史的方式更新，避免搜索输入产生大量历史记录。 */
+  replace: boolean;
+}
+
+/**
+ * 从 location.hash（地址哈希）读取当前移动端页面。
+ *
+ * 解析时始终回退到首页，避免手工输入错误链接后使应用进入不可恢复状态。
+ *
+ * @param hash 浏览器当前的 hash 字符串，包含或不包含开头的 # 都可。
+ * @returns 已校验的移动端路由状态。
+ */
+export function parseMobileRoute(hash: string): MobileRoute {
+  const source = hash.startsWith('#') ? hash.slice(1) : hash;
+  const [rawPath, rawQuery = ''] = source.split('?', 2);
+  const path = rawPath || '/home';
+  const parameters = new URLSearchParams(rawQuery);
+  const sourceTab = parseTab(parameters.get('from'));
+
+  if (path === '/search') {
+    return { kind: 'search', query: parameters.get('q') ?? '' };
+  }
+  if (path === '/albums') return { kind: 'albums' };
+  if (path === '/albums/recent') return { kind: 'recent-albums' };
+
+  const albumMatch = /^\/albums\/([^/]+)$/.exec(path);
+  if (albumMatch) return { kind: 'album', albumId: decodeRouteID(albumMatch[1]), sourceTab };
+
+  const artistMatch = /^\/artists\/([^/]+)$/.exec(path);
+  if (artistMatch) return { kind: 'artist', artistId: decodeRouteID(artistMatch[1]), sourceTab };
+
+  if (path === '/library') return { kind: 'tab', tab: 'library' };
+  return { kind: 'tab', tab: 'home' };
+}
+
+/**
+ * 将路由状态转换为稳定、可分享的 hash 字符串。
+ *
+ * @param route 需要写入浏览器地址栏的路由状态。
+ * @returns 以 # 开头的 URL 哈希片段。
+ */
+export function formatMobileRoute(route: MobileRoute): string {
+  switch (route.kind) {
+    case 'tab':
+      return `#/${route.tab}`;
+    case 'search': {
+      const parameters = new URLSearchParams();
+      if (route.query) parameters.set('q', route.query);
+      const query = parameters.toString();
+      return `#/search${query ? `?${query}` : ''}`;
+    }
+    case 'albums':
+      return '#/albums';
+    case 'recent-albums':
+      return '#/albums/recent';
+    case 'album':
+      return `#/albums/${encodeURIComponent(route.albumId)}?from=${route.sourceTab}`;
+    case 'artist':
+      return `#/artists/${encodeURIComponent(route.artistId)}?from=${route.sourceTab}`;
+  }
+}
+
+/**
+ * 广播当前移动端路由，供同源编辑器预览页同步地址栏。
+ *
+ * @param route - 将要发布的移动端路由。
+ * @param replace - 是否以替换当前历史记录的方式完成本次跳转。
+ * @returns 无返回值。
+ */
+function publishMobileRouteChange(route: MobileRoute, replace: boolean): void {
+  const detail: MobileRouteChangeDetail = {
+    hash: formatMobileRoute(route),
+    replace,
+  };
+
+  window.dispatchEvent(new CustomEvent<MobileRouteChangeDetail>(mobileRouteChangeEvent, { detail }));
+}
+
+/**
+ * useMobileRoute（移动端路由 Hook）将哈希地址与 React 状态保持同步。
+ *
+ * 输入搜索词时调用者可传入 replace，避免每一次键入都占用浏览器历史；用户点击
+ * 底部导航或详情入口时保留历史记录，浏览器的前进/后退按钮即可正常工作。
+ *
+ * @returns 当前路由和用于跳转/替换路由的回调。
+ */
+export function useMobileRoute(): [MobileRoute, (route: MobileRoute, options?: { replace?: boolean }) => void] {
+  const [route, setRoute] = useState<MobileRoute>(() => parseMobileRoute(window.location.hash));
+
+  useEffect(() => {
+    /** 地址由浏览器前进后退改变时，重新解析并更新界面。 */
+    const syncRoute = () => {
+      const nextRoute = parseMobileRoute(window.location.hash);
+      setRoute(nextRoute);
+      publishMobileRouteChange(nextRoute, false);
+    };
+    window.addEventListener('hashchange', syncRoute);
+    window.addEventListener('popstate', syncRoute);
+    return () => {
+      window.removeEventListener('hashchange', syncRoute);
+      window.removeEventListener('popstate', syncRoute);
+    };
+  }, []);
+
+  const navigate = useCallback((nextRoute: MobileRoute, options?: { replace?: boolean }) => {
+    const nextHash = formatMobileRoute(nextRoute);
+    if (nextHash === window.location.hash) return;
+
+    if (options?.replace) {
+      // history.replaceState 不会触发 hashchange，因此同步更新 React 状态。
+      window.history.replaceState({ rimeMobileRoute: true }, '', nextHash);
+      setRoute(nextRoute);
+      publishMobileRouteChange(nextRoute, true);
+      return;
+    }
+
+    window.location.hash = nextHash;
+  }, []);
+
+  return [route, navigate];
+}
+
+/**
+ * 从详情路径读取已编码的 ID，并将错误编码安全地视为无效 ID。
+ * @param value 路径中未经解码的 ID 片段。
+ * @returns 解码后的 ID，或空字符串。
+ */
+function decodeRouteID(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * 将外部传入的来源标签限制为合法主导航，避免错误 URL 改变详情返回目标。
+ * @param value URL 查询参数中的来源标签。
+ * @returns 合法标签；不合法时回退首页。
+ */
+function parseTab(value: string | null): MobileTab {
+  return value === 'search' || value === 'library' || value === 'home' ? value : 'home';
+}

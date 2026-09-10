@@ -3,6 +3,8 @@ node_modules/
 
 # Production build output
 dist/
+# 原生客户端的独立前端构建产物不纳入版本管理。
+dist-native/
 
 # Local environment and operating-system files
 .env

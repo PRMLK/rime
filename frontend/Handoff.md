@@ -26,7 +26,7 @@ Rime Music 是一个面向 Web、Windows、macOS 与 Android 的音乐播放器�
 当前已接入 **Tauri 2 + Rust** 作为 Windows、macOS、Android 与 iOS 的原生壳层。Android 原生工程已经初始化，移动端发布与 CI/CD 细节见仓库根目录 `MOBILE_RELEASE.md`。
 
 * Tauri 不需要搭配 Go。Go 只在未来确实需要独立媒体服务、P2P、复杂下载器等单独进程时再评估。
-* Vite 是当前前端构建工具；Tauri 通过其 `devUrl` 和 `frontendDist` 配置加载 Vite 的开发服务与构建产物。
+* Vite 是当前前端构建工具；Tauri 通过其 `devUrl` 和 `frontendDist` 配置加载 Vite 的开发服务与原生专属构建产物。
 * Web 端保留 React/Vite 入口；Windows、macOS 与 Android 共用页面层与业务状态，按平台通过 Tauri 命令、插件或前端适配层接入能力。
 * 真实音频播放建议抽象为 `PlayerService`：Web 可接入 `<audio>`/Media Session，Android 可接入 Media3，桌面端按 Tauri 插件或 Rust 原生实现接入。不要把播放逻辑直接散落在页面组件中。
 
@@ -49,37 +49,56 @@ UI 代码可以共用，但原生产物通常不能在一台机器上可靠地�
 
 ```text
 frontend/index.html
-  -> frontend/src/main.tsx
+  -> frontend/src/mobile/main.tsx
+    -> MobilePlayer（默认网页移动端页面）
+
+frontend/test.html
+  -> frontend/src/web/main.tsx
     -> Viewbox（开发套件）
-      -> iframe /mobile.html
-        -> frontend/src/mobile.tsx
-          -> MobilePlayer（独立移动端页面）
+      -> iframe /
+        -> MobilePlayer（默认网页移动端页面）
+
+frontend/mobile.html
+  -> frontend/src/mobile/main.tsx
+    -> MobilePlayer（Tauri 原生端页面）
 ```
 
-`Viewbox` 只是外层开发工具，不参与移动端页面布局或状态渲染。它默认加载 `/mobile.html`，可切换 20:9 竖屏手机比例与 4:3 横屏平板比例，也可隐藏整个预览区。
+`Viewbox` 只是位于 `/test` 的外层开发工具，不参与移动端页面布局或状态渲染。它默认加载根路径 `/`，可切换 20:9 竖屏手机比例与 4:3 横屏平板比例，也可隐藏整个预览区。
+
+### 源码目录
+
+`frontend/src/` 按客户端边界组织，避免在本地开发时混淆网页预览壳与移动端实现：
+
+* `web/`：网页入口与 Viewbox（开发预览壳）。
+* `mobile/`：移动端入口、页面组件、API（应用程序接口）、缓存、播放器服务与专属 hooks（钩子）。
+* `shared/`：网页预览壳和移动端共用的路由同步逻辑。
+* `components/ui/` 与 `lib/utils.ts`：由 shadcn/ui（组件库）配置引用的通用组件和工具，保持在原路径。
 
 ### 已完成功能
 
 * 浅色、低干扰的 Viewbox 开发画布；控制按钮独立定位，不影响预览内容。
-* 独立 `mobile.html` 移动端入口，使用 iframe 与 Viewbox 隔离。
+* 根路径 `/` 默认加载移动端页面；`/test` 提供与页面隔离的 Viewbox 编辑器入口。
+* 独立 `mobile.html` 仅供 Tauri 原生端加载，与网页入口使用相同的移动端 React 页面。
 * 简洁的流媒体播放器首页：当前播放封面、曲名、艺术家、进度与待播列表。
 * 固定双层底栏：上层为封面、曲目信息、上一首、播放/暂停、下一首；下层为首页、搜索、我的三栏导航。
 * 搜索、收藏、播放/暂停、导航切换等本地 UI 状态与可访问标签。
 * 本地封面资源：`src/assets/now-playing.jpg`。
-* Vite 多页面构建：构建产物同时包含 `index.html` 与 `mobile.html`。
+* 网页构建会输出 `index.html` 与 `test.html`；Viewbox 通过 iframe 加载根路径移动页面。原生构建只输出 `mobile.html` 到独立的 `dist-native/` 目录。
 
 ### 关键文件
 
 | 文件 | 职责 |
 | --- | --- |
-| `frontend/src/main.tsx` | 保持干净，仅挂载 Viewbox |
-| `frontend/src/components/Viewbox.tsx` | 开发套件、开关与设备比例切换 |
-| `frontend/src/components/Viewbox.css` | 外层浅色画布与 Viewbox 尺寸规则 |
-| `frontend/mobile.html` | 独立移动端 HTML 入口 |
-| `frontend/src/mobile.tsx` | 挂载移动端 React 页面 |
-| `frontend/src/components/MobilePlayer.tsx` | 播放器主页面、底栏与局部状态 |
+| `frontend/src/web/main.tsx` | 保持干净，仅挂载 Viewbox |
+| `frontend/src/web/components/Viewbox.tsx` | 开发套件、开关与设备比例切换 |
+| `frontend/src/web/components/Viewbox.css` | 外层浅色画布与 Viewbox 尺寸规则 |
+| `frontend/index.html` | 默认网页移动端 HTML 入口 |
+| `frontend/test.html` | 网页编辑器 HTML 入口，可通过 `/test` 访问 |
+| `frontend/mobile.html` | Tauri 原生端专用移动端 HTML 入口 |
+| `frontend/src/mobile/main.tsx` | 挂载移动端 React 页面 |
+| `frontend/src/mobile/components/MobilePlayer.tsx` | 播放器主页面、底栏与局部状态 |
 | `frontend/src/index.css` | Tailwind、shadcn 主题令牌与全局样式 |
-| `frontend/vite.config.ts` | Vite 与 Tailwind 配置；声明双 HTML 入口 |
+| `frontend/vite.config.ts` | Vite 与 Tailwind 配置；按构建模式选择网页双入口或原生移动端单入口 |
 
 ### 当前限制与后续优先级
 
@@ -101,8 +120,9 @@ npm run dev
 
 默认访问地址：`http://127.0.0.1:5173/`
 
-* `/`：Viewbox 开发套件入口。
-* `/mobile.html`：绕过 Viewbox，直接查看独立移动端页面。
+* `/`：默认移动端页面。
+* `/test`：Viewbox 开发套件入口。
+* `/mobile.html`：Tauri 开发模式使用的原生端专用入口。
 
 生产构建：
 
@@ -111,7 +131,10 @@ cd frontend
 npm run build
 ```
 
-该命令会先运行 TypeScript 构建检查，再生成 `dist/` 静态目录。当前已验证构建通过。
+`npm run build` 是 `npm run build:web` 的兼容别名，会先运行 TypeScript 构建检查，再
+生成供网页部署使用的 `dist/` 静态目录，其中包含默认移动端 `index.html` 和编辑器
+入口 `test.html`。
+原生安装包由 Tauri 自动执行 `npm run build:native`，只生成 `dist-native/mobile.html` 及其依赖。
 
 本地查看生产构建：
 
@@ -134,7 +157,7 @@ npm run preview
 | 构建命令 | `npm run build` |
 | 发布目录 | `dist` |
 
-必须将 `dist/index.html`、`dist/mobile.html` 与 `dist/assets/` 一并上传并保持目录结构，因 Viewbox 运行时会加载移动端入口和静态资源。
+必须将 `dist/index.html`、`dist/test.html` 与 `dist/assets/` 一并上传并保持目录结构，因 `/test` 会通过 iframe 加载默认移动端页面和静态资源。
 
 ### Nginx 示例
 
@@ -148,25 +171,29 @@ server {
     root /var/www/rime;
     index index.html;
 
+    location = /test {
+        try_files /test.html =404;
+    }
+
     location / {
         try_files $uri $uri/ =404;
     }
 }
 ```
 
-当前没有前端历史路由，因此不需要将所有未知路径重写到 `index.html`。部署时应确认 `/mobile.html` 可直接返回该 HTML 文件。
+当前没有前端历史路由，因此不需要将所有未知路径重写到 `index.html`。部署时应确认根路径返回移动端页面，`/test` 返回编辑器入口。
 
 ### 子路径部署注意事项
 
-当前 Viewbox 的默认预览地址是根路径 `/mobile.html`。因此现状适合部署在域名根目录，例如 `https://music.example.com/`。
+当前 Viewbox 的默认预览地址是根路径 `/`。因此现状适合部署在域名根目录，例如 `https://music.example.com/`。
 
 若部署在子路径（例如 `https://example.com/rime/`），构建前需要将 `VITE_VIEWBOX_SRC` 设置为该子路径下的移动端入口，例如：
 
 ```bash
-VITE_VIEWBOX_SRC=/rime/mobile.html npm run build
+VITE_VIEWBOX_SRC=/rime/ npm run build
 ```
 
-同时需要为 Vite 配置匹配的 `base`，并确认静态托管平台将 `mobile.html` 与 `assets/` 发布到该子路径。完成这一调整后再部署，避免 iframe 请求根路径导致 404。
+同时需要为 Vite 配置匹配的 `base`，并确认静态托管平台将 `index.html`、`test.html` 与 `assets/` 发布到该子路径。完成这一调整后再部署，避免 iframe 请求根路径导致 404。
 
 ## 6. Tauri 接入与原生发布
 
